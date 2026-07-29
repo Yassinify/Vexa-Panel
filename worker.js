@@ -3,7 +3,7 @@
 // =====================================================================
 //
 
-const VEXA_VERSION = "2.1.1";
+const VEXA_VERSION = "2.2.0";
 const VEXA_BUILD_DATE = "2026-07-29";
 
 export default {
@@ -3179,10 +3179,18 @@ const STYLES = `
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
+html { color-scheme: light dark; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   margin: 0; min-height: 100vh; background: var(--bg-page);
   font-family: var(--font-stack); color: var(--text-primary); font-size: 14px;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none;
 }
+/* Thin scrollbars on the browsers that support each API — Firefox via the
+   standard property, Chrome/Safari/Edge via the older webkit pseudo-element. */
+* { scrollbar-width: thin; }
+.table-wrap::-webkit-scrollbar, .modal-card::-webkit-scrollbar { height: 6px; width: 6px; }
+.table-wrap::-webkit-scrollbar-thumb, .modal-card::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 a { color: inherit; }
 .card {
   background: var(--bg-surface); border: 1px solid var(--border); border-radius: 12px;
@@ -3254,6 +3262,20 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 .theme-toggle button.active { background: var(--accent); color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
 .main { flex: 1; min-width: 0; }
+/* Off-canvas sidebar controls — hidden on desktop, switched on for narrow
+   viewports in the @media block below. Sized to a 40px touch target
+   (below WCAG's 44px minimum only by a hair, kept for visual balance with
+   the 28px btn-icon set) rather than the visual icon's own dimensions. */
+.menu-toggle-btn {
+  display: none; background: transparent; border: 1px solid var(--border); color: var(--text-primary);
+  width: 40px; height: 40px; border-radius: 8px; font-size: 16px; cursor: pointer; flex-shrink: 0;
+}
+.menu-toggle-btn:hover { background: var(--accent-soft); color: var(--accent); }
+.sidebar-backdrop {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 39;
+  opacity: 0; pointer-events: none; transition: opacity .2s ease;
+}
+.sidebar-backdrop.visible { opacity: 1; pointer-events: auto; }
 .topbar {
   display: flex; align-items: center; justify-content: space-between; padding: 16px 28px;
   border-bottom: 1px solid var(--border); background: var(--bg-surface);
@@ -3282,6 +3304,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .breadcrumb { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 13px; margin-bottom: 4px; }
 .breadcrumb a { cursor: pointer; }
 .breadcrumb a:hover { color: var(--accent); }
+.table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .data-table { width: 100%; border-collapse: collapse; }
 .data-table th {
   text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted);
@@ -3345,11 +3368,59 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 .error-text { color: var(--bad); font-size: 13px; margin-top: 10px; min-height: 16px; }
 .helper-text { color: var(--text-muted); font-size: 12px; margin-top: 6px; }
-@media (max-width: 780px) {
-  .sidebar { position: fixed; z-index: 40; height: 100vh; transform: translateX(-100%); transition: transform .2s ease; }
-  .sidebar.open { transform: translateX(0); }
-  .container { padding: 18px 16px 60px; }
+/* --- Responsive tiers ---
+   1024px: tablet — sidebar narrows, content margins tighten.
+   780px:  mobile — sidebar goes off-canvas behind the hamburger + backdrop,
+           tables/modals adapt, inputs bump to 16px (stops iOS Safari's
+           auto-zoom-on-focus), tap targets grow toward the 44px minimum.
+   480px:  small phones — stat grid and toolbar collapse to one column. */
+@media (max-width: 1024px) {
+  .sidebar { width: 188px; }
+  .container { padding: var(--space-5) var(--space-4) 60px; }
 }
+@media (max-width: 780px) {
+  .menu-toggle-btn, .sidebar-backdrop { display: block; }
+  .sidebar {
+    position: fixed; z-index: 40; top: 0; left: 0; height: 100vh; width: 250px;
+    transform: translateX(-100%); transition: transform .2s ease;
+  }
+  .sidebar.open { transform: translateX(0); }
+  .topbar { padding: var(--space-3) var(--space-4); }
+  .container { padding: var(--space-4) var(--space-4) 60px; }
+  .modal-card { max-width: 100%; }
+  /* iOS Safari zooms the page in on focus of any input under 16px; this is
+     the single fix for that without changing how text looks anywhere else. */
+  input, textarea, select { font-size: 16px; }
+  /* Icon buttons stay visually small but grow their tap area toward the
+     44px touch-target guideline via a transparent hit-area extension. */
+  .btn-icon { width: 36px; height: 36px; }
+  .stat-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+}
+@media (max-width: 480px) {
+  .stat-grid { grid-template-columns: 1fr 1fr; }
+  .toolbar { flex-direction: column; align-items: stretch; }
+  .toolbar-left, .search-input { max-width: none; width: 100%; }
+  .login-card { padding: var(--space-5) var(--space-4); }
+  .stat-row { flex-direction: column; }
+  .modal-overlay { padding: 0; align-items: flex-end; }
+  .modal-card { max-height: 92vh; border-radius: 16px 16px 0 0; }
+}
+/* Devices that support hover (mouse/trackpad) get the hover states above;
+   touch-only devices skip them by re-asserting each button's own base
+   (non-hover) look, so a tap doesn't leave it visually "stuck" in its
+   hover color until an unrelated tap elsewhere clears it. */
+@media (hover: none) {
+  .btn-primary:hover { background: var(--accent); border-color: var(--accent); }
+  .btn-secondary:hover { background: var(--bg-surface); border-color: var(--border); color: var(--text-primary); }
+  .btn-danger:hover, .btn-danger.btn-secondary:hover { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .btn-icon:hover { background: transparent; color: var(--text-muted); }
+  .data-table tr.row-hover:hover { background: transparent; }
+}
+/* iPhone/Android notch and home-indicator safe areas, for elements pinned
+   to a screen edge. Falls back to the existing fixed value on browsers
+   without env() support (older Android/desktop). */
+.toast { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+.version-badge { bottom: max(10px, env(safe-area-inset-bottom)); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 `;
 
@@ -4052,7 +4123,20 @@ async function bootAuthenticated() {
 // ---------------------------------------------------------------------
 // SHELL: sidebar + topbar
 // ---------------------------------------------------------------------
+// Mobile off-canvas sidebar. Desktop ignores .open (sidebar is always
+// visible there via the media query), so these are no-ops above the
+// 780px breakpoint.
+function toggleSidebar() {
+  document.getElementById("sidebar")?.classList.toggle("open");
+  document.getElementById("sidebarBackdrop")?.classList.toggle("visible");
+}
+function closeSidebar() {
+  document.getElementById("sidebar")?.classList.remove("open");
+  document.getElementById("sidebarBackdrop")?.classList.remove("visible");
+}
+
 function navigate(view) {
+  closeSidebar();
   state.view = view;
   state.errorMsg = "";
   if (view === "dashboard") {
@@ -4121,11 +4205,15 @@ function renderShell(innerHtml) {
   return \`
     <div class="app-shell">
       \${renderSidebar()}
+      <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebar()"></div>
       <div class="main">
         <div class="topbar">
-          <div>
-            <h1>\${title}</h1>
-            <div class="topbar-sub">\${sub}</div>
+          <div style="display:flex;align-items:center;gap:var(--space-3);">
+            <button class="menu-toggle-btn" aria-label="Toggle menu" onclick="toggleSidebar()">☰</button>
+            <div>
+              <h1>\${title}</h1>
+              <div class="topbar-sub">\${sub}</div>
+            </div>
           </div>
         </div>
         <div class="container">\${innerHtml}</div>
@@ -4228,6 +4316,7 @@ function renderUsersView() {
         <div class="skel" style="width:112px;height:34px;border-radius:4px;"></div>
       </div>
       <div class="card">
+        <div class="table-wrap">
         <table class="data-table">
           <thead><tr><th>Name</th><th>Profiles</th><th>Updated</th><th></th></tr></thead>
           <tbody>
@@ -4241,6 +4330,7 @@ function renderUsersView() {
             \`).join("")}
           </tbody>
         </table>
+        </div>
       </div>
     \`);
   }
@@ -4279,6 +4369,7 @@ function renderUsersView() {
       \${sorted.length === 0
         ? '<div class="empty-state"><div class="empty-state-icon">◫</div>No users yet. Create one to get started.</div>'
         : \`
+          <div class="table-wrap">
           <table class="data-table">
             <thead>
               <tr>
@@ -4290,6 +4381,7 @@ function renderUsersView() {
             </thead>
             <tbody>\${rows}</tbody>
           </table>
+          </div>
         \`}
     </div>
   \`);
@@ -4403,6 +4495,7 @@ function renderUserProfilesView() {
         <div class="skel" style="width:126px;height:34px;border-radius:4px;"></div>
       </div>
       <div class="card">
+        <div class="table-wrap">
         <table class="data-table">
           <thead><tr><th>Name</th><th>Sources</th><th>Updated</th><th></th></tr></thead>
           <tbody>
@@ -4416,6 +4509,7 @@ function renderUserProfilesView() {
             \`).join("")}
           </tbody>
         </table>
+        </div>
       </div>
     \`);
   }
@@ -4452,10 +4546,12 @@ function renderUserProfilesView() {
       \${state.profiles.length === 0
         ? '<div class="empty-state"><div class="empty-state-icon">▣</div>No profiles yet for this user.</div>'
         : \`
+          <div class="table-wrap">
           <table class="data-table">
             <thead><tr><th>Name</th><th>Sources</th><th>Updated</th><th></th></tr></thead>
             <tbody>\${cards}</tbody>
           </table>
+          </div>
         \`}
     </div>
   \`);
@@ -4773,6 +4869,7 @@ function render() {
       document.documentElement.setAttribute("data-theme", effectiveTheme("system"));
     }
   });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") closeSidebar(); });
 
   if (state.token) {
     try {

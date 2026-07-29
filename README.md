@@ -81,6 +81,17 @@ console.log("ADMIN_PASSWORD_HASH:", derivedKey);
 
 ## 📋 Changelog
 
+### **v2.2.0**
+
+fix(ui): improve mobile responsiveness and cross-browser compatibility
+
+- Add mobile topbar menu toggle, backdrop overlay, and auto-close on navigation/Escape
+- Add responsive breakpoints (1024/780/480px) and bottom-sheet modals for small screens
+- Wrap data tables in scrollable containers to prevent layout overflow
+- Fix iOS Safari input auto-zoom by enforcing 16px font size on mobile
+- Increase mobile touch targets (`.btn-icon` to 36px) and neutralize sticky hover states
+- Add safe-area-inset padding for device notches and standardize cross-browser baseline styles
+
 ### **v2.1.1**
 
 refactor(ui): standardize layout spacing scale and improve focus accessibility
