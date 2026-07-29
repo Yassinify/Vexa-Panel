@@ -81,6 +81,15 @@ console.log("ADMIN_PASSWORD_HASH:", derivedKey);
 
 ## 📋 Changelog
 
+### **v1.4.0**
+
+feat: add TUIC link support (tuic://)
+
+- Add URI parsing & canonical export for tuic:// scheme
+- Support params: congestion_control, udp_relay_mode, sni, alpn, allow_insecure, disable_sni
+- Include fingerprinting deduplication & structured validation
+- Note: URI-only (no JSON mapping as Xray-core lacks native tuic outbound)
+
 ### **v1.3.0**
 
 - **UI:** Added a fixed, semi-transparent version badge footer on the admin dashboard reflecting the current build version and date.
