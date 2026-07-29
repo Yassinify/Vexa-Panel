@@ -81,6 +81,15 @@ console.log("ADMIN_PASSWORD_HASH:", derivedKey);
 
 ## 📋 Changelog
 
+### **v2.1.0**
+
+feat(ui): align UI metrics with Element Plus and add password-only rotation
+
+- Update buttons, inputs, and badges to Element Plus specs (4px radius, hover/active states)
+- Add "Change Password" action on `/secret` to rotate `ADMIN_PASSWORD_HASH` without invalidating sessions
+- Rename full secret regeneration action to "Destroy Secrets" for clarity
+- Replace ad-hoc loading indicators across all views with layout-matched skeleton screens
+
 ### **v2.0.2**
 
 style(ui): update color tokens to match 3x-ui theme palette

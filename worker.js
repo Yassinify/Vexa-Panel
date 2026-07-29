@@ -3,7 +3,7 @@
 // =====================================================================
 //
 
-const VEXA_VERSION = "2.0.2";
+const VEXA_VERSION = "2.1.0";
 const VEXA_BUILD_DATE = "2026-07-29";
 
 export default {
@@ -65,6 +65,21 @@ async function route(request, env, ctx) {
         return withCors(request, authResult, env);
     }
     return withCors(request, await handleGenerateSecrets(request), env);
+  }
+
+  // Rotates only ADMIN_PASSWORD_HASH, reusing the existing ADMIN_SALT — a
+  // day-to-day "change my password" action that doesn't touch JWT_SECRET
+  // or force every other secret to be re-pasted into Cloudflare. Requires
+  // secrets to already be configured (nothing to rotate otherwise) and a
+  // valid admin session.
+  if (pathname === "/api/secret/change-password" && method === "POST") {
+    if (!secretsConfigured(env)) {
+      return withCors(request, json({ error: "not_configured" }, 400), env);
+    }
+    const authResult = await requireAuth(request, env);
+    if (authResult instanceof Response)
+      return withCors(request, authResult, env);
+    return withCors(request, await handleChangePassword(request, env), env);
   }
 
   if (pathname === "/api/login" && method === "POST") {
@@ -304,6 +319,22 @@ async function checkLoginRateLimit(request, env) {
 function randomHex(byteLength) {
   const bytes = crypto.getRandomValues(new Uint8Array(byteLength));
   return bytesToHex(bytes);
+}
+
+async function handleChangePassword(request, env) {
+  const body = await safeJson(request);
+  const password =
+    body && typeof body.password === "string" ? body.password : "";
+  if (password.length < 8) {
+    return json({ error: "password_too_short" }, 400);
+  }
+
+  const adminPasswordHash = await deriveKey(password, env.ADMIN_SALT);
+  return json({
+    values: {
+      ADMIN_PASSWORD_HASH: adminPasswordHash,
+    },
+  });
 }
 
 async function handleGenerateSecrets(request) {
@@ -2800,10 +2831,10 @@ function renderSecretPage(configured) {
   <div class="glass-card login-card" style="max-width:520px;text-align:left;">
     <div style="text-align:center;">
       <div class="logo-glow" style="font-size:32px;">🔑</div>
-      <div class="brand">${configured ? "Regenerate Secrets" : "VEXA Initial Setup"}</div>
+      <div class="brand">${configured ? "Admin Secrets" : "VEXA Initial Setup"}</div>
       <div class="brand-sub">${
         configured
-          ? "Manually rotate the panel's login and session secrets"
+          ? "Change your password, or destroy and rotate every secret"
           : "Required Cloudflare Variables and Secrets are missing"
       }</div>
     </div>
@@ -2827,7 +2858,27 @@ function copyAllText(values) {
   return Object.entries(values).map(([k, v]) => k + "=" + v).join("\\n");
 }
 
+// Skeleton placeholders sized like the real field-group/button they stand in
+// for, so the layout doesn't jump once the response comes back.
+function skeletonFields(n) {
+  return Array.from({ length: n }).map(() => \`
+    <div class="field-group">
+      <div class="skel" style="width:150px;height:10px;margin-bottom:6px;"></div>
+      <div class="skel" style="width:100%;height:36px;"></div>
+    </div>
+  \`).join("");
+}
+
+function showSecretSkeleton(fieldCount) {
+  document.getElementById("secretBody").innerHTML = \`
+    <div class="skel" style="width:180px;height:11px;margin:16px 0 14px;"></div>
+    \${skeletonFields(fieldCount)}
+    <div class="skel" style="width:100%;height:36px;margin-top:6px;"></div>
+  \`;
+}
+
 async function generate(password) {
+  showSecretSkeleton(3);
   const res = await fetch("/api/secret/generate", {
     method: "POST",
     headers: Object.assign(
@@ -2845,7 +2896,7 @@ async function generate(password) {
     document.getElementById("secretBody").innerHTML =
       '<div class="error-text">' + message + '</div>' +
       '<button class="btn-secondary" style="width:100%;margin-top:10px;" id="retryBtn">Back</button>';
-    document.getElementById("retryBtn").onclick = configured ? renderRegenGate : renderPasswordPrompt;
+    document.getElementById("retryBtn").onclick = configured ? renderChoice : renderPasswordPrompt;
     return;
   }
   const data = await res.json();
@@ -2861,6 +2912,45 @@ async function generate(password) {
       then redeploy / save.
     </div>
     \${configured ? '<div class="error-text" style="margin-top:10px;">Existing sessions, tokens, and subscription links tied to the OLD secrets stop working the moment you save these — only after you update them in Cloudflare.</div>' : ''}
+  \`;
+  document.getElementById("copyAllBtn").onclick = () => {
+    navigator.clipboard.writeText(copyAllText(data.values));
+    showToast("Copied — paste into Cloudflare now.");
+  };
+}
+
+async function changePassword(password) {
+  showSecretSkeleton(1);
+  const res = await fetch("/api/secret/change-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+    body: JSON.stringify({ password })
+  });
+  if (!res.ok) {
+    let message = "Could not change password (" + res.status + "). Try again.";
+    try {
+      const err = await res.json();
+      if (err.error === "password_too_short") message = "Password must be at least 8 characters.";
+    } catch {}
+    document.getElementById("secretBody").innerHTML =
+      '<div class="error-text">' + message + '</div>' +
+      '<button class="btn-secondary" style="width:100%;margin-top:10px;" id="retryBtn">Back</button>';
+    document.getElementById("retryBtn").onclick = renderChoice;
+    return;
+  }
+  const data = await res.json();
+  document.getElementById("secretBody").innerHTML = \`
+    <div class="helper-text" style="margin:16px 0;">
+      Copy this value now — the plaintext password is not stored anywhere and cannot be
+      recovered after you leave this page. ADMIN_SALT and JWT_SECRET are unchanged, so
+      existing sessions stay valid — only ADMIN_PASSWORD_HASH needs updating in Cloudflare.
+    </div>
+    \${fieldsHtml(data.values)}
+    <button class="btn-primary" style="width:100%;margin-top:6px;" id="copyAllBtn">Copy Value</button>
+    <div class="helper-text" style="margin-top:14px;">
+      Paste this into <strong>Cloudflare Dashboard → Workers → Settings → Variables and Secrets</strong>,
+      then redeploy / save.
+    </div>
   \`;
   document.getElementById("copyAllBtn").onclick = () => {
     navigator.clipboard.writeText(copyAllText(data.values));
@@ -2898,10 +2988,6 @@ function renderPasswordPrompt() {
       document.getElementById("newPasswordError").textContent = "Password must be at least 8 characters.";
       return;
     }
-    document.getElementById("secretBody").innerHTML =
-      '<div class="field-group"><label class="field-label">Required secrets</label>' +
-      '<div class="helper-text">ADMIN_PASSWORD_HASH, ADMIN_SALT, JWT_SECRET</div></div>' +
-      '<div id="secretLoading" class="helper-text">Generating…</div>';
     generate(password);
   };
   document.getElementById("genFromPasswordBtn").onclick = submit;
@@ -2915,7 +3001,6 @@ function renderSetupMode() {
 
 function renderRegenGate() {
   document.getElementById("secretBody").innerHTML = \`
-    <div class="error-text" style="margin:14px 0 18px;">This will completely reset the system. Log in first to confirm you're the admin.</div>
     <div class="field-group">
       <label class="field-label">Admin Password</label>
       <input type="password" id="gatePassword" placeholder="Enter admin password" />
@@ -2936,21 +3021,65 @@ function renderRegenGate() {
     }
     const data = await res.json();
     sessionToken = data.token; // kept in memory only, never persisted for this page
-    renderRegenConfirm();
+    renderChoice();
   };
+  document.getElementById("gatePassword")?.addEventListener("keydown", e => {
+    if (e.key === "Enter") document.getElementById("gateBtn").click();
+  });
 }
 
-function renderRegenConfirm() {
+function renderChoice() {
+  document.getElementById("secretBody").innerHTML = \`
+    <button class="btn-primary" style="width:100%;" id="choiceChangePassword">Change Password</button>
+    <div class="helper-text" style="margin-bottom:16px;">Rotates only ADMIN_PASSWORD_HASH. Sessions and links keep working.</div>
+    <button class="btn-danger btn-secondary" style="width:100%;" id="choiceDestroy">Destroy Secrets</button>
+    <div class="helper-text">Regenerates ADMIN_SALT, ADMIN_PASSWORD_HASH, and JWT_SECRET. Every session, token, and subscription link tied to the old values stops working.</div>
+  \`;
+  document.getElementById("choiceChangePassword").onclick = renderChangePasswordPrompt;
+  document.getElementById("choiceDestroy").onclick = renderDestroyConfirm;
+}
+
+function renderChangePasswordPrompt() {
+  document.getElementById("secretBody").innerHTML = \`
+    <div class="field-group">
+      <label class="field-label">New Admin Password</label>
+      <input type="password" id="changePasswordInput" placeholder="At least 8 characters" />
+    </div>
+    <div class="helper-text" style="margin-bottom:6px;">
+      ADMIN_SALT and JWT_SECRET stay the same — only ADMIN_PASSWORD_HASH is recomputed.
+    </div>
+    <button class="btn-primary" style="width:100%;" id="changePasswordBtn">Change Password</button>
+    <div class="error-text" id="changePasswordError"></div>
+    <button class="btn-secondary" style="width:100%;margin-top:10px;" id="changePasswordBack">Back</button>
+  \`;
+  const input = document.getElementById("changePasswordInput");
+  const submit = () => {
+    const password = input.value;
+    if (password.length < 8) {
+      document.getElementById("changePasswordError").textContent = "Password must be at least 8 characters.";
+      return;
+    }
+    changePassword(password);
+  };
+  document.getElementById("changePasswordBtn").onclick = submit;
+  document.getElementById("changePasswordBack").onclick = renderChoice;
+  input.addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
+  input.focus();
+}
+
+function renderDestroyConfirm() {
   document.getElementById("secretBody").innerHTML = \`
     <div class="error-text" style="margin:14px 0 18px;">
-      Regenerating will immediately invalidate every existing admin session, every issued
+      Destroying will immediately invalidate every existing admin session, every issued
       login token, and every existing subscription link once you save the new values in
       Cloudflare. Users and profiles themselves are NOT deleted, but their old links stop
       resolving until you share the new ones.
     </div>
-    <button class="btn-danger btn-secondary" style="width:100%;" id="regenBtn">Regenerate Secrets</button>
+    <button class="btn-danger btn-secondary" style="width:100%;" id="destroyBtn">Destroy Secrets</button>
+    <button class="btn-secondary" style="width:100%;margin-top:10px;" id="destroyBack">Back</button>
   \`;
-  document.getElementById("regenBtn").onclick = renderPasswordPrompt;
+  document.getElementById("destroyBtn").onclick = renderPasswordPrompt;
+  document.getElementById("destroyBack").onclick = renderChoice;
 }
 
 if (configured) {
@@ -2999,11 +3128,13 @@ const STYLES = `
   --bg-surface-raised: #262727;
   --border: rgba(255,255,255,0.12);
   --accent: #409eff;
+  --accent-light: #66b1ff;
   --accent-strong: #3375b9;
   --accent-soft: rgba(64,158,255,0.16);
   --good: #67c23a;
   --good-soft: rgba(103,194,58,0.14);
   --bad: #f56c6c;
+  --bad-light: #f78989;
   --bad-soft: rgba(245,108,108,0.14);
   --text-primary: #e5eaf3;
   --text-muted: #a3a6ad;
@@ -3020,11 +3151,13 @@ const STYLES = `
   --bg-surface-raised: #ffffff;
   --border: #e4e7ed;
   --accent: #409eff;
+  --accent-light: #66b1ff;
   --accent-strong: #337ecc;
   --accent-soft: rgba(64,158,255,0.10);
   --good: #67c23a;
   --good-soft: rgba(103,194,58,0.10);
   --bad: #f56c6c;
+  --bad-light: #f78989;
   --bad-soft: rgba(245,108,108,0.10);
   --text-primary: #303133;
   --text-muted: #909399;
@@ -3044,22 +3177,31 @@ a { color: inherit; }
   background: var(--bg-surface); border: 1px solid var(--border); border-radius: 12px;
 }
 .btn-primary {
-  background: var(--accent); border: none; color: #fff; padding: 9px 16px; border-radius: 8px;
-  font-weight: 600; cursor: pointer; font-size: 13px; transition: background .15s ease;
+  background: var(--accent); border: 1px solid var(--accent); color: #fff; padding: 8px 15px; border-radius: 4px;
+  font-weight: 500; cursor: pointer; font-size: 13px; line-height: 1.4; transition: background .1s, border-color .1s;
 }
-.btn-primary:hover { background: var(--accent-strong); }
+.btn-primary:hover { background: var(--accent-light); border-color: var(--accent-light); }
+.btn-primary:active { background: var(--accent-strong); border-color: var(--accent-strong); }
 .btn-secondary {
-  background: transparent; border: 1px solid var(--border); color: var(--text-primary);
-  padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 500;
+  background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-primary);
+  padding: 8px 15px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500; line-height: 1.4;
+  transition: background .1s, border-color .1s, color .1s;
 }
-.btn-secondary:hover { background: var(--accent-soft); }
-.btn-danger { color: var(--bad); border-color: var(--bad-soft); }
-.btn-danger:hover { background: var(--bad-soft); }
-.btn-icon { background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 6px; border-radius: 6px; font-size: 15px; }
-.btn-icon:hover { background: var(--accent-soft); color: var(--text-primary); }
+.btn-secondary:hover { color: var(--accent); border-color: var(--accent-light); background: var(--accent-soft); }
+.btn-secondary:active { color: var(--accent-strong); border-color: var(--accent-strong); }
+.btn-danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+.btn-danger:hover { background: var(--bad-light); border-color: var(--bad-light); color: #fff; }
+.btn-danger:active { background: var(--bad); border-color: var(--bad); }
+.btn-icon {
+  background: transparent; border: none; color: var(--text-muted); cursor: pointer; font-size: 14px;
+  width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  transition: background .1s, color .1s;
+}
+.btn-icon:hover { background: var(--accent-soft); color: var(--accent); }
 input, textarea, select {
-  width: 100%; background: var(--bg-page); border: 1px solid var(--border);
-  color: var(--text-primary); padding: 9px 12px; border-radius: 8px; font-size: 13px; font-family: inherit;
+  width: 100%; background: var(--bg-surface); border: 1px solid var(--border);
+  color: var(--text-primary); padding: 8px 11px; border-radius: 4px; font-size: 13px; font-family: inherit;
+  transition: border-color .1s;
 }
 input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
 .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
@@ -3135,17 +3277,24 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
 .row-name:hover { color: var(--accent); }
 .row-actions { display: flex; gap: 4px; justify-content: flex-end; }
 .badge-row { display: flex; gap: 6px; flex-wrap: wrap; }
-.badge { font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.badge { font-size: 11px; padding: 3px 8px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .badge.green { background: var(--good-soft); color: var(--good); }
 .timestamp { color: var(--text-muted); font-size: 12px; }
 .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
 .empty-state-icon { font-size: 28px; margin-bottom: 10px; opacity: .6; }
-.skeleton-row { height: 44px; border-bottom: 1px solid var(--border); position: relative; overflow: hidden; }
-.skeleton-row::after {
-  content: ""; position: absolute; inset: 8px 16px; border-radius: 6px; background: var(--accent-soft);
-  animation: pulse 1.3s ease-in-out infinite;
+/* --- Skeleton screens: shimmer bars sized/positioned to match the real
+   content they stand in for, so nothing jumps once data arrives --- */
+.skel {
+  display: block; background: var(--bg-page); border-radius: 4px;
+  position: relative; overflow: hidden;
 }
-@keyframes pulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
+.skel::after {
+  content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, var(--accent-soft), transparent);
+  animation: skel-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes skel-shimmer { 100% { transform: translateX(100%); } }
+.skel-row-actions { display: flex; gap: 6px; justify-content: flex-end; }
 
 /* --- Modals / confirm dialog / toasts --- */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50; }
@@ -3975,9 +4124,31 @@ function renderDashboardView() {
   if (state.loading || !state.stats) {
     return renderShell(\`
       <div class="stat-grid">
-        \${[1,2,3,4].map(() => '<div class="card skeleton-row" style="height:76px;"></div>').join("")}
+        \${[1,2,3,4].map(() => \`
+          <div class="card stat-card">
+            <div class="skel" style="width:65%;height:11px;margin-bottom:10px;"></div>
+            <div class="skel" style="width:38%;height:26px;"></div>
+          </div>
+        \`).join("")}
       </div>
-      <div class="card skeleton-row"></div>
+      <div class="card" style="margin-bottom:16px;">
+        <div class="status-row">
+          <span class="skel" style="width:8px;height:8px;border-radius:50%;flex-shrink:0;"></span>
+          <div class="skel" style="width:130px;height:13px;"></div>
+          <div class="skel" style="width:150px;height:12px;margin-left:auto;"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div style="padding:16px 20px 0;"><div class="skel" style="width:110px;height:11px;"></div></div>
+        <div class="activity-list">
+          \${[1,2,3].map(() => \`
+            <div class="activity-row">
+              <div class="skel" style="width:55%;height:13px;"></div>
+              <div class="skel" style="width:48px;height:12px;flex-shrink:0;"></div>
+            </div>
+          \`).join("")}
+        </div>
+      </div>
     \`);
   }
   const s = state.stats;
@@ -4033,7 +4204,27 @@ function setUserSort(key) {
 
 function renderUsersView() {
   if (state.loading) {
-    return renderShell(\`<div class="card">\${[1,2,3].map(() => '<div class="skeleton-row"></div>').join("")}</div>\`);
+    return renderShell(\`
+      <div class="toolbar">
+        <div class="toolbar-left"><div class="skel search-input" style="height:34px;"></div></div>
+        <div class="skel" style="width:112px;height:34px;border-radius:4px;"></div>
+      </div>
+      <div class="card">
+        <table class="data-table">
+          <thead><tr><th>Name</th><th>Profiles</th><th>Updated</th><th></th></tr></thead>
+          <tbody>
+            \${[1,2,3,4,5].map(() => \`
+              <tr>
+                <td><div class="skel" style="width:130px;height:13px;"></div></td>
+                <td><div class="skel" style="width:76px;height:19px;border-radius:4px;"></div></td>
+                <td><div class="skel" style="width:64px;height:12px;"></div></td>
+                <td><div class="skel-row-actions">\${[1,2,3,4].map(() => '<div class="skel" style="width:22px;height:22px;border-radius:50%;"></div>').join("")}</div></td>
+              </tr>
+            \`).join("")}
+          </tbody>
+        </table>
+      </div>
+    \`);
   }
 
   const filtered = state.users.filter(u =>
@@ -4187,7 +4378,28 @@ function copyUserPrimaryLink(profileId) {
 // ---------------------------------------------------------------------
 function renderUserProfilesView() {
   if (state.loading) {
-    return renderShell(\`<div class="card">\${[1,2].map(() => '<div class="skeleton-row"></div>').join("")}</div>\`);
+    return renderShell(\`
+      <div class="breadcrumb"><a onclick="navigate('users')">Users</a> / <span class="skel" style="display:inline-block;width:80px;height:12px;vertical-align:middle;"></span></div>
+      <div class="toolbar">
+        <div class="toolbar-left"></div>
+        <div class="skel" style="width:126px;height:34px;border-radius:4px;"></div>
+      </div>
+      <div class="card">
+        <table class="data-table">
+          <thead><tr><th>Name</th><th>Sources</th><th>Updated</th><th></th></tr></thead>
+          <tbody>
+            \${[1,2,3].map(() => \`
+              <tr>
+                <td><div class="skel" style="width:150px;height:13px;"></div></td>
+                <td><div class="badge-row"><div class="skel" style="width:56px;height:19px;border-radius:4px;"></div><div class="skel" style="width:52px;height:19px;border-radius:4px;"></div></div></td>
+                <td><div class="skel" style="width:64px;height:12px;"></div></td>
+                <td><div class="skel-row-actions">\${[1,2,3,4,5].map(() => '<div class="skel" style="width:22px;height:22px;border-radius:50%;"></div>').join("")}</div></td>
+              </tr>
+            \`).join("")}
+          </tbody>
+        </table>
+      </div>
+    \`);
   }
 
   const cards = state.profiles.map(p => \`
@@ -4454,7 +4666,20 @@ function renderModal() {
   if (state.modal === "merge") {
     const r = state.mergeResult;
     if (r.loading) {
-      return '<div class="modal-overlay"><div class="card modal-card" style="text-align:center;">Merging sources…</div></div>';
+      return \`
+        <div class="modal-overlay">
+          <div class="card modal-card">
+            <div class="modal-title">Merge Result</div>
+            <div class="stat-row">
+              <div class="stat-box"><div class="skel" style="width:36px;height:22px;margin:0 auto 4px;"></div><div class="skel" style="width:64px;height:11px;margin:0 auto;"></div></div>
+              <div class="stat-box"><div class="skel" style="width:36px;height:22px;margin:0 auto 4px;"></div><div class="skel" style="width:90px;height:11px;margin:0 auto;"></div></div>
+            </div>
+            <div class="skel" style="width:180px;height:180px;margin:14px auto;border-radius:12px;"></div>
+            <div class="skel" style="width:90px;height:11px;margin-bottom:6px;"></div>
+            <div class="skel" style="width:100%;height:36px;"></div>
+          </div>
+        </div>
+      \`;
     }
     const fullUrl = location.origin + r.subUrl;
     return \`
