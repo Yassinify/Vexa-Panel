@@ -3,7 +3,7 @@
 // =====================================================================
 //
 
-const VEXA_VERSION = "2.1.0";
+const VEXA_VERSION = "2.1.1";
 const VEXA_BUILD_DATE = "2026-07-29";
 
 export default {
@@ -3122,6 +3122,17 @@ function renderApp() {
 }
 
 const STYLES = `
+:root {
+  /* 4px/8px spacing scale (Carbon-style 2x grid) — layout paddings, gaps,
+     and margins below are chosen from this scale rather than ad hoc values,
+     so spacing stays consistent across the whole panel. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+}
 :root, [data-theme="dark"] {
   --bg-page: #141414;
   --bg-surface: #1d1e1f;
@@ -3203,7 +3214,14 @@ input, textarea, select {
   color: var(--text-primary); padding: 8px 11px; border-radius: 4px; font-size: 13px; font-family: inherit;
   transition: border-color .1s;
 }
-input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+/* Consistent keyboard-focus ring across every interactive element, so
+   tabbing through the panel never relies on the browser's inconsistent
+   default outline. Mouse/touch clicks don't trigger :focus-visible, so
+   this never shows up as an unwanted ring on click. */
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
 .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
 .login-card { width: 100%; max-width: 380px; padding: 36px 32px; text-align: center; }
 .logo-glow { margin-bottom: 8px; }
@@ -3216,20 +3234,20 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
   width: 220px; flex-shrink: 0; background: var(--sidebar-bg); border-right: 1px solid rgba(0,0,0,.2);
   display: flex; flex-direction: column; padding: 16px 12px;
 }
-.sidebar-brand { display: flex; align-items: center; gap: 10px; padding: 8px 8px 20px; }
+.sidebar-brand { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-2) var(--space-5); }
 .sidebar-brand .avatar {
   width: 30px; height: 30px; border-radius: 8px; background: var(--accent);
   display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; color: #fff;
 }
 .sidebar-brand .brand { color: #fff; }
 .sidebar-link {
-  display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; margin-bottom: 2px;
+  display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: 8px; margin-bottom: 2px;
   color: var(--sidebar-text); cursor: pointer; font-size: 13px; font-weight: 500; text-decoration: none;
 }
 .sidebar-link:hover { background: var(--sidebar-active-bg); color: var(--sidebar-active-text); }
 .sidebar-link.active { background: var(--sidebar-active-bg); color: var(--accent); }
 .sidebar-footer { margin-top: auto; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.08); display: flex; flex-direction: column; gap: 6px; }
-.theme-toggle { display: flex; gap: 4px; background: var(--sidebar-active-bg); border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: 3px; }
+.theme-toggle { display: flex; gap: var(--space-1); background: var(--sidebar-active-bg); border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: var(--space-1); }
 .theme-toggle button {
   flex: 1; background: transparent; border: none; padding: 5px 0; border-radius: 6px; cursor: pointer;
   font-size: 12px; color: var(--sidebar-text);
@@ -3245,7 +3263,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
 .container { max-width: 1180px; margin: 0 auto; padding: 24px 28px 60px; }
 
 /* --- Stat cards --- */
-.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 24px; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-4); margin-bottom: var(--space-5); }
 .stat-card { padding: 18px 20px; }
 .stat-card-label { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
 .stat-card-num { font-size: 26px; font-weight: 700; }
@@ -3259,7 +3277,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
 
 /* --- Toolbar / search / table --- */
 .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
-.toolbar-left { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 200px; }
+.toolbar-left { display: flex; align-items: center; gap: var(--space-3); flex: 1; min-width: 200px; }
 .search-input { max-width: 280px; }
 .breadcrumb { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 13px; margin-bottom: 4px; }
 .breadcrumb a { cursor: pointer; }
@@ -3300,15 +3318,15 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50; }
 .modal-card { width: 100%; max-width: 520px; padding: 24px; max-height: 85vh; overflow-y: auto; }
 .modal-card.small { max-width: 400px; }
-.modal-title { font-size: 16px; font-weight: 700; margin-bottom: 18px; }
+.modal-title { font-size: 16px; font-weight: 700; margin-bottom: var(--space-4); }
 .field-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin-bottom: 6px; display: block; }
 .field-group { margin-bottom: 16px; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
-.stat-row { display: flex; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
-.stat-box { flex: 1; min-width: 100px; text-align: center; padding: 14px; background: var(--bg-page); border-radius: 10px; border: 1px solid var(--border); }
+.stat-row { display: flex; gap: var(--space-3); margin-bottom: var(--space-4); flex-wrap: wrap; }
+.stat-box { flex: 1; min-width: 100px; text-align: center; padding: var(--space-4); background: var(--bg-page); border-radius: 10px; border: 1px solid var(--border); }
 .stat-num { font-size: 22px; font-weight: 700; }
 .stat-label { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
-.qr-box { background: #fff; border-radius: 12px; padding: 14px; display: flex; align-items: center; justify-content: center; margin: 14px 0; }
+.qr-box { background: #fff; border-radius: 12px; padding: var(--space-4); display: flex; align-items: center; justify-content: center; margin: var(--space-4) 0; }
 .qr-box svg { width: 180px; height: 180px; }
 .link-row { display: flex; gap: 8px; align-items: center; }
 .link-row input { font-family: var(--mono-stack); font-size: 12px; }
@@ -4674,7 +4692,7 @@ function renderModal() {
               <div class="stat-box"><div class="skel" style="width:36px;height:22px;margin:0 auto 4px;"></div><div class="skel" style="width:64px;height:11px;margin:0 auto;"></div></div>
               <div class="stat-box"><div class="skel" style="width:36px;height:22px;margin:0 auto 4px;"></div><div class="skel" style="width:90px;height:11px;margin:0 auto;"></div></div>
             </div>
-            <div class="skel" style="width:180px;height:180px;margin:14px auto;border-radius:12px;"></div>
+            <div class="skel" style="width:180px;height:180px;margin:16px auto;border-radius:12px;"></div>
             <div class="skel" style="width:90px;height:11px;margin-bottom:6px;"></div>
             <div class="skel" style="width:100%;height:36px;"></div>
           </div>

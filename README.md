@@ -81,6 +81,15 @@ console.log("ADMIN_PASSWORD_HASH:", derivedKey);
 
 ## 📋 Changelog
 
+### **v2.1.1**
+
+refactor(ui): standardize layout spacing scale and improve focus accessibility
+
+- Introduce 4/8px-based spacing scale (--space-1 to --space-6) across sidebar, toolbars, and modals
+- Replace ad-hoc pixel values (10px, 14px, 18px, etc.) with standardized design tokens
+- Add visible `:focus-visible` rings to all interactive elements for better keyboard accessibility
+- Upgrade input focus states to use a box-shadow glow instead of plain border swaps
+
 ### **v2.1.0**
 
 feat(ui): align UI metrics with Element Plus and add password-only rotation
