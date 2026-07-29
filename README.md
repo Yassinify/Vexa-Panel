@@ -81,6 +81,15 @@ console.log("ADMIN_PASSWORD_HASH:", derivedKey);
 
 ## 📋 Changelog
 
+### **v2.2.1**
+
+fix(ui): improve light theme contrast and hamburger button visibility
+
+- Darken `--border` (#d3d7dd) and `--text-muted` (#63666d) in light theme to meet WCAG AA contrast standards
+- Add solid background fill (`var(--bg-page)`) to `.menu-toggle-btn` for better visibility
+- Fix hamburger icon alignment by enforcing `flex` layout instead of `block`
+- Note: Accent colors (`--accent`, `--good`, `--bad`) and dark theme tokens remain unchanged
+
 ### **v2.2.0**
 
 fix(ui): improve mobile responsiveness and cross-browser compatibility

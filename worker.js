@@ -3,7 +3,7 @@
 // =====================================================================
 //
 
-const VEXA_VERSION = "2.2.0";
+const VEXA_VERSION = "2.2.1";
 const VEXA_BUILD_DATE = "2026-07-29";
 
 export default {
@@ -3160,7 +3160,7 @@ const STYLES = `
   --bg-page: #f0f2f5;
   --bg-surface: #ffffff;
   --bg-surface-raised: #ffffff;
-  --border: #e4e7ed;
+  --border: #d3d7dd;
   --accent: #409eff;
   --accent-light: #66b1ff;
   --accent-strong: #337ecc;
@@ -3171,7 +3171,7 @@ const STYLES = `
   --bad-light: #f78989;
   --bad-soft: rgba(245,108,108,0.10);
   --text-primary: #303133;
-  --text-muted: #909399;
+  --text-muted: #63666d;
   --sidebar-bg: #304156;
   --sidebar-text: #bfcbd9;
   --sidebar-active-bg: #263445;
@@ -3267,8 +3267,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
    (below WCAG's 44px minimum only by a hair, kept for visual balance with
    the 28px btn-icon set) rather than the visual icon's own dimensions. */
 .menu-toggle-btn {
-  display: none; background: transparent; border: 1px solid var(--border); color: var(--text-primary);
-  width: 40px; height: 40px; border-radius: 8px; font-size: 16px; cursor: pointer; flex-shrink: 0;
+  display: none; align-items: center; justify-content: center;
+  background: var(--bg-page); border: 1px solid var(--border); color: var(--text-primary);
+  width: 40px; height: 40px; border-radius: 8px; font-size: 18px; line-height: 1; cursor: pointer; flex-shrink: 0;
 }
 .menu-toggle-btn:hover { background: var(--accent-soft); color: var(--accent); }
 .sidebar-backdrop {
@@ -3379,7 +3380,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .container { padding: var(--space-5) var(--space-4) 60px; }
 }
 @media (max-width: 780px) {
-  .menu-toggle-btn, .sidebar-backdrop { display: block; }
+  .menu-toggle-btn { display: flex; }
+  .sidebar-backdrop { display: block; }
   .sidebar {
     position: fixed; z-index: 40; top: 0; left: 0; height: 100vh; width: 250px;
     transform: translateX(-100%); transition: transform .2s ease;
