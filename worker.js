@@ -3,7 +3,7 @@
 // =====================================================================
 //
 
-const VEXA_VERSION = "1.6.0";
+const VEXA_VERSION = "1.8.0";
 const VEXA_BUILD_DATE = "2026-07-29";
 
 export default {
@@ -344,6 +344,7 @@ function classifySourceString(str) {
     "tuic://",
     "hysteria://",
     "wireguard://",
+    "socks://",
   ];
   if (rawProtocols.some((p) => str.startsWith(p)))
     return { type: "raw", value: str };
@@ -540,7 +541,7 @@ async function fetchSubscriptionNodes(url) {
   // isn't actually a URI list (stray prose, a misformatted JSON fragment,
   // an HTML error page, etc.) could otherwise leak non-link text through.
   const KNOWN_NODE_SCHEMES =
-    /^(vless|vmess|ss|ssr|trojan|hysteria2|hy2|tuic|hysteria|wireguard):\/\//i;
+    /^(vless|vmess|ss|ssr|trojan|hysteria2|hy2|tuic|hysteria|wireguard|socks):\/\//i;
   return body
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -682,6 +683,15 @@ function fingerprintNode(uri) {
       const pubkey = new URLSearchParams(search).get("publickey") || "";
       return `wireguard:${hostPort}:${pubkey}`;
     }
+    if (uri.startsWith("socks://")) {
+      const withoutProto = uri.slice("socks://".length).split("#")[0];
+      const beforeQuery = splitOnce(withoutProto, "?")[0].split("/")[0];
+      const [credsRaw, hostPort] = beforeQuery.includes("@")
+        ? splitOnce(beforeQuery, "@")
+        : ["", beforeQuery];
+      const creds = credsRaw ? normalizeSsUserinfo(credsRaw) : "";
+      return `socks:${hostPort}:${creds}`;
+    }
     return `raw:${uri}`;
   } catch {
     return `raw:${uri}`;
@@ -808,6 +818,20 @@ function validateNodeUri(uri) {
         !params.get("publickey")
       ) {
         return { valid: false, reason: "malformed_wireguard_link" };
+      }
+      return { valid: true };
+    }
+    if (uri.startsWith("socks://")) {
+      // socks://[base64(user:pass)@]host:port#remark — auth is optional
+      // (many public/self-hosted SOCKS5 proxies are open, no userinfo at all).
+      const withoutProto = uri.slice("socks://".length).split("#")[0];
+      const beforeQuery = splitOnce(withoutProto, "?")[0].split("/")[0];
+      const hostPortRaw = beforeQuery.includes("@")
+        ? splitOnce(beforeQuery, "@")[1]
+        : beforeQuery;
+      const [host, port] = splitOnce(hostPortRaw, ":");
+      if (!host || !port || isNaN(Number(port))) {
+        return { valid: false, reason: "malformed_host_port" };
       }
       return { valid: true };
     }
@@ -1003,6 +1027,31 @@ function parseNodeUri(uri) {
         remark: hash ? decodeURIComponent(hash) : "",
       };
     }
+    if (uri.startsWith("socks://")) {
+      const withoutProto = uri.slice("socks://".length);
+      const [beforeHash, hash] = splitOnce(withoutProto, "#");
+      const beforeQuery = splitOnce(beforeHash, "?")[0];
+      let username = "",
+        password = "",
+        hostPort;
+      if (beforeQuery.includes("@")) {
+        const [credsRaw, rest] = splitOnce(beforeQuery, "@");
+        const creds = normalizeSsUserinfo(credsRaw);
+        [username, password] = splitOnce(creds, ":");
+        hostPort = rest;
+      } else {
+        hostPort = beforeQuery;
+      }
+      const [host, port] = splitOnce(hostPort.split("/")[0], ":");
+      return {
+        protocol: "socks",
+        address: host,
+        port: Number(port),
+        username,
+        password,
+        remark: hash ? decodeURIComponent(hash) : "",
+      };
+    }
     return null; // SSR/etc: not yet supported for structured parse
   } catch {
     return null;
@@ -1119,6 +1168,13 @@ function generateNodeUri(node) {
     if (node.reserved) params.set("reserved", node.reserved);
     const qs = params.toString();
     return `wireguard://${encodeURIComponent(node.privateKey || "")}@${node.address}:${node.port}${qs ? "?" + qs : ""}${remarkSuffix}`;
+  }
+
+  if (node.protocol === "socks") {
+    const auth = node.username
+      ? `${utf8ToBase64(`${node.username}:${node.password || ""}`).replace(/=+$/, "")}@`
+      : "";
+    return `socks://${auth}${node.address}:${node.port}${remarkSuffix}`;
   }
 
   throw new Error("unsupported_protocol_for_generation");
@@ -1396,6 +1452,43 @@ function parseXrayOutbound(outbound) {
       };
     }
 
+    if (protocol === "socks") {
+      const server = (settings.servers && settings.servers[0]) || settings;
+      if (!server.address || !server.port) return null;
+      const user = (server.users && server.users[0]) || {};
+      return {
+        protocol: "socks",
+        address: server.address,
+        port: Number(server.port),
+        username: user.user || "",
+        password: user.pass || "",
+        remark: outbound.tag || "",
+      };
+    }
+
+    // Xray-core's native "http" outbound — identical settings shape to
+    // "socks" above (servers[0].{address,port,users[0].{user,pass}}).
+    // JSON-only, deliberately: unlike socks/wireguard/etc., there's no safe
+    // node-link scheme to add for this one — "http://" and "https://" are
+    // already committed elsewhere in this file to mean "fetch this as a
+    // subscription URL" (see classifySourceString/fetchSubscriptionNodes),
+    // checked before any node-scheme detection. Registering "http://" as a
+    // proxy-link prefix here would silently break every existing HTTP/HTTPS
+    // subscription import instead of adding a feature.
+    if (protocol === "http") {
+      const server = (settings.servers && settings.servers[0]) || settings;
+      if (!server.address || !server.port) return null;
+      const user = (server.users && server.users[0]) || {};
+      return {
+        protocol: "http",
+        address: server.address,
+        port: Number(server.port),
+        username: user.user || "",
+        password: user.pass || "",
+        remark: outbound.tag || "",
+      };
+    }
+
     return null; // protocol not yet supported for JSON import (Step 5 territory)
   } catch {
     return null;
@@ -1521,6 +1614,42 @@ function generateXrayOutbound(node) {
         ...(node.reserved
           ? { reserved: node.reserved.split(",").map(Number) }
           : {}),
+      },
+    };
+  }
+
+  if (node.protocol === "socks") {
+    return {
+      ...(tag ? { tag } : {}),
+      protocol: "socks",
+      settings: {
+        servers: [
+          {
+            address: node.address,
+            port: node.port,
+            ...(node.username
+              ? { users: [{ user: node.username, pass: node.password || "" }] }
+              : {}),
+          },
+        ],
+      },
+    };
+  }
+
+  if (node.protocol === "http") {
+    return {
+      ...(tag ? { tag } : {}),
+      protocol: "http",
+      settings: {
+        servers: [
+          {
+            address: node.address,
+            port: node.port,
+            ...(node.username
+              ? { users: [{ user: node.username, pass: node.password || "" }] }
+              : {}),
+          },
+        ],
       },
     };
   }

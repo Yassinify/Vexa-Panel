@@ -81,6 +81,15 @@ console.log("ADMIN_PASSWORD_HASH:", derivedKey);
 
 ## 📋 Changelog
 
+### **1.8.0**
+
+feat: add SOCKS5 URI/JSON support and HTTP outbound JSON mapping
+
+- Add SOCKS5 URI scheme (socks://) with optional base64 authentication
+- Add Xray-core native "socks" outbound JSON import/export
+- Add Xray-core native "http" outbound JSON mapping (same server/user shape as socks)
+- Note: HTTP support is JSON-only to prevent collisions with subscription URL fetchers
+
 ### **1.6.0**
 
 feat(wireguard): add WireGuard URI scheme and Xray-core outbound JSON mapping
