@@ -81,6 +81,15 @@ console.log("ADMIN_PASSWORD_HASH:", derivedKey);
 
 ## 📋 Changelog
 
+### **v2.0.1**
+
+fix(auth): require custom admin password during initial setup and regeneration
+
+- Enforce custom password selection (min 8 chars) instead of default "admin"
+- Compute `ADMIN_PASSWORD_HASH` directly from user-defined password
+- Streamline two-step secret flow (`ADMIN_PASSWORD_HASH`, `ADMIN_SALT`, `JWT_SECRET`)
+- Apply consistent setup/regeneration UX for both first-time setup and manual resets
+
 ### **v2.0.0**
 
 feat(admin): redesign admin panel (v2.0.0 Phase 1)

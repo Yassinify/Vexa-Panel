@@ -3,7 +3,7 @@
 // =====================================================================
 //
 
-const VEXA_VERSION = "2.0.0";
+const VEXA_VERSION = "2.0.1";
 const VEXA_BUILD_DATE = "2026-07-29";
 
 export default {
@@ -64,7 +64,7 @@ async function route(request, env, ctx) {
       if (authResult instanceof Response)
         return withCors(request, authResult, env);
     }
-    return withCors(request, await handleGenerateSecrets(), env);
+    return withCors(request, await handleGenerateSecrets(request), env);
   }
 
   if (pathname === "/api/login" && method === "POST") {
@@ -306,9 +306,16 @@ function randomHex(byteLength) {
   return bytesToHex(bytes);
 }
 
-async function handleGenerateSecrets() {
+async function handleGenerateSecrets(request) {
+  const body = await safeJson(request);
+  const password =
+    body && typeof body.password === "string" ? body.password : "";
+  if (password.length < 8) {
+    return json({ error: "password_too_short" }, 400);
+  }
+
   const adminSalt = randomHex(16);
-  const adminPasswordHash = await deriveKey("admin", adminSalt);
+  const adminPasswordHash = await deriveKey(password, adminSalt);
   const jwtSecret = randomHex(32);
   return json({
     values: {
@@ -316,7 +323,6 @@ async function handleGenerateSecrets() {
       ADMIN_SALT: adminSalt,
       JWT_SECRET: jwtSecret,
     },
-    defaultPassword: "admin",
   });
 }
 
@@ -2821,21 +2827,32 @@ function copyAllText(values) {
   return Object.entries(values).map(([k, v]) => k + "=" + v).join("\\n");
 }
 
-async function generate() {
+async function generate(password) {
   const res = await fetch("/api/secret/generate", {
     method: "POST",
-    headers: sessionToken ? { Authorization: "Bearer " + sessionToken } : {}
+    headers: Object.assign(
+      { "Content-Type": "application/json" },
+      sessionToken ? { Authorization: "Bearer " + sessionToken } : {}
+    ),
+    body: JSON.stringify({ password })
   });
   if (!res.ok) {
+    let message = "Could not generate secrets (" + res.status + "). Try again.";
+    try {
+      const err = await res.json();
+      if (err.error === "password_too_short") message = "Password must be at least 8 characters.";
+    } catch {}
     document.getElementById("secretBody").innerHTML =
-      '<div class="error-text">Could not generate secrets (' + res.status + '). Try again.</div>';
+      '<div class="error-text">' + message + '</div>' +
+      '<button class="btn-secondary" style="width:100%;margin-top:10px;" id="retryBtn">Back</button>';
+    document.getElementById("retryBtn").onclick = configured ? renderRegenGate : renderPasswordPrompt;
     return;
   }
   const data = await res.json();
   document.getElementById("secretBody").innerHTML = \`
     <div class="helper-text" style="margin:16px 0;">
-      Default admin password: <strong>\${data.defaultPassword}</strong> — change it after logging in
-      if this control panel is user-facing.
+      Copy these three values now — the plaintext password is not stored anywhere and cannot be
+      recovered after you leave this page.
     </div>
     \${fieldsHtml(data.values)}
     <button class="btn-primary" style="width:100%;margin-top:6px;" id="copyAllBtn">Copy All Secrets</button>
@@ -2861,12 +2878,39 @@ function showToast(msg) {
   setTimeout(() => toast.remove(), 2500);
 }
 
+function renderPasswordPrompt() {
+  document.getElementById("secretBody").innerHTML = \`
+    <div class="field-group">
+      <label class="field-label">Choose Admin Password</label>
+      <input type="password" id="newPasswordInput" placeholder="At least 8 characters" />
+    </div>
+    <div class="helper-text" style="margin-bottom:6px;">
+      This is the password you'll log in with — it's never stored in plaintext, only hashed
+      into ADMIN_PASSWORD_HASH below.
+    </div>
+    <button class="btn-primary" style="width:100%;" id="genFromPasswordBtn">Generate Secrets</button>
+    <div class="error-text" id="newPasswordError"></div>
+  \`;
+  const input = document.getElementById("newPasswordInput");
+  const submit = () => {
+    const password = input.value;
+    if (password.length < 8) {
+      document.getElementById("newPasswordError").textContent = "Password must be at least 8 characters.";
+      return;
+    }
+    document.getElementById("secretBody").innerHTML =
+      '<div class="field-group"><label class="field-label">Required secrets</label>' +
+      '<div class="helper-text">ADMIN_PASSWORD_HASH, ADMIN_SALT, JWT_SECRET</div></div>' +
+      '<div id="secretLoading" class="helper-text">Generating…</div>';
+    generate(password);
+  };
+  document.getElementById("genFromPasswordBtn").onclick = submit;
+  input.addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
+  input.focus();
+}
+
 function renderSetupMode() {
-  document.getElementById("secretBody").innerHTML =
-    '<div class="field-group"><label class="field-label">Required secrets</label>' +
-    '<div class="helper-text">ADMIN_PASSWORD_HASH, ADMIN_SALT, JWT_SECRET</div></div>' +
-    '<div id="secretLoading" class="helper-text">Generating…</div>';
-  generate();
+  renderPasswordPrompt();
 }
 
 function renderRegenGate() {
@@ -2906,7 +2950,7 @@ function renderRegenConfirm() {
     </div>
     <button class="btn-danger btn-secondary" style="width:100%;" id="regenBtn">Regenerate Secrets</button>
   \`;
-  document.getElementById("regenBtn").onclick = generate;
+  document.getElementById("regenBtn").onclick = renderPasswordPrompt;
 }
 
 if (configured) {
