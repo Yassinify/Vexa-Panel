@@ -81,7 +81,18 @@ console.log("ADMIN_PASSWORD_HASH:", derivedKey);
 
 ## 📋 Changelog
 
-### **1.9.0**
+### **v2.0.0**
+
+feat(admin): redesign admin panel (v2.0.0 Phase 1)
+
+- Introduce User-Profile ownership hierarchy with automatic zero-downtime migration
+- Optimize KV storage using explicit index & stats records to avoid payload list() calls
+- Add `/secret` route for initial setup and secure env secret generation
+- Add modern sidebar layout with Dashboard and User/Profile management views
+- Add UI enhancements: toasts, modal confirms, theme toggles (light/dark/system)
+- Note: Core parsers, validators, merge engine, and `/sub/:id` endpoints remain untouched
+
+### **v1.9.0**
 
 feat(naive): add NaiveProxy URI scheme support (naive+https:// & naive+quic://)
 
@@ -90,7 +101,7 @@ feat(naive): add NaiveProxy URI scheme support (naive+https:// & naive+quic://)
 - Note: URI-only (no JSON mapping as Xray-core lacks a native naive outbound)
 - Evaluated and skipped SSH support due to lack of standard URI spec or Xray outbound
 
-### **1.8.0**
+### **v1.8.0**
 
 feat: add SOCKS5 URI/JSON support and HTTP outbound JSON mapping
 
@@ -99,7 +110,7 @@ feat: add SOCKS5 URI/JSON support and HTTP outbound JSON mapping
 - Add Xray-core native "http" outbound JSON mapping (same server/user shape as socks)
 - Note: HTTP support is JSON-only to prevent collisions with subscription URL fetchers
 
-### **1.6.0**
+### **v1.6.0**
 
 feat(wireguard): add WireGuard URI scheme and Xray-core outbound JSON mapping
 

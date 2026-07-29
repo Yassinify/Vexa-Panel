@@ -3,7 +3,7 @@
 // =====================================================================
 //
 
-const VEXA_VERSION = "1.9.0";
+const VEXA_VERSION = "2.0.0";
 const VEXA_BUILD_DATE = "2026-07-29";
 
 export default {
@@ -33,8 +33,38 @@ async function route(request, env, ctx) {
     return handlePublicSub(pathname.split("/sub/")[1], env, url);
   }
 
+  // Required Cloudflare Variables/Secrets missing → force the admin through
+  // the setup page rather than serving a panel that can't log anyone in.
+  if (
+    (pathname === "/" || pathname === "/index.html") &&
+    !secretsConfigured(env)
+  ) {
+    return Response.redirect(`${url.origin}/secret`, 302);
+  }
+
   if (pathname === "/" || pathname === "/index.html") {
     return htmlResponse(renderApp());
+  }
+
+  if (pathname === "/secret" && method === "GET") {
+    return htmlResponse(renderSecretPage(secretsConfigured(env)));
+  }
+
+  // Generating new secret values never reads or writes any existing secret
+  // (it's a stateless generator — the Worker can't write its own Variables
+  // and Secrets at runtime, only the admin can paste these into the
+  // Cloudflare dashboard). In setup mode nothing is configured yet, so
+  // there's nothing to protect and no admin session could exist. Once
+  // secrets ARE configured, regenerating requires a valid admin session so
+  // a stranger who finds /secret can't spam-generate values (they still
+  // can't apply them, but there's no reason to let them try).
+  if (pathname === "/api/secret/generate" && method === "POST") {
+    if (secretsConfigured(env)) {
+      const authResult = await requireAuth(request, env);
+      if (authResult instanceof Response)
+        return withCors(request, authResult, env);
+    }
+    return withCors(request, await handleGenerateSecrets(), env);
   }
 
   if (pathname === "/api/login" && method === "POST") {
@@ -64,6 +94,12 @@ async function route(request, env, ctx) {
   }
 
   return json({ error: "not_found" }, 404);
+}
+
+// Required Variables/Secrets for the panel to function at all. ADMIN_SALT
+// and ADMIN_PASSWORD_HASH gate login, JWT_SECRET signs/verifies sessions.
+function secretsConfigured(env) {
+  return Boolean(env.ADMIN_SALT && env.ADMIN_PASSWORD_HASH && env.JWT_SECRET);
 }
 
 // ---------------------------------------------------------------------
@@ -262,6 +298,28 @@ async function checkLoginRateLimit(request, env) {
   return true;
 }
 
+// ---------------------------------------------------------------------
+// SECRET GENERATION (used by GET /secret's UI, via POST /api/secret/generate)
+// ---------------------------------------------------------------------
+function randomHex(byteLength) {
+  const bytes = crypto.getRandomValues(new Uint8Array(byteLength));
+  return bytesToHex(bytes);
+}
+
+async function handleGenerateSecrets() {
+  const adminSalt = randomHex(16);
+  const adminPasswordHash = await deriveKey("admin", adminSalt);
+  const jwtSecret = randomHex(32);
+  return json({
+    values: {
+      ADMIN_PASSWORD_HASH: adminPasswordHash,
+      ADMIN_SALT: adminSalt,
+      JWT_SECRET: jwtSecret,
+    },
+    defaultPassword: "admin",
+  });
+}
+
 async function handleLogin(request, env) {
   const allowed = await checkLoginRateLimit(request, env);
   if (!allowed) return json({ error: "too_many_attempts" }, 429);
@@ -281,15 +339,175 @@ async function handleLogin(request, env) {
 }
 
 // ---------------------------------------------------------------------
-// PROFILE CRUD (KV: profile:{uuid})
+// DATA MODEL: Users → Profiles → Sources
+//   user:{uuid}              -> {id, name, createdAt, updatedAt}
+//   profile:{uuid}           -> {id, userId, name, sources[], createdAt, updatedAt}  (unchanged key shape)
+//   idx:users                -> [userId, ...]                    (avoids KV.list() for the users list)
+//   idx:userProfiles:{uuid}  -> [profileId, ...]                 (avoids KV.list() per user)
+//   meta:stats               -> cached dashboard summary, updated incrementally on writes
+//   meta:activity            -> capped (20) recent-activity feed
+//   meta:migrated_v2         -> one-time migration flag
+// ---------------------------------------------------------------------
+async function kvGetJson(env, key, fallback) {
+  const raw = await env.STORAGE.get(key);
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+async function kvPutJson(env, key, value) {
+  await env.STORAGE.put(key, JSON.stringify(value));
+}
+
+// Runs once ever (gated by meta:migrated_v2). This is the ONLY place this
+// file still does a KV.list() — every request after migration reads the
+// idx:* records instead. Pre-existing profiles (no userId) are bucketed
+// under one auto-created "Migrated Users" account so nothing disappears.
+async function ensureMigrated(env) {
+  const flag = await env.STORAGE.get("meta:migrated_v2");
+  if (flag) return;
+
+  const list = await env.STORAGE.list({ prefix: "profile:" });
+  const existingProfiles = (
+    await Promise.all(
+      list.keys.map(async (k) => {
+        const raw = await env.STORAGE.get(k.name);
+        return raw ? JSON.parse(raw) : null;
+      }),
+    )
+  ).filter(Boolean);
+
+  const orphans = existingProfiles.filter((p) => !p.userId);
+  let userIds = await kvGetJson(env, "idx:users", []);
+
+  if (orphans.length > 0) {
+    const now = Date.now();
+    const migratedUser = {
+      id: crypto.randomUUID(),
+      name: "Migrated Users",
+      createdAt: now,
+      updatedAt: now,
+    };
+    await kvPutJson(env, `user:${migratedUser.id}`, migratedUser);
+    userIds = [...userIds, migratedUser.id];
+    const profileIds = [];
+    for (const p of orphans) {
+      p.userId = migratedUser.id;
+      await env.STORAGE.put(`profile:${p.id}`, JSON.stringify(p));
+      profileIds.push(p.id);
+    }
+    await kvPutJson(env, `idx:userProfiles:${migratedUser.id}`, profileIds);
+  }
+
+  await kvPutJson(env, "idx:users", userIds);
+  await recomputeStats(env);
+  await env.STORAGE.put("meta:migrated_v2", "1");
+}
+
+// Full recompute — only used by the migration above. Everyday mutations use
+// adjustStats() below instead, so a dashboard load never has to walk every
+// profile.
+async function recomputeStats(env) {
+  const userIds = await kvGetJson(env, "idx:users", []);
+  let totalProfiles = 0,
+    totalSubSources = 0,
+    totalRawSources = 0;
+  for (const uid of userIds) {
+    const profileIds = await kvGetJson(env, `idx:userProfiles:${uid}`, []);
+    totalProfiles += profileIds.length;
+    for (const pid of profileIds) {
+      const raw = await env.STORAGE.get(`profile:${pid}`);
+      if (!raw) continue;
+      const p = JSON.parse(raw);
+      totalSubSources += p.sources.filter(
+        (s) => s.type === "subscription",
+      ).length;
+      totalRawSources += p.sources.filter(
+        (s) => s.type !== "subscription",
+      ).length;
+    }
+  }
+  const stats = {
+    totalUsers: userIds.length,
+    totalProfiles,
+    totalSubSources,
+    totalRawSources,
+    updatedAt: Date.now(),
+  };
+  await kvPutJson(env, "meta:stats", stats);
+  return stats;
+}
+
+async function adjustStats(env, delta) {
+  const stats = await kvGetJson(env, "meta:stats", {
+    totalUsers: 0,
+    totalProfiles: 0,
+    totalSubSources: 0,
+    totalRawSources: 0,
+  });
+  for (const key of Object.keys(delta))
+    stats[key] = Math.max(0, (stats[key] || 0) + delta[key]);
+  stats.updatedAt = Date.now();
+  await kvPutJson(env, "meta:stats", stats);
+  return stats;
+}
+
+async function recordActivity(env, message) {
+  const activity = await kvGetJson(env, "meta:activity", []);
+  activity.unshift({ message, ts: Date.now() });
+  await kvPutJson(env, "meta:activity", activity.slice(0, 20));
+}
+
+// ---------------------------------------------------------------------
+// API ROUTER
 // ---------------------------------------------------------------------
 async function handleApi(pathname, method, request, env, authPayload) {
+  await ensureMigrated(env);
+
+  if (pathname === "/api/stats" && method === "GET") return getStats(env);
+
+  if (pathname === "/api/users" && method === "GET") return listUsers(env);
+  if (pathname === "/api/users" && method === "POST")
+    return createUser(request, env);
+
+  const userDuplicateMatch = pathname.match(
+    /^\/api\/users\/([a-f0-9-]{36})\/duplicate$/,
+  );
+  if (userDuplicateMatch && method === "POST")
+    return duplicateUser(userDuplicateMatch[1], env);
+
+  const userProfilesMatch = pathname.match(
+    /^\/api\/users\/([a-f0-9-]{36})\/profiles$/,
+  );
+  if (userProfilesMatch) {
+    const userId = userProfilesMatch[1];
+    if (method === "GET") return listProfilesForUser(userId, env);
+    if (method === "POST") return createProfile(userId, request, env);
+  }
+
+  const userMatch = pathname.match(/^\/api\/users\/([a-f0-9-]{36})$/);
+  if (userMatch) {
+    const id = userMatch[1];
+    if (method === "GET") return getUser(id, env);
+    if (method === "PUT") return updateUser(id, request, env);
+    if (method === "DELETE") return deleteUser(id, env);
+  }
+
+  // Back-compat flat listing across every user — used by merge-preview style
+  // tooling, not by the redesigned UI (which always lists profiles scoped
+  // to a user via /api/users/:id/profiles).
   if (pathname === "/api/profiles" && method === "GET") {
-    return listProfiles(env);
+    return listAllProfiles(env);
   }
-  if (pathname === "/api/profiles" && method === "POST") {
-    return createProfile(request, env);
-  }
+
+  const profileDuplicateMatch = pathname.match(
+    /^\/api\/profiles\/([a-f0-9-]{36})\/duplicate$/,
+  );
+  if (profileDuplicateMatch && method === "POST")
+    return duplicateProfile(profileDuplicateMatch[1], env);
 
   const profileMatch = pathname.match(/^\/api\/profiles\/([a-f0-9-]{36})$/);
   if (profileMatch) {
@@ -304,6 +522,196 @@ async function handleApi(pathname, method, request, env, authPayload) {
   }
 
   return json({ error: "not_found" }, 404);
+}
+
+// ---------------------------------------------------------------------
+// USERS CRUD
+// ---------------------------------------------------------------------
+async function listUsers(env) {
+  const userIds = await kvGetJson(env, "idx:users", []);
+  const users = await Promise.all(
+    userIds.map(async (id) => {
+      const raw = await env.STORAGE.get(`user:${id}`);
+      if (!raw) return null;
+      const user = JSON.parse(raw);
+      const profileIds = await kvGetJson(env, `idx:userProfiles:${id}`, []);
+      return {
+        id: user.id,
+        name: user.name,
+        profileCount: profileIds.length,
+        primaryProfileId: profileIds[0] || null,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      };
+    }),
+  );
+  return json({ users: users.filter(Boolean) });
+}
+
+async function createUser(request, env) {
+  const body = await safeJson(request);
+  if (!body || !body.name || typeof body.name !== "string") {
+    return json({ error: "name_required" }, 400);
+  }
+  const now = Date.now();
+  const user = {
+    id: crypto.randomUUID(),
+    name: body.name.trim(),
+    createdAt: now,
+    updatedAt: now,
+  };
+  await kvPutJson(env, `user:${user.id}`, user);
+  await kvPutJson(env, `idx:userProfiles:${user.id}`, []);
+  const userIds = await kvGetJson(env, "idx:users", []);
+  userIds.push(user.id);
+  await kvPutJson(env, "idx:users", userIds);
+  await adjustStats(env, { totalUsers: 1 });
+  await recordActivity(env, `Created user "${user.name}"`);
+  return json({ user, profileCount: 0 }, 201);
+}
+
+async function getUser(id, env) {
+  const raw = await env.STORAGE.get(`user:${id}`);
+  if (!raw) return json({ error: "not_found" }, 404);
+  return json({ user: JSON.parse(raw) });
+}
+
+async function updateUser(id, request, env) {
+  const raw = await env.STORAGE.get(`user:${id}`);
+  if (!raw) return json({ error: "not_found" }, 404);
+  const user = JSON.parse(raw);
+  const body = await safeJson(request);
+  if (body && body.name) user.name = body.name.trim();
+  user.updatedAt = Date.now();
+  await kvPutJson(env, `user:${id}`, user);
+  await recordActivity(env, `Renamed user to "${user.name}"`);
+  return json({ user });
+}
+
+async function deleteUser(id, env) {
+  const raw = await env.STORAGE.get(`user:${id}`);
+  if (!raw) return json({ error: "not_found" }, 404);
+  const user = JSON.parse(raw);
+  const profileIds = await kvGetJson(env, `idx:userProfiles:${id}`, []);
+  let subCount = 0,
+    rawCount = 0;
+  for (const pid of profileIds) {
+    const pRaw = await env.STORAGE.get(`profile:${pid}`);
+    if (pRaw) {
+      const p = JSON.parse(pRaw);
+      subCount += p.sources.filter((s) => s.type === "subscription").length;
+      rawCount += p.sources.filter((s) => s.type !== "subscription").length;
+    }
+    await env.STORAGE.delete(`profile:${pid}`);
+  }
+  await env.STORAGE.delete(`idx:userProfiles:${id}`);
+  await env.STORAGE.delete(`user:${id}`);
+  const userIds = await kvGetJson(env, "idx:users", []);
+  await kvPutJson(
+    env,
+    "idx:users",
+    userIds.filter((uid) => uid !== id),
+  );
+  await adjustStats(env, {
+    totalUsers: -1,
+    totalProfiles: -profileIds.length,
+    totalSubSources: -subCount,
+    totalRawSources: -rawCount,
+  });
+  await recordActivity(
+    env,
+    `Deleted user "${user.name}" (${profileIds.length} profile(s))`,
+  );
+  return json({ success: true });
+}
+
+async function duplicateUser(id, env) {
+  const raw = await env.STORAGE.get(`user:${id}`);
+  if (!raw) return json({ error: "not_found" }, 404);
+  const source = JSON.parse(raw);
+  const now = Date.now();
+  const clone = {
+    id: crypto.randomUUID(),
+    name: `${source.name} (copy)`,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await kvPutJson(env, `user:${clone.id}`, clone);
+
+  const profileIds = await kvGetJson(env, `idx:userProfiles:${id}`, []);
+  const newProfileIds = [];
+  let subCount = 0,
+    rawCount = 0;
+  for (const pid of profileIds) {
+    const pRaw = await env.STORAGE.get(`profile:${pid}`);
+    if (!pRaw) continue;
+    const p = JSON.parse(pRaw);
+    const clonedProfile = {
+      ...p,
+      id: crypto.randomUUID(),
+      userId: clone.id,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await env.STORAGE.put(
+      `profile:${clonedProfile.id}`,
+      JSON.stringify(clonedProfile),
+    );
+    newProfileIds.push(clonedProfile.id);
+    subCount += p.sources.filter((s) => s.type === "subscription").length;
+    rawCount += p.sources.filter((s) => s.type !== "subscription").length;
+  }
+  await kvPutJson(env, `idx:userProfiles:${clone.id}`, newProfileIds);
+
+  const userIds = await kvGetJson(env, "idx:users", []);
+  userIds.push(clone.id);
+  await kvPutJson(env, "idx:users", userIds);
+  await adjustStats(env, {
+    totalUsers: 1,
+    totalProfiles: newProfileIds.length,
+    totalSubSources: subCount,
+    totalRawSources: rawCount,
+  });
+  await recordActivity(env, `Duplicated user "${source.name}"`);
+  return json({ user: clone, profileCount: newProfileIds.length }, 201);
+}
+
+// ---------------------------------------------------------------------
+// PROFILE CRUD (KV: profile:{uuid}, scoped under a user)
+// ---------------------------------------------------------------------
+function summarizeProfile(p) {
+  return {
+    id: p.id,
+    userId: p.userId,
+    name: p.name,
+    subCount: p.sources.filter((s) => s.type === "subscription").length,
+    rawCount: p.sources.filter((s) => s.type !== "subscription").length,
+    updatedAt: p.updatedAt,
+  };
+}
+
+async function listProfilesForUser(userId, env) {
+  const profileIds = await kvGetJson(env, `idx:userProfiles:${userId}`, []);
+  const profiles = await Promise.all(
+    profileIds.map(async (id) => {
+      const raw = await env.STORAGE.get(`profile:${id}`);
+      return raw ? JSON.parse(raw) : null;
+    }),
+  );
+  return json({ profiles: profiles.filter(Boolean).map(summarizeProfile) });
+}
+
+async function listAllProfiles(env) {
+  const userIds = await kvGetJson(env, "idx:users", []);
+  const all = [];
+  for (const uid of userIds) {
+    const profileIds = await kvGetJson(env, `idx:userProfiles:${uid}`, []);
+    for (const pid of profileIds) {
+      const raw = await env.STORAGE.get(`profile:${pid}`);
+      if (raw) all.push(summarizeProfile(JSON.parse(raw)));
+    }
+  }
+  return json({ profiles: all });
 }
 
 function looksLikeXrayJson(str) {
@@ -405,27 +813,10 @@ function normalizeSources(sources) {
   return { sources: valid, invalid };
 }
 
-async function listProfiles(env) {
-  const list = await env.STORAGE.list({ prefix: "profile:" });
-  const profiles = await Promise.all(
-    list.keys.map(async (k) => {
-      const raw = await env.STORAGE.get(k.name);
-      return raw ? JSON.parse(raw) : null;
-    }),
-  );
-  const summarized = profiles.filter(Boolean).map((p) => ({
-    id: p.id,
-    name: p.name,
-    subCount: p.sources.filter((s) => s.type === "subscription").length,
-    rawCount: p.sources.filter(
-      (s) => s.type === "raw" || s.type === "json" || s.type === "yaml",
-    ).length,
-    updatedAt: p.updatedAt,
-  }));
-  return json({ profiles: summarized });
-}
+async function createProfile(userId, request, env) {
+  const userRaw = await env.STORAGE.get(`user:${userId}`);
+  if (!userRaw) return json({ error: "user_not_found" }, 404);
 
-async function createProfile(request, env) {
   const body = await safeJson(request);
   if (!body || !body.name || typeof body.name !== "string") {
     return json({ error: "name_required" }, 400);
@@ -435,6 +826,7 @@ async function createProfile(request, env) {
   const now = Date.now();
   const profile = {
     id: crypto.randomUUID(),
+    userId,
     name: body.name.trim(),
     sources,
     createdAt: now,
@@ -442,6 +834,21 @@ async function createProfile(request, env) {
   };
 
   await env.STORAGE.put(`profile:${profile.id}`, JSON.stringify(profile));
+  const profileIds = await kvGetJson(env, `idx:userProfiles:${userId}`, []);
+  profileIds.push(profile.id);
+  await kvPutJson(env, `idx:userProfiles:${userId}`, profileIds);
+
+  const user = JSON.parse(userRaw);
+  user.updatedAt = now;
+  await kvPutJson(env, `user:${userId}`, user);
+
+  await adjustStats(env, {
+    totalProfiles: 1,
+    totalSubSources: sources.filter((s) => s.type === "subscription").length,
+    totalRawSources: sources.filter((s) => s.type !== "subscription").length,
+  });
+  await recordActivity(env, `Created profile "${profile.name}"`);
+
   return json({ profile, invalidSources: invalid }, 201);
 }
 
@@ -455,6 +862,12 @@ async function updateProfile(id, request, env) {
   const existingRaw = await env.STORAGE.get(`profile:${id}`);
   if (!existingRaw) return json({ error: "not_found" }, 404);
   const existing = JSON.parse(existingRaw);
+  const beforeSub = existing.sources.filter(
+    (s) => s.type === "subscription",
+  ).length;
+  const beforeRaw = existing.sources.filter(
+    (s) => s.type !== "subscription",
+  ).length;
 
   const body = await safeJson(request);
   let invalid = [];
@@ -467,14 +880,107 @@ async function updateProfile(id, request, env) {
   existing.updatedAt = Date.now();
 
   await env.STORAGE.put(`profile:${id}`, JSON.stringify(existing));
+
+  const afterSub = existing.sources.filter(
+    (s) => s.type === "subscription",
+  ).length;
+  const afterRaw = existing.sources.filter(
+    (s) => s.type !== "subscription",
+  ).length;
+  await adjustStats(env, {
+    totalSubSources: afterSub - beforeSub,
+    totalRawSources: afterRaw - beforeRaw,
+  });
+  await recordActivity(env, `Updated profile "${existing.name}"`);
+
   return json({ profile: existing, invalidSources: invalid });
 }
 
 async function deleteProfile(id, env) {
-  const existing = await env.STORAGE.get(`profile:${id}`);
-  if (!existing) return json({ error: "not_found" }, 404);
+  const existingRaw = await env.STORAGE.get(`profile:${id}`);
+  if (!existingRaw) return json({ error: "not_found" }, 404);
+  const existing = JSON.parse(existingRaw);
   await env.STORAGE.delete(`profile:${id}`);
+
+  if (existing.userId) {
+    const profileIds = await kvGetJson(
+      env,
+      `idx:userProfiles:${existing.userId}`,
+      [],
+    );
+    await kvPutJson(
+      env,
+      `idx:userProfiles:${existing.userId}`,
+      profileIds.filter((pid) => pid !== id),
+    );
+  }
+
+  const subCount = existing.sources.filter(
+    (s) => s.type === "subscription",
+  ).length;
+  const rawCount = existing.sources.filter(
+    (s) => s.type !== "subscription",
+  ).length;
+  await adjustStats(env, {
+    totalProfiles: -1,
+    totalSubSources: -subCount,
+    totalRawSources: -rawCount,
+  });
+  await recordActivity(env, `Deleted profile "${existing.name}"`);
+
   return json({ success: true });
+}
+
+async function duplicateProfile(id, env) {
+  const raw = await env.STORAGE.get(`profile:${id}`);
+  if (!raw) return json({ error: "not_found" }, 404);
+  const source = JSON.parse(raw);
+  const now = Date.now();
+  const clone = {
+    ...source,
+    id: crypto.randomUUID(),
+    name: `${source.name} (copy)`,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await env.STORAGE.put(`profile:${clone.id}`, JSON.stringify(clone));
+
+  if (clone.userId) {
+    const profileIds = await kvGetJson(
+      env,
+      `idx:userProfiles:${clone.userId}`,
+      [],
+    );
+    profileIds.push(clone.id);
+    await kvPutJson(env, `idx:userProfiles:${clone.userId}`, profileIds);
+  }
+
+  await adjustStats(env, {
+    totalProfiles: 1,
+    totalSubSources: clone.sources.filter((s) => s.type === "subscription")
+      .length,
+    totalRawSources: clone.sources.filter((s) => s.type !== "subscription")
+      .length,
+  });
+  await recordActivity(env, `Duplicated profile "${source.name}"`);
+
+  return json({ profile: clone }, 201);
+}
+
+async function getStats(env) {
+  const stats = await kvGetJson(env, "meta:stats", {
+    totalUsers: 0,
+    totalProfiles: 0,
+    totalSubSources: 0,
+    totalRawSources: 0,
+  });
+  const activity = await kvGetJson(env, "meta:activity", []);
+  return json({
+    stats,
+    activity,
+    version: VEXA_VERSION,
+    buildDate: VEXA_BUILD_DATE,
+  });
 }
 
 // ---------------------------------------------------------------------
@@ -2270,6 +2776,149 @@ async function handlePublicSub(id, env, url) {
 // =====================================================================
 // FRONTEND (HTML + CSS + client JS, all inline)
 // =====================================================================
+// ---------------------------------------------------------------------
+// /secret PAGE — standalone, deliberately independent of the SPA/session
+// state below (it has to work with zero configured secrets).
+// ---------------------------------------------------------------------
+function renderSecretPage(configured) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VEXA — Secret Setup</title>
+<style>${STYLES}</style>
+</head>
+<body data-theme="dark">
+<div class="login-wrap">
+  <div class="glass-card login-card" style="max-width:520px;text-align:left;">
+    <div style="text-align:center;">
+      <div class="logo-glow" style="font-size:32px;">🔑</div>
+      <div class="brand">${configured ? "Regenerate Secrets" : "VEXA Initial Setup"}</div>
+      <div class="brand-sub">${
+        configured
+          ? "Manually rotate the panel's login and session secrets"
+          : "Required Cloudflare Variables and Secrets are missing"
+      }</div>
+    </div>
+    <div id="secretBody"></div>
+  </div>
+</div>
+<script>
+const configured = ${configured ? "true" : "false"};
+let sessionToken = null;
+
+function fieldsHtml(values) {
+  return Object.entries(values).map(([k, v]) => \`
+    <div class="field-group">
+      <label class="field-label">\${k}</label>
+      <input readonly value="\${v}" onclick="this.select()" style="font-family:monospace;font-size:12px;" />
+    </div>
+  \`).join("");
+}
+
+function copyAllText(values) {
+  return Object.entries(values).map(([k, v]) => k + "=" + v).join("\\n");
+}
+
+async function generate() {
+  const res = await fetch("/api/secret/generate", {
+    method: "POST",
+    headers: sessionToken ? { Authorization: "Bearer " + sessionToken } : {}
+  });
+  if (!res.ok) {
+    document.getElementById("secretBody").innerHTML =
+      '<div class="error-text">Could not generate secrets (' + res.status + '). Try again.</div>';
+    return;
+  }
+  const data = await res.json();
+  document.getElementById("secretBody").innerHTML = \`
+    <div class="helper-text" style="margin:16px 0;">
+      Default admin password: <strong>\${data.defaultPassword}</strong> — change it after logging in
+      if this control panel is user-facing.
+    </div>
+    \${fieldsHtml(data.values)}
+    <button class="btn-primary" style="width:100%;margin-top:6px;" id="copyAllBtn">Copy All Secrets</button>
+    <div class="helper-text" style="margin-top:14px;">
+      Paste these into <strong>Cloudflare Dashboard → Workers → Settings → Variables and Secrets</strong>,
+      then redeploy / save.
+    </div>
+    \${configured ? '<div class="error-text" style="margin-top:10px;">Existing sessions, tokens, and subscription links tied to the OLD secrets stop working the moment you save these — only after you update them in Cloudflare.</div>' : ''}
+  \`;
+  document.getElementById("copyAllBtn").onclick = () => {
+    navigator.clipboard.writeText(copyAllText(data.values));
+    showToast("Copied — paste into Cloudflare now.");
+  };
+}
+
+function showToast(msg) {
+  const existing = document.querySelector(".toast");
+  if (existing) existing.remove();
+  const toast = document.createElement("div");
+  toast.className = "toast";
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 2500);
+}
+
+function renderSetupMode() {
+  document.getElementById("secretBody").innerHTML =
+    '<div class="field-group"><label class="field-label">Required secrets</label>' +
+    '<div class="helper-text">ADMIN_PASSWORD_HASH, ADMIN_SALT, JWT_SECRET</div></div>' +
+    '<div id="secretLoading" class="helper-text">Generating…</div>';
+  generate();
+}
+
+function renderRegenGate() {
+  document.getElementById("secretBody").innerHTML = \`
+    <div class="error-text" style="margin:14px 0 18px;">This will completely reset the system. Log in first to confirm you're the admin.</div>
+    <div class="field-group">
+      <label class="field-label">Admin Password</label>
+      <input type="password" id="gatePassword" placeholder="Enter admin password" />
+    </div>
+    <button class="btn-secondary" style="width:100%;" id="gateBtn">Continue</button>
+    <div class="error-text" id="gateError"></div>
+  \`;
+  document.getElementById("gateBtn").onclick = async () => {
+    const password = document.getElementById("gatePassword").value;
+    const res = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password })
+    });
+    if (!res.ok) {
+      document.getElementById("gateError").textContent = "Incorrect password.";
+      return;
+    }
+    const data = await res.json();
+    sessionToken = data.token; // kept in memory only, never persisted for this page
+    renderRegenConfirm();
+  };
+}
+
+function renderRegenConfirm() {
+  document.getElementById("secretBody").innerHTML = \`
+    <div class="error-text" style="margin:14px 0 18px;">
+      Regenerating will immediately invalidate every existing admin session, every issued
+      login token, and every existing subscription link once you save the new values in
+      Cloudflare. Users and profiles themselves are NOT deleted, but their old links stop
+      resolving until you share the new ones.
+    </div>
+    <button class="btn-danger btn-secondary" style="width:100%;" id="regenBtn">Regenerate Secrets</button>
+  \`;
+  document.getElementById("regenBtn").onclick = generate;
+}
+
+if (configured) {
+  renderRegenGate();
+} else {
+  renderSetupMode();
+}
+</script>
+</body>
+</html>`;
+}
+
 function renderApp() {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -2278,6 +2927,17 @@ function renderApp() {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>VEXA — VPN Panel</title>
 <style>${STYLES}</style>
+<script>
+// Applied before first paint (inline, not deferred with the rest of the
+// client script) so there's no flash of the wrong theme.
+(function() {
+  var pref = localStorage.getItem("vexa_theme") || "system";
+  var effective = pref === "system"
+    ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+    : pref;
+  document.documentElement.setAttribute("data-theme", effective);
+})();
+</script>
 </head>
 <body>
   <div id="app"></div>
@@ -2289,105 +2949,187 @@ function renderApp() {
 }
 
 const STYLES = `
-:root {
-  --bg-deep: #0a0716;
-  --neon-purple: #a855f7;
-  --neon-blue: #38bdf8;
-  --neon-green: #34d399;
-  --glass-bg: rgba(255,255,255,0.05);
-  --glass-border: rgba(255,255,255,0.12);
-  --text-primary: #f5f3ff;
-  --text-muted: #9ca3af;
-  --font-stack: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+:root, [data-theme="dark"] {
+  --bg-page: #0f1115;
+  --bg-surface: #171a21;
+  --bg-surface-raised: #1d212a;
+  --border: rgba(255,255,255,0.09);
+  --accent: #7c6ef2;
+  --accent-strong: #6355e0;
+  --accent-soft: rgba(124,110,242,0.16);
+  --good: #34d399;
+  --good-soft: rgba(52,211,153,0.14);
+  --bad: #f36a6a;
+  --bad-soft: rgba(243,106,106,0.14);
+  --text-primary: #eef0f4;
+  --text-muted: #8b909c;
+  --font-stack: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mono-stack: 'SF Mono', Consolas, monospace;
+}
+[data-theme="light"] {
+  --bg-page: #f4f5f7;
+  --bg-surface: #ffffff;
+  --bg-surface-raised: #ffffff;
+  --border: rgba(15,17,21,0.09);
+  --accent: #6355e0;
+  --accent-strong: #4f43cf;
+  --accent-soft: rgba(99,85,224,0.10);
+  --good: #159066;
+  --good-soft: rgba(21,144,102,0.10);
+  --bad: #d3453f;
+  --bad-soft: rgba(211,69,63,0.10);
+  --text-primary: #16181d;
+  --text-muted: #6b7280;
 }
 * { box-sizing: border-box; }
+html, body { height: 100%; }
 body {
-  margin: 0; min-height: 100vh;
-  background:
-    radial-gradient(circle at 20% 20%, #1a0f3d 0%, #0a0716 45%),
-    radial-gradient(circle at 80% 80%, #0f1f3d 0%, transparent 50%),
-    var(--bg-deep);
-  font-family: var(--font-stack);
-  color: var(--text-primary);
+  margin: 0; min-height: 100vh; background: var(--bg-page);
+  font-family: var(--font-stack); color: var(--text-primary); font-size: 14px;
 }
-.glass-card {
-  background: var(--glass-bg);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid var(--glass-border);
-  border-radius: 20px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06);
-  transition: transform .25s ease, box-shadow .25s ease;
+a { color: inherit; }
+.card {
+  background: var(--bg-surface); border: 1px solid var(--border); border-radius: 12px;
 }
-.glass-card:hover { transform: translateY(-4px); box-shadow: 0 12px 40px rgba(168,85,247,.25), inset 0 1px 0 rgba(255,255,255,.08); }
 .btn-primary {
-  background: linear-gradient(135deg, var(--neon-purple), #7c3aed);
-  border: none; color: #fff; padding: 12px 24px; border-radius: 12px;
-  font-weight: 600; cursor: pointer; box-shadow: 0 4px 20px rgba(168,85,247,.4);
-  transition: box-shadow .2s ease, transform .15s ease; font-size: 14px;
+  background: var(--accent); border: none; color: #fff; padding: 9px 16px; border-radius: 8px;
+  font-weight: 600; cursor: pointer; font-size: 13px; transition: background .15s ease;
 }
-.btn-primary:hover { box-shadow: 0 6px 28px rgba(168,85,247,.6); transform: translateY(-1px); }
+.btn-primary:hover { background: var(--accent-strong); }
 .btn-secondary {
-  background: rgba(255,255,255,.08); border: 1px solid var(--glass-border); color: var(--text-primary);
-  padding: 10px 18px; border-radius: 10px; cursor: pointer; font-size: 13px; font-weight: 500;
+  background: transparent; border: 1px solid var(--border); color: var(--text-primary);
+  padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 500;
 }
-.btn-danger { background: rgba(239,68,68,.15); border: 1px solid rgba(239,68,68,.3); color: #fca5a5; }
-input, textarea {
-  width: 100%; background: rgba(255,255,255,.04); border: 1px solid var(--glass-border);
-  color: var(--text-primary); padding: 12px 14px; border-radius: 10px; font-size: 14px; font-family: inherit;
+.btn-secondary:hover { background: var(--accent-soft); }
+.btn-danger { color: var(--bad); border-color: var(--bad-soft); }
+.btn-danger:hover { background: var(--bad-soft); }
+.btn-icon { background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 6px; border-radius: 6px; font-size: 15px; }
+.btn-icon:hover { background: var(--accent-soft); color: var(--text-primary); }
+input, textarea, select {
+  width: 100%; background: var(--bg-page); border: 1px solid var(--border);
+  color: var(--text-primary); padding: 9px 12px; border-radius: 8px; font-size: 13px; font-family: inherit;
 }
+input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
 .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-.login-card { width: 100%; max-width: 380px; padding: 40px 32px; text-align: center; }
-.logo-glow { filter: drop-shadow(0 0 12px var(--neon-purple)); margin-bottom: 8px; }
-.brand { font-weight: 700; font-size: 22px; letter-spacing: .02em; margin-bottom: 4px; }
-.brand-sub { color: var(--text-muted); font-size: 13px; margin-bottom: 28px; }
-.header { display: flex; align-items: center; justify-content: space-between; padding: 18px 28px; }
-.header-left { display: flex; align-items: center; gap: 10px; }
-.avatar {
-  width: 36px; height: 36px; border-radius: 50%;
-  background: linear-gradient(135deg, var(--neon-purple), var(--neon-blue));
-  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px;
+.login-card { width: 100%; max-width: 380px; padding: 36px 32px; text-align: center; }
+.logo-glow { margin-bottom: 8px; }
+.brand { font-weight: 700; font-size: 20px; letter-spacing: -.01em; margin-bottom: 4px; }
+.brand-sub { color: var(--text-muted); font-size: 13px; margin-bottom: 24px; }
+
+/* --- App shell: sidebar + topbar, 3x-ui style --- */
+.app-shell { display: flex; min-height: 100vh; }
+.sidebar {
+  width: 220px; flex-shrink: 0; background: var(--bg-surface); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; padding: 16px 12px;
 }
-.container { max-width: 1100px; margin: 0 auto; padding: 0 24px 60px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; margin-top: 20px; }
-.profile-card { padding: 22px; }
-.profile-name { font-size: 17px; font-weight: 600; margin: 0 0 10px; }
-.badge-row { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
-.badge { font-size: 11px; padding: 4px 10px; border-radius: 20px; background: rgba(168,85,247,.15); color: #d8b4fe; border: 1px solid rgba(168,85,247,.25); }
-.badge.green { background: rgba(52,211,153,.15); color: #6ee7b7; border-color: rgba(52,211,153,.25); }
-.timestamp { color: var(--text-muted); font-size: 12px; margin-bottom: 16px; }
-.card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.sidebar-brand { display: flex; align-items: center; gap: 10px; padding: 8px 8px 20px; }
+.sidebar-brand .avatar {
+  width: 30px; height: 30px; border-radius: 8px; background: var(--accent);
+  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; color: #fff;
+}
+.sidebar-link {
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; margin-bottom: 2px;
+  color: var(--text-muted); cursor: pointer; font-size: 13px; font-weight: 500; text-decoration: none;
+}
+.sidebar-link:hover { background: var(--accent-soft); color: var(--text-primary); }
+.sidebar-link.active { background: var(--accent-soft); color: var(--accent); }
+.sidebar-footer { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.theme-toggle { display: flex; gap: 4px; background: var(--bg-page); border: 1px solid var(--border); border-radius: 8px; padding: 3px; }
+.theme-toggle button {
+  flex: 1; background: transparent; border: none; padding: 5px 0; border-radius: 6px; cursor: pointer;
+  font-size: 12px; color: var(--text-muted);
+}
+.theme-toggle button.active { background: var(--bg-surface-raised); color: var(--text-primary); box-shadow: 0 1px 2px rgba(0,0,0,.1); }
+.main { flex: 1; min-width: 0; }
+.topbar {
+  display: flex; align-items: center; justify-content: space-between; padding: 16px 28px;
+  border-bottom: 1px solid var(--border); background: var(--bg-surface);
+}
+.topbar h1 { font-size: 16px; margin: 0; font-weight: 600; }
+.topbar-sub { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+.container { max-width: 1180px; margin: 0 auto; padding: 24px 28px 60px; }
+
+/* --- Stat cards --- */
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 24px; }
+.stat-card { padding: 18px 20px; }
+.stat-card-label { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+.stat-card-num { font-size: 26px; font-weight: 700; }
+.section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin: 0 0 12px; }
+.activity-list { padding: 4px 0; }
+.activity-row { display: flex; justify-content: space-between; gap: 12px; padding: 10px 20px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.activity-row:last-child { border-bottom: none; }
+.activity-time { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
+.status-row { display: flex; align-items: center; gap: 8px; padding: 10px 20px; font-size: 13px; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 3px var(--good-soft); }
+
+/* --- Toolbar / search / table --- */
+.toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.toolbar-left { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 200px; }
+.search-input { max-width: 280px; }
+.breadcrumb { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 13px; margin-bottom: 4px; }
+.breadcrumb a { cursor: pointer; }
+.breadcrumb a:hover { color: var(--accent); }
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th {
+  text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted);
+  padding: 10px 16px; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; white-space: nowrap;
+}
+.data-table th:hover { color: var(--text-primary); }
+.data-table td { padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr.row-hover:hover { background: var(--accent-soft); }
+.row-name { font-weight: 600; cursor: pointer; }
+.row-name:hover { color: var(--accent); }
+.row-actions { display: flex; gap: 4px; justify-content: flex-end; }
+.badge-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.badge { font-size: 11px; padding: 3px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.badge.green { background: var(--good-soft); color: var(--good); }
+.timestamp { color: var(--text-muted); font-size: 12px; }
 .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
-.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50; }
-.modal-card { width: 100%; max-width: 520px; padding: 28px; max-height: 85vh; overflow-y: auto; }
-.modal-title { font-size: 18px; font-weight: 700; margin-bottom: 20px; }
-.field-label { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: #a78bfa; margin-bottom: 6px; display: block; }
-.field-group { margin-bottom: 18px; }
-.modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
-.stat-row { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
-.stat-box { flex: 1; min-width: 100px; text-align: center; padding: 16px; background: rgba(255,255,255,.03); border-radius: 14px; border: 1px solid var(--glass-border); }
-.stat-num { font-size: 24px; font-weight: 700; }
+.empty-state-icon { font-size: 28px; margin-bottom: 10px; opacity: .6; }
+.skeleton-row { height: 44px; border-bottom: 1px solid var(--border); position: relative; overflow: hidden; }
+.skeleton-row::after {
+  content: ""; position: absolute; inset: 8px 16px; border-radius: 6px; background: var(--accent-soft);
+  animation: pulse 1.3s ease-in-out infinite;
+}
+@keyframes pulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
+
+/* --- Modals / confirm dialog / toasts --- */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50; }
+.modal-card { width: 100%; max-width: 520px; padding: 24px; max-height: 85vh; overflow-y: auto; }
+.modal-card.small { max-width: 400px; }
+.modal-title { font-size: 16px; font-weight: 700; margin-bottom: 18px; }
+.field-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin-bottom: 6px; display: block; }
+.field-group { margin-bottom: 16px; }
+.modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.stat-row { display: flex; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
+.stat-box { flex: 1; min-width: 100px; text-align: center; padding: 14px; background: var(--bg-page); border-radius: 10px; border: 1px solid var(--border); }
+.stat-num { font-size: 22px; font-weight: 700; }
 .stat-label { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
-.qr-box { background: #fff; border-radius: 16px; padding: 16px; display: flex; align-items: center; justify-content: center; margin: 16px 0; }
-.qr-box svg { width: 200px; height: 200px; }
+.qr-box { background: #fff; border-radius: 12px; padding: 14px; display: flex; align-items: center; justify-content: center; margin: 14px 0; }
+.qr-box svg { width: 180px; height: 180px; }
 .link-row { display: flex; gap: 8px; align-items: center; }
-.link-row input { font-family: monospace; font-size: 12px; }
+.link-row input { font-family: var(--mono-stack); font-size: 12px; }
 .toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-  background: rgba(52,211,153,.15); border: 1px solid rgba(52,211,153,.4); color: #6ee7b7;
-  padding: 10px 20px; border-radius: 10px; font-size: 13px; z-index: 100;
+  background: var(--bg-surface-raised); border: 1px solid var(--good-soft); color: var(--good);
+  padding: 10px 20px; border-radius: 10px; font-size: 13px; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,.2);
 }
+.toast.error { border-color: var(--bad-soft); color: var(--bad); }
 .version-badge {
   position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
-  background: rgba(15,10,25,.92); border: 1px solid rgba(168,85,247,.45);
-  color: var(--text-primary); font-family: monospace; font-size: 11px;
-  letter-spacing: .03em; padding: 5px 14px; border-radius: 20px;
+  background: var(--bg-surface-raised); border: 1px solid var(--border);
+  color: var(--text-muted); font-family: var(--mono-stack); font-size: 11px;
+  letter-spacing: .02em; padding: 4px 12px; border-radius: 20px;
   z-index: 20; pointer-events: none; user-select: none;
-  box-shadow: 0 2px 10px rgba(0,0,0,.35);
 }
-.error-text { color: #fca5a5; font-size: 13px; margin-top: 10px; min-height: 16px; }
+.error-text { color: var(--bad); font-size: 13px; margin-top: 10px; min-height: 16px; }
 .helper-text { color: var(--text-muted); font-size: 12px; margin-top: 6px; }
+@media (max-width: 780px) {
+  .sidebar { position: fixed; z-index: 40; height: 100vh; transform: translateX(-100%); transition: transform .2s ease; }
+  .sidebar.open { transform: translateX(0); }
+  .container { padding: 18px 16px 60px; }
+}
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 `;
 
@@ -2837,22 +3579,45 @@ var qrcodegen = {};
 const CLIENT_SCRIPT = `
 const state = {
   token: localStorage.getItem("vexa_token") || null,
-  profiles: [],
   view: "login",
+  loading: false,
+  errorMsg: "",
+
+  users: [],
+  userSearch: "",
+  userSort: { key: "updatedAt", dir: "desc" },
+
+  currentUser: null,
+  profiles: [],
+
+  stats: null,
+  activity: [],
+
   modal: null,
-  mergeResult: null,
+  editingUser: null,
   editingProfile: null,
-  errorMsg: ""
+  mergeResult: null,
+  confirmDialog: null
 };
 
-// Splits pasted source text into entries. Plain lines (URLs, vless://, etc.)
-// split on newline as before. A line starting with '{' or '[' begins a JSON
-// block that continues (bracket-depth aware) until brackets balance, so a
-// pretty-printed Xray outbound/config (or an array of them) pasted across
-// multiple lines becomes one entry. A line starting with "proxies:" begins
-// a Clash-style YAML block that continues until indentation returns to
-// column 0 (or the text ends), so a pasted Clash subscription also becomes
-// one entry instead of being split apart line by line.
+// ---------------------------------------------------------------------
+// THEME
+// ---------------------------------------------------------------------
+function getThemePref() {
+  return localStorage.getItem("vexa_theme") || "system";
+}
+function effectiveTheme(pref) {
+  return pref === "system" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : pref;
+}
+function setTheme(pref) {
+  localStorage.setItem("vexa_theme", pref);
+  document.documentElement.setAttribute("data-theme", effectiveTheme(pref));
+  render();
+}
+
+// ---------------------------------------------------------------------
+// SOURCE PARSING HELPER (unchanged from previous version)
+// ---------------------------------------------------------------------
 function splitSourceEntries(text) {
   const lines = text.split("\\n");
   const entries = [];
@@ -2893,6 +3658,9 @@ function splitSourceEntries(text) {
   return entries.filter(Boolean);
 }
 
+// ---------------------------------------------------------------------
+// API
+// ---------------------------------------------------------------------
 async function apiFetch(path, opts = {}) {
   const res = await fetch(path, {
     ...opts,
@@ -2912,38 +3680,45 @@ async function apiFetch(path, opts = {}) {
   return res.json();
 }
 
-async function loadProfiles() {
-  const data = await apiFetch("/api/profiles");
+async function loadDashboard() {
+  const data = await apiFetch("/api/stats");
+  state.stats = data.stats;
+  state.activity = data.activity || [];
+}
+
+async function loadUsers() {
+  const data = await apiFetch("/api/users");
+  state.users = data.users || [];
+}
+
+async function loadUserProfiles(userId) {
+  const data = await apiFetch("/api/users/" + userId + "/profiles");
   state.profiles = data.profiles || [];
 }
 
+// ---------------------------------------------------------------------
+// HELPERS
+// ---------------------------------------------------------------------
 function timeAgo(ts) {
   const diff = Math.floor((Date.now() - ts) / 1000);
   if (diff < 60) return "just now";
-  if (diff < 3600) return Math.floor(diff/60) + "m ago";
-  if (diff < 86400) return Math.floor(diff/3600) + "h ago";
-  return Math.floor(diff/86400) + "d ago";
+  if (diff < 3600) return Math.floor(diff / 60) + "m ago";
+  if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
+  return Math.floor(diff / 86400) + "d ago";
 }
 
 function formatCacheAge(ms) {
   const diff = Math.floor(ms / 1000);
   if (diff < 60) return "moments old";
-  if (diff < 3600) return Math.floor(diff/60) + "m old";
-  if (diff < 86400) return Math.floor(diff/3600) + "h old";
-  return Math.floor(diff/86400) + "d old";
+  if (diff < 3600) return Math.floor(diff / 60) + "m old";
+  if (diff < 86400) return Math.floor(diff / 3600) + "h old";
+  return Math.floor(diff / 86400) + "d old";
 }
 
-// Separates source-fetch issues into two severities: sources that failed
-// but recovered via the last-known-good cache (degraded, still serving
-// nodes) versus sources that failed with no cache to fall back to (nodes
-// from that source are genuinely missing). Admins need to tell these apart
-// — a stale-but-present source is a "keep an eye on it", a fully-failed one
-// needs action.
 function renderSourceIssues(sourceErrors) {
   if (!sourceErrors || !sourceErrors.length) return "";
   const degraded = sourceErrors.filter(e => e.usedCache);
   const failed = sourceErrors.filter(e => !e.usedCache);
-
   const parts = [];
   if (failed.length) {
     parts.push('<div class="error-text">' + failed.length + ' source(s) failed to fetch — nodes missing.</div>');
@@ -2957,15 +3732,45 @@ function renderSourceIssues(sourceErrors) {
 
 function escapeHtml(str) {
   const div = document.createElement("div");
-  div.textContent = str;
+  div.textContent = str == null ? "" : str;
   return div.innerHTML;
 }
 
+function showToast(msg, isError) {
+  const existing = document.querySelector(".toast");
+  if (existing) existing.remove();
+  const toast = document.createElement("div");
+  toast.className = "toast" + (isError ? " error" : "");
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 2600);
+}
+
+function sortRows(rows, sort) {
+  const copy = [...rows];
+  copy.sort((a, b) => {
+    let av = a[sort.key], bv = b[sort.key];
+    if (typeof av === "string") { av = av.toLowerCase(); bv = (bv || "").toLowerCase(); }
+    if (av < bv) return sort.dir === "asc" ? -1 : 1;
+    if (av > bv) return sort.dir === "asc" ? 1 : -1;
+    return 0;
+  });
+  return copy;
+}
+
+function sortIndicator(sort, key) {
+  if (sort.key !== key) return "";
+  return sort.dir === "asc" ? " ↑" : " ↓";
+}
+
+// ---------------------------------------------------------------------
+// LOGIN
+// ---------------------------------------------------------------------
 function renderLoginView() {
   return \`
     <div class="login-wrap">
-      <div class="glass-card login-card">
-        <div class="logo-glow" style="font-size:32px;">🔒</div>
+      <div class="card login-card">
+        <div class="logo-glow" style="font-size:30px;">🔒</div>
         <div class="brand">VEXA</div>
         <div class="brand-sub">Secure subscription manager</div>
         <div class="field-group" style="text-align:left;">
@@ -2999,8 +3804,7 @@ async function doLogin() {
     state.token = data.token;
     localStorage.setItem("vexa_token", data.token);
     state.view = "dashboard";
-    await loadProfiles();
-    render();
+    await bootAuthenticated();
   } catch (e) {
     state.errorMsg = "Connection error.";
     render();
@@ -3014,56 +3818,369 @@ function logout() {
   render();
 }
 
-function renderHeader() {
+async function bootAuthenticated() {
+  state.loading = true;
+  render();
+  try {
+    await loadDashboard();
+  } finally {
+    state.loading = false;
+    render();
+  }
+}
+
+// ---------------------------------------------------------------------
+// SHELL: sidebar + topbar
+// ---------------------------------------------------------------------
+function navigate(view) {
+  state.view = view;
+  state.errorMsg = "";
+  if (view === "dashboard") {
+    state.loading = true;
+    render();
+    loadDashboard().finally(() => { state.loading = false; render(); });
+  } else if (view === "users") {
+    state.loading = true;
+    render();
+    loadUsers().finally(() => { state.loading = false; render(); });
+  }
+}
+
+function openUser(userId) {
+  const user = state.users.find(u => u.id === userId);
+  state.currentUser = user || { id: userId, name: "…" };
+  state.view = "userProfiles";
+  state.loading = true;
+  render();
+  loadUserProfiles(userId).finally(() => { state.loading = false; render(); });
+}
+
+function renderSidebar() {
+  const pref = getThemePref();
+  const items = [
+    { key: "dashboard", label: "Dashboard", icon: "▦" },
+    { key: "users", label: "Users", icon: "◫" }
+  ];
+  const isUsersActive = state.view === "users" || state.view === "userProfiles";
   return \`
-    <div class="header">
-      <div class="header-left">
+    <div class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
         <div class="avatar">V</div>
         <div>
-          <div style="font-weight:700;">VEXA</div>
-          <div style="font-size:11px;color:var(--text-muted);">Admin Panel</div>
+          <div style="font-weight:700;font-size:14px;">VEXA</div>
+          <div style="font-size:10px;color:var(--text-muted);">Admin Panel</div>
         </div>
       </div>
-      <button class="btn-secondary" onclick="logout()">Logout</button>
+      \${items.map(it => \`
+        <div class="sidebar-link \${(it.key === "dashboard" ? state.view === "dashboard" : isUsersActive) ? "active" : ""}"
+             onclick="navigate('\${it.key}')">
+          <span>\${it.icon}</span><span>\${it.label}</span>
+        </div>
+      \`).join("")}
+      <div class="sidebar-footer">
+        <div class="theme-toggle">
+          <button class="\${pref === "light" ? "active" : ""}" onclick="setTheme('light')">Light</button>
+          <button class="\${pref === "dark" ? "active" : ""}" onclick="setTheme('dark')">Dark</button>
+          <button class="\${pref === "system" ? "active" : ""}" onclick="setTheme('system')">Auto</button>
+        </div>
+        <button class="btn-secondary" style="width:100%;" onclick="logout()">Log out</button>
+      </div>
     </div>
   \`;
 }
 
-function renderDashboardView() {
-  const cards = state.profiles.map(p => \`
-    <div class="glass-card profile-card">
-      <div class="profile-name">\${escapeHtml(p.name)}</div>
-      <div class="badge-row">
-        <span class="badge">\${p.subCount} subs</span>
-        <span class="badge green">\${p.rawCount} raw</span>
+function shellTitle() {
+  if (state.view === "dashboard") return ["Dashboard", "Overview of users, profiles and sources"];
+  if (state.view === "users") return ["Users", "Managed accounts and their profiles"];
+  if (state.view === "userProfiles") return [state.currentUser ? state.currentUser.name : "Profiles", "Profiles and generated subscriptions"];
+  return ["", ""];
+}
+
+function renderShell(innerHtml) {
+  const [title, sub] = shellTitle();
+  return \`
+    <div class="app-shell">
+      \${renderSidebar()}
+      <div class="main">
+        <div class="topbar">
+          <div>
+            <h1>\${title}</h1>
+            <div class="topbar-sub">\${sub}</div>
+          </div>
+        </div>
+        <div class="container">\${innerHtml}</div>
       </div>
-      <div class="timestamp">Updated \${timeAgo(p.updatedAt)}</div>
-      <div class="card-actions">
-        <button class="btn-primary" onclick="openMerge('\${p.id}')">Merge / Link</button>
-        <button class="btn-secondary" onclick="openEditor('\${p.id}')">Edit</button>
-        <button class="btn-secondary btn-danger" onclick="confirmDelete('\${p.id}')">Delete</button>
+      \${renderModal()}
+    </div>
+  \`;
+}
+
+// ---------------------------------------------------------------------
+// DASHBOARD
+// ---------------------------------------------------------------------
+function renderDashboardView() {
+  if (state.loading || !state.stats) {
+    return renderShell(\`
+      <div class="stat-grid">
+        \${[1,2,3,4].map(() => '<div class="card skeleton-row" style="height:76px;"></div>').join("")}
+      </div>
+      <div class="card skeleton-row"></div>
+    \`);
+  }
+  const s = state.stats;
+  const cards = [
+    { label: "Total Users", num: s.totalUsers },
+    { label: "Total Profiles", num: s.totalProfiles },
+    { label: "Subscription Sources", num: s.totalSubSources },
+    { label: "Raw / Static Sources", num: s.totalRawSources }
+  ];
+  const activityHtml = state.activity.length
+    ? state.activity.map(a => \`
+        <div class="activity-row">
+          <span>\${escapeHtml(a.message)}</span>
+          <span class="activity-time">\${timeAgo(a.ts)}</span>
+        </div>
+      \`).join("")
+    : '<div class="empty-state">No activity yet.</div>';
+
+  return renderShell(\`
+    <div class="stat-grid">
+      \${cards.map(c => \`
+        <div class="card stat-card">
+          <div class="stat-card-label">\${c.label}</div>
+          <div class="stat-card-num">\${c.num}</div>
+        </div>
+      \`).join("")}
+    </div>
+    <div class="card" style="margin-bottom:16px;">
+      <div class="status-row">
+        <span class="status-dot"></span>
+        <span>System operational</span>
+        <span class="timestamp" style="margin-left:auto;">VEXA — checked \${timeAgo(Date.now())}</span>
       </div>
     </div>
+    <div class="card">
+      <div style="padding:16px 20px 0;"><div class="section-title">Recent Activity</div></div>
+      <div class="activity-list">\${activityHtml}</div>
+    </div>
+  \`);
+}
+
+// ---------------------------------------------------------------------
+// USERS
+// ---------------------------------------------------------------------
+function setUserSort(key) {
+  if (state.userSort.key === key) {
+    state.userSort.dir = state.userSort.dir === "asc" ? "desc" : "asc";
+  } else {
+    state.userSort = { key, dir: "asc" };
+  }
+  render();
+}
+
+function renderUsersView() {
+  if (state.loading) {
+    return renderShell(\`<div class="card">\${[1,2,3].map(() => '<div class="skeleton-row"></div>').join("")}</div>\`);
+  }
+
+  const filtered = state.users.filter(u =>
+    !state.userSearch || u.name.toLowerCase().includes(state.userSearch.toLowerCase())
+  );
+  const sorted = sortRows(filtered, state.userSort);
+
+  const rows = sorted.map(u => \`
+    <tr class="row-hover">
+      <td><span class="row-name" onclick="openUser('\${u.id}')">\${escapeHtml(u.name)}</span>\${u._pending ? ' <span class="badge">saving…</span>' : ''}</td>
+      <td><span class="badge">\${u.profileCount} profile\${u.profileCount === 1 ? "" : "s"}</span></td>
+      <td class="timestamp">\${timeAgo(u.updatedAt)}</td>
+      <td>
+        <div class="row-actions">
+          \${u.primaryProfileId ? \`<button class="btn-icon" title="Copy subscription link" onclick="copyUserPrimaryLink('\${u.primaryProfileId}')">🔗</button>\` : ""}
+          <button class="btn-icon" title="Open" onclick="openUser('\${u.id}')">↗</button>
+          <button class="btn-icon" title="Rename" onclick="openUserEditor('\${u.id}')">✎</button>
+          <button class="btn-icon" title="Duplicate" onclick="duplicateUser('\${u.id}')">⧉</button>
+          <button class="btn-icon" title="Delete" onclick="askDeleteUser('\${u.id}', '\${escapeHtml(u.name).replace(/'/g, "&#39;")}')">🗑</button>
+        </div>
+      </td>
+    </tr>
   \`).join("");
 
-  return \`
-    \${renderHeader()}
-    <div class="container">
-      <div class="top-bar">
-        <h2 style="margin:20px 0 0;">Profiles</h2>
-        <button class="btn-primary" style="margin-top:20px;" onclick="openEditor(null)">+ New Profile</button>
+  return renderShell(\`
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <input class="search-input" placeholder="Search users…" value="\${escapeHtml(state.userSearch)}"
+               oninput="state.userSearch=this.value; render();" />
       </div>
-      \${state.profiles.length === 0
-        ? '<div class="empty-state">No profiles yet. Create one to get started.</div>'
-        : '<div class="grid">' + cards + '</div>'}
+      <button class="btn-primary" onclick="openUserEditor(null)">+ New User</button>
     </div>
-    \${renderModal()}
-  \`;
+    <div class="card">
+      \${sorted.length === 0
+        ? '<div class="empty-state"><div class="empty-state-icon">◫</div>No users yet. Create one to get started.</div>'
+        : \`
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th onclick="setUserSort('name')">Name\${sortIndicator(state.userSort, "name")}</th>
+                <th onclick="setUserSort('profileCount')">Profiles\${sortIndicator(state.userSort, "profileCount")}</th>
+                <th onclick="setUserSort('updatedAt')">Updated\${sortIndicator(state.userSort, "updatedAt")}</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>\${rows}</tbody>
+          </table>
+        \`}
+    </div>
+  \`);
 }
 
-function openEditor(id) {
+function openUserEditor(id) {
+  state.editingUser = id ? state.users.find(u => u.id === id) : null;
+  state.modal = "userEditor";
+  render();
+}
+
+async function saveUser() {
+  const name = document.getElementById("userNameInput").value.trim();
+  if (!name) { showToast("Name is required.", true); return; }
+  const isEdit = state.editingUser && state.editingUser.id;
+
+  closeModal();
+  if (isEdit) {
+    const idx = state.users.findIndex(u => u.id === state.editingUser.id);
+    const prevName = state.users[idx].name;
+    state.users[idx] = { ...state.users[idx], name, _pending: true };
+    render();
+    try {
+      await apiFetch("/api/users/" + state.editingUser.id, { method: "PUT", body: JSON.stringify({ name }) });
+      state.users[idx]._pending = false;
+      render();
+    } catch (e) {
+      state.users[idx] = { ...state.users[idx], name: prevName, _pending: false };
+      showToast("Could not rename user.", true);
+      render();
+    }
+  } else {
+    const tempId = "temp-" + Date.now();
+    state.users.push({ id: tempId, name, profileCount: 0, primaryProfileId: null, updatedAt: Date.now(), _pending: true });
+    render();
+    try {
+      const result = await apiFetch("/api/users", { method: "POST", body: JSON.stringify({ name }) });
+      const idx = state.users.findIndex(u => u.id === tempId);
+      state.users[idx] = { ...result.user, profileCount: 0, primaryProfileId: null, _pending: false };
+      render();
+    } catch (e) {
+      state.users = state.users.filter(u => u.id !== tempId);
+      showToast("Could not create user.", true);
+      render();
+    }
+  }
+}
+
+function askDeleteUser(id, name) {
+  state.confirmDialog = {
+    title: "Delete user?",
+    message: \`This permanently deletes "\${name}" and every profile it owns. This cannot be undone.\`,
+    danger: true,
+    confirmLabel: "Delete",
+    onConfirm: () => performDeleteUser(id)
+  };
+  state.modal = "confirm";
+  render();
+}
+
+async function performDeleteUser(id) {
+  closeModal();
+  const prev = state.users;
+  state.users = state.users.filter(u => u.id !== id);
+  render();
+  try {
+    await apiFetch("/api/users/" + id, { method: "DELETE" });
+    showToast("User deleted.");
+  } catch (e) {
+    state.users = prev;
+    showToast("Could not delete user.", true);
+    render();
+  }
+}
+
+async function duplicateUser(id) {
+  const idx = state.users.findIndex(u => u.id === id);
+  if (idx === -1) return;
+  const original = state.users[idx];
+  const tempId = "temp-" + Date.now();
+  state.users.splice(idx + 1, 0, { ...original, id: tempId, name: original.name + " (copy)", _pending: true });
+  render();
+  try {
+    const result = await apiFetch("/api/users/" + id + "/duplicate", { method: "POST" });
+    const pos = state.users.findIndex(u => u.id === tempId);
+    state.users[pos] = { ...result.user, profileCount: result.profileCount, primaryProfileId: null, _pending: false };
+    showToast("User duplicated.");
+    render();
+  } catch (e) {
+    state.users = state.users.filter(u => u.id !== tempId);
+    showToast("Could not duplicate user.", true);
+    render();
+  }
+}
+
+function copyUserPrimaryLink(profileId) {
+  const fullUrl = location.origin + "/sub/" + profileId;
+  navigator.clipboard.writeText(fullUrl);
+  showToast("Subscription link copied.");
+}
+
+// ---------------------------------------------------------------------
+// PROFILES (scoped to the open user)
+// ---------------------------------------------------------------------
+function renderUserProfilesView() {
+  if (state.loading) {
+    return renderShell(\`<div class="card">\${[1,2].map(() => '<div class="skeleton-row"></div>').join("")}</div>\`);
+  }
+
+  const cards = state.profiles.map(p => \`
+    <tr class="row-hover">
+      <td><span class="row-name" onclick="openProfileEditor('\${p.id}')">\${escapeHtml(p.name)}</span>\${p._pending ? ' <span class="badge">saving…</span>' : ''}</td>
+      <td>
+        <div class="badge-row">
+          <span class="badge">\${p.subCount} subs</span>
+          <span class="badge green">\${p.rawCount} raw</span>
+        </div>
+      </td>
+      <td class="timestamp">\${timeAgo(p.updatedAt)}</td>
+      <td>
+        <div class="row-actions">
+          <button class="btn-icon" title="Copy subscription link" onclick="copyUserPrimaryLink('\${p.id}')">🔗</button>
+          <button class="btn-icon" title="Merge / QR" onclick="openMerge('\${p.id}')">▣</button>
+          <button class="btn-icon" title="Edit sources" onclick="openProfileEditor('\${p.id}')">✎</button>
+          <button class="btn-icon" title="Duplicate" onclick="duplicateProfile('\${p.id}')">⧉</button>
+          <button class="btn-icon" title="Delete" onclick="askDeleteProfile('\${p.id}', '\${escapeHtml(p.name).replace(/'/g, "&#39;")}')">🗑</button>
+        </div>
+      </td>
+    </tr>
+  \`).join("");
+
+  return renderShell(\`
+    <div class="breadcrumb"><a onclick="navigate('users')">Users</a> / \${escapeHtml(state.currentUser ? state.currentUser.name : "")}</div>
+    <div class="toolbar">
+      <div class="toolbar-left"></div>
+      <button class="btn-primary" onclick="openProfileEditor(null)">+ New Profile</button>
+    </div>
+    <div class="card">
+      \${state.profiles.length === 0
+        ? '<div class="empty-state"><div class="empty-state-icon">▣</div>No profiles yet for this user.</div>'
+        : \`
+          <table class="data-table">
+            <thead><tr><th>Name</th><th>Sources</th><th>Updated</th><th></th></tr></thead>
+            <tbody>\${cards}</tbody>
+          </table>
+        \`}
+    </div>
+  \`);
+}
+
+function openProfileEditor(id) {
   state.editingProfile = id ? state.profiles.find(p => p.id === id) : null;
-  state.modal = "editor";
+  state.modal = "profileEditor";
   if (id) {
     apiFetch("/api/profiles/" + id).then(data => {
       state.editingProfile = data.profile;
@@ -3074,11 +4191,124 @@ function openEditor(id) {
   }
 }
 
-async function confirmDelete(id) {
-  if (!confirm("Delete this profile? This cannot be undone.")) return;
-  await apiFetch("/api/profiles/" + id, { method: "DELETE" });
-  await loadProfiles();
+async function saveProfile() {
+  const name = document.getElementById("profileNameInput").value.trim();
+  const sourcesText = document.getElementById("profileSourcesInput").value;
+  const sources = splitSourceEntries(sourcesText);
+  if (!name) { showToast("Name is required.", true); return; }
+
+  const isEdit = state.editingProfile && state.editingProfile.id;
+  closeModal();
+
+  if (isEdit) {
+    const idx = state.profiles.findIndex(p => p.id === state.editingProfile.id);
+    const prev = state.profiles[idx];
+    state.profiles[idx] = { ...prev, name, _pending: true };
+    render();
+    try {
+      const result = await apiFetch("/api/profiles/" + state.editingProfile.id, {
+        method: "PUT",
+        body: JSON.stringify({ name, sources })
+      });
+      const p = result.profile;
+      state.profiles[idx] = {
+        id: p.id, userId: p.userId, name: p.name,
+        subCount: p.sources.filter(s => s.type === "subscription").length,
+        rawCount: p.sources.filter(s => s.type !== "subscription").length,
+        updatedAt: p.updatedAt, _pending: false
+      };
+      render();
+      if (result.invalidSources && result.invalidSources.length) {
+        showToast(result.invalidSources.length + " line(s) skipped — invalid format.", true);
+      }
+    } catch (e) {
+      state.profiles[idx] = prev;
+      showToast("Could not save profile.", true);
+      render();
+    }
+  } else {
+    const tempId = "temp-" + Date.now();
+    state.profiles.push({
+      id: tempId, userId: state.currentUser.id, name,
+      subCount: 0, rawCount: 0, updatedAt: Date.now(), _pending: true
+    });
+    render();
+    try {
+      const result = await apiFetch("/api/users/" + state.currentUser.id + "/profiles", {
+        method: "POST",
+        body: JSON.stringify({ name, sources })
+      });
+      const p = result.profile;
+      const idx = state.profiles.findIndex(x => x.id === tempId);
+      state.profiles[idx] = {
+        id: p.id, userId: p.userId, name: p.name,
+        subCount: p.sources.filter(s => s.type === "subscription").length,
+        rawCount: p.sources.filter(s => s.type !== "subscription").length,
+        updatedAt: p.updatedAt, _pending: false
+      };
+      render();
+      if (result.invalidSources && result.invalidSources.length) {
+        showToast(result.invalidSources.length + " line(s) skipped — invalid format.", true);
+      }
+    } catch (e) {
+      state.profiles = state.profiles.filter(p => p.id !== tempId);
+      showToast("Could not create profile.", true);
+      render();
+    }
+  }
+}
+
+function askDeleteProfile(id, name) {
+  state.confirmDialog = {
+    title: "Delete profile?",
+    message: \`This permanently deletes "\${name}" and its subscription link. This cannot be undone.\`,
+    danger: true,
+    confirmLabel: "Delete",
+    onConfirm: () => performDeleteProfile(id)
+  };
+  state.modal = "confirm";
   render();
+}
+
+async function performDeleteProfile(id) {
+  closeModal();
+  const prev = state.profiles;
+  state.profiles = state.profiles.filter(p => p.id !== id);
+  render();
+  try {
+    await apiFetch("/api/profiles/" + id, { method: "DELETE" });
+    showToast("Profile deleted.");
+  } catch (e) {
+    state.profiles = prev;
+    showToast("Could not delete profile.", true);
+    render();
+  }
+}
+
+async function duplicateProfile(id) {
+  const idx = state.profiles.findIndex(p => p.id === id);
+  if (idx === -1) return;
+  const original = state.profiles[idx];
+  const tempId = "temp-" + Date.now();
+  state.profiles.splice(idx + 1, 0, { ...original, id: tempId, name: original.name + " (copy)", _pending: true });
+  render();
+  try {
+    const result = await apiFetch("/api/profiles/" + id + "/duplicate", { method: "POST" });
+    const p = result.profile;
+    const pos = state.profiles.findIndex(x => x.id === tempId);
+    state.profiles[pos] = {
+      id: p.id, userId: p.userId, name: p.name,
+      subCount: p.sources.filter(s => s.type === "subscription").length,
+      rawCount: p.sources.filter(s => s.type !== "subscription").length,
+      updatedAt: p.updatedAt, _pending: false
+    };
+    showToast("Profile duplicated.");
+    render();
+  } catch (e) {
+    state.profiles = state.profiles.filter(p => p.id !== tempId);
+    showToast("Could not duplicate profile.", true);
+    render();
+  }
 }
 
 async function openMerge(id) {
@@ -3101,39 +4331,6 @@ async function openMerge(id) {
   }, 0);
 }
 
-function closeModal() {
-  state.modal = null;
-  state.mergeResult = null;
-  state.editingProfile = null;
-  render();
-}
-
-async function saveProfile() {
-  const name = document.getElementById("profileNameInput").value.trim();
-  const sourcesText = document.getElementById("profileSourcesInput").value;
-  const sources = splitSourceEntries(sourcesText);
-
-  if (!name) { alert("Name is required."); return; }
-
-  let result;
-  if (state.editingProfile && state.editingProfile.id) {
-    result = await apiFetch("/api/profiles/" + state.editingProfile.id, {
-      method: "PUT",
-      body: JSON.stringify({ name, sources })
-    });
-  } else {
-    result = await apiFetch("/api/profiles", {
-      method: "POST",
-      body: JSON.stringify({ name, sources })
-    });
-  }
-  await loadProfiles();
-  closeModal();
-  if (result && result.invalidSources && result.invalidSources.length) {
-    showToast(result.invalidSources.length + " line(s) skipped — invalid format.");
-  }
-}
-
 function copyLink() {
   const input = document.getElementById("subLinkInput");
   input.select();
@@ -3141,18 +4338,39 @@ function copyLink() {
   showToast("Copied to clipboard!");
 }
 
-function showToast(msg) {
-  const existing = document.querySelector(".toast");
-  if (existing) existing.remove();
-  const toast = document.createElement("div");
-  toast.className = "toast";
-  toast.textContent = msg;
-  document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 2000);
+// ---------------------------------------------------------------------
+// MODALS
+// ---------------------------------------------------------------------
+function closeModal() {
+  state.modal = null;
+  state.mergeResult = null;
+  state.editingProfile = null;
+  state.editingUser = null;
+  state.confirmDialog = null;
+  render();
 }
 
 function renderModal() {
-  if (state.modal === "editor") {
+  if (state.modal === "userEditor") {
+    const u = state.editingUser;
+    return \`
+      <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+        <div class="card modal-card small">
+          <div class="modal-title">\${u ? "Rename User" : "New User"}</div>
+          <div class="field-group">
+            <label class="field-label">Name</label>
+            <input id="userNameInput" value="\${u ? escapeHtml(u.name) : ""}" placeholder="e.g. Alice" />
+          </div>
+          <div class="modal-footer">
+            <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+            <button class="btn-primary" onclick="saveUser()">Save</button>
+          </div>
+        </div>
+      </div>
+    \`;
+  }
+
+  if (state.modal === "profileEditor") {
     const p = state.editingProfile;
     const sourcesText = p ? p.sources.map(s => {
       if (s.type === "raw" || s.type === "json" || s.type === "yaml") return s.value;
@@ -3160,7 +4378,7 @@ function renderModal() {
     }).join("\\n") : "";
     return \`
       <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
-        <div class="glass-card modal-card">
+        <div class="card modal-card">
           <div class="modal-title">\${p ? "Edit Profile" : "New Profile"}</div>
           <div class="field-group">
             <label class="field-label">Profile Name</label>
@@ -3183,12 +4401,12 @@ function renderModal() {
   if (state.modal === "merge") {
     const r = state.mergeResult;
     if (r.loading) {
-      return '<div class="modal-overlay"><div class="glass-card modal-card" style="text-align:center;">Merging sources…</div></div>';
+      return '<div class="modal-overlay"><div class="card modal-card" style="text-align:center;">Merging sources…</div></div>';
     }
     const fullUrl = location.origin + r.subUrl;
     return \`
       <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
-        <div class="glass-card modal-card">
+        <div class="card modal-card">
           <div class="modal-title">Merge Result</div>
           <div class="stat-row">
             <div class="stat-box"><div class="stat-num">\${r.totalNodes}</div><div class="stat-label">Total Nodes</div></div>
@@ -3209,9 +4427,28 @@ function renderModal() {
     \`;
   }
 
+  if (state.modal === "confirm") {
+    const c = state.confirmDialog;
+    return \`
+      <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+        <div class="card modal-card small">
+          <div class="modal-title">\${escapeHtml(c.title)}</div>
+          <div class="helper-text" style="font-size:13px;color:var(--text-primary);">\${escapeHtml(c.message)}</div>
+          <div class="modal-footer">
+            <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+            <button class="btn-secondary \${c.danger ? "btn-danger" : ""}" id="confirmActionBtn">\${escapeHtml(c.confirmLabel || "Confirm")}</button>
+          </div>
+        </div>
+      </div>
+    \`;
+  }
+
   return "";
 }
 
+// ---------------------------------------------------------------------
+// ROOT RENDER
+// ---------------------------------------------------------------------
 function render() {
   const app = document.getElementById("app");
   if (state.view === "login") {
@@ -3219,20 +4456,38 @@ function render() {
     document.getElementById("loginPassword")?.addEventListener("keydown", e => {
       if (e.key === "Enter") doLogin();
     });
-  } else {
-    app.innerHTML = renderDashboardView();
+    return;
+  }
+  if (state.view === "dashboard") { app.innerHTML = renderDashboardView(); }
+  else if (state.view === "users") { app.innerHTML = renderUsersView(); }
+  else if (state.view === "userProfiles") { app.innerHTML = renderUserProfilesView(); }
+
+  // Confirm dialogs attach their handler post-render since the callback is
+  // a closure, not something that survives being stamped into an HTML string.
+  const confirmBtn = document.getElementById("confirmActionBtn");
+  if (confirmBtn && state.confirmDialog) {
+    confirmBtn.onclick = state.confirmDialog.onConfirm;
   }
 }
 
 (async function init() {
+  document.documentElement.setAttribute("data-theme", effectiveTheme(getThemePref()));
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+    if (getThemePref() === "system") {
+      document.documentElement.setAttribute("data-theme", effectiveTheme("system"));
+    }
+  });
+
   if (state.token) {
     try {
-      await loadProfiles();
       state.view = "dashboard";
+      await bootAuthenticated();
+      return;
     } catch {
       state.view = "login";
     }
   }
   render();
 })();
+
 `;
