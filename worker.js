@@ -3,7 +3,7 @@
 // =====================================================================
 //
 
-const VEXA_VERSION = "1.8.0";
+const VEXA_VERSION = "1.9.0";
 const VEXA_BUILD_DATE = "2026-07-29";
 
 export default {
@@ -345,6 +345,8 @@ function classifySourceString(str) {
     "hysteria://",
     "wireguard://",
     "socks://",
+    "naive+https://",
+    "naive+quic://",
   ];
   if (rawProtocols.some((p) => str.startsWith(p)))
     return { type: "raw", value: str };
@@ -541,7 +543,7 @@ async function fetchSubscriptionNodes(url) {
   // isn't actually a URI list (stray prose, a misformatted JSON fragment,
   // an HTML error page, etc.) could otherwise leak non-link text through.
   const KNOWN_NODE_SCHEMES =
-    /^(vless|vmess|ss|ssr|trojan|hysteria2|hy2|tuic|hysteria|wireguard|socks):\/\//i;
+    /^(vless|vmess|ss|ssr|trojan|hysteria2|hy2|tuic|hysteria|wireguard|socks):\/\/|^naive\+(https|quic):\/\//i;
   return body
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -692,6 +694,16 @@ function fingerprintNode(uri) {
       const creds = credsRaw ? normalizeSsUserinfo(credsRaw) : "";
       return `socks:${hostPort}:${creds}`;
     }
+    if (uri.startsWith("naive+https://") || uri.startsWith("naive+quic://")) {
+      const scheme = uri.startsWith("naive+https://") ? "https" : "quic";
+      const withoutProto = uri.slice(uri.indexOf("://") + 3).split("#")[0];
+      const beforeQuery = splitOnce(withoutProto, "?")[0].split("/")[0];
+      const [credsRaw, hostPort] = beforeQuery.includes("@")
+        ? splitOnce(beforeQuery, "@")
+        : ["", beforeQuery];
+      const creds = credsRaw ? decodeURIComponent(credsRaw) : "";
+      return `naive:${scheme}:${hostPort}:${creds}`;
+    }
     return `raw:${uri}`;
   } catch {
     return `raw:${uri}`;
@@ -825,6 +837,21 @@ function validateNodeUri(uri) {
       // socks://[base64(user:pass)@]host:port#remark — auth is optional
       // (many public/self-hosted SOCKS5 proxies are open, no userinfo at all).
       const withoutProto = uri.slice("socks://".length).split("#")[0];
+      const beforeQuery = splitOnce(withoutProto, "?")[0].split("/")[0];
+      const hostPortRaw = beforeQuery.includes("@")
+        ? splitOnce(beforeQuery, "@")[1]
+        : beforeQuery;
+      const [host, port] = splitOnce(hostPortRaw, ":");
+      if (!host || !port || isNaN(Number(port))) {
+        return { valid: false, reason: "malformed_host_port" };
+      }
+      return { valid: true };
+    }
+    if (uri.startsWith("naive+https://") || uri.startsWith("naive+quic://")) {
+      // naive+https://[user:pass@]host:port[?padding=...][#remark] — auth is
+      // optional at the URI-shape level (a Caddy forwardproxy server could be
+      // configured without basic_auth), matching this file's socks:// stance.
+      const withoutProto = uri.slice(uri.indexOf("://") + 3).split("#")[0];
       const beforeQuery = splitOnce(withoutProto, "?")[0].split("/")[0];
       const hostPortRaw = beforeQuery.includes("@")
         ? splitOnce(beforeQuery, "@")[1]
@@ -1052,6 +1079,35 @@ function parseNodeUri(uri) {
         remark: hash ? decodeURIComponent(hash) : "",
       };
     }
+    if (uri.startsWith("naive+https://") || uri.startsWith("naive+quic://")) {
+      const scheme = uri.startsWith("naive+https://") ? "https" : "quic";
+      const withoutProto = uri.slice(uri.indexOf("://") + 3);
+      const [beforeHash, hash] = splitOnce(withoutProto, "#");
+      const [beforeQuery, query] = splitOnce(beforeHash, "?");
+      let username = "",
+        password = "",
+        hostPort;
+      if (beforeQuery.includes("@")) {
+        const [credsRaw, rest] = splitOnce(beforeQuery, "@");
+        const creds = decodeURIComponent(credsRaw);
+        [username, password] = splitOnce(creds, ":");
+        hostPort = rest;
+      } else {
+        hostPort = beforeQuery;
+      }
+      const [host, port] = splitOnce(hostPort.split("/")[0], ":");
+      const params = new URLSearchParams(query);
+      return {
+        protocol: "naiveproxy",
+        transport: scheme, // "https" or "quic" — which naive+ variant this is
+        address: host,
+        port: Number(port),
+        username,
+        password,
+        padding: params.get("padding") || "",
+        remark: hash ? decodeURIComponent(hash) : "",
+      };
+    }
     return null; // SSR/etc: not yet supported for structured parse
   } catch {
     return null;
@@ -1175,6 +1231,22 @@ function generateNodeUri(node) {
       ? `${utf8ToBase64(`${node.username}:${node.password || ""}`).replace(/=+$/, "")}@`
       : "";
     return `socks://${auth}${node.address}:${node.port}${remarkSuffix}`;
+  }
+
+  if (node.protocol === "naiveproxy") {
+    // NaiveProxy has no official URI spec (klzgrad/naiveproxy#86 was never
+    // adopted upstream) — this follows the de facto convention used by
+    // NaiveSharp/Qv2ray-plugin-NaiveProxy: plain (non-base64) user:pass
+    // userinfo, percent-encoded like vless/trojan rather than base64 like
+    // socks. "quic" is naive's alternate QUIC transport variant.
+    const scheme = node.transport === "quic" ? "naive+quic" : "naive+https";
+    const auth = node.username
+      ? `${encodeURIComponent(node.username)}:${encodeURIComponent(node.password || "")}@`
+      : "";
+    const params = new URLSearchParams();
+    if (node.padding) params.set("padding", node.padding);
+    const qs = params.toString();
+    return `${scheme}://${auth}${node.address}:${node.port}${qs ? "?" + qs : ""}${remarkSuffix}`;
   }
 
   throw new Error("unsupported_protocol_for_generation");

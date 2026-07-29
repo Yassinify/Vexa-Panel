@@ -81,6 +81,15 @@ console.log("ADMIN_PASSWORD_HASH:", derivedKey);
 
 ## 📋 Changelog
 
+### **1.9.0**
+
+feat(naive): add NaiveProxy URI scheme support (naive+https:// & naive+quic://)
+
+- Add URI parser, validator, and canonical exporter for NaiveProxy links
+- Follow NaiveSharp/Qv2ray de facto URI conventions and support `padding` param
+- Note: URI-only (no JSON mapping as Xray-core lacks a native naive outbound)
+- Evaluated and skipped SSH support due to lack of standard URI spec or Xray outbound
+
 ### **1.8.0**
 
 feat: add SOCKS5 URI/JSON support and HTTP outbound JSON mapping
