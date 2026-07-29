@@ -3,7 +3,7 @@
 // =====================================================================
 //
 
-const VEXA_VERSION = "1.4.0";
+const VEXA_VERSION = "1.5.0";
 const VEXA_BUILD_DATE = "2026-07-29";
 
 export default {
@@ -342,6 +342,7 @@ function classifySourceString(str) {
     "hysteria2://",
     "hy2://",
     "tuic://",
+    "hysteria://",
   ];
   if (rawProtocols.some((p) => str.startsWith(p)))
     return { type: "raw", value: str };
@@ -538,7 +539,7 @@ async function fetchSubscriptionNodes(url) {
   // isn't actually a URI list (stray prose, a misformatted JSON fragment,
   // an HTML error page, etc.) could otherwise leak non-link text through.
   const KNOWN_NODE_SCHEMES =
-    /^(vless|vmess|ss|ssr|trojan|hysteria2|hy2|tuic):\/\//i;
+    /^(vless|vmess|ss|ssr|trojan|hysteria2|hy2|tuic|hysteria):\/\//i;
   return body
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -663,6 +664,15 @@ function fingerprintNode(uri) {
       const queryFp = normalizeQueryForFingerprint(search);
       return `tuic:${hostPort}:${creds}:${queryFp}`;
     }
+    if (uri.startsWith("hysteria://")) {
+      // Hysteria v1 has no userinfo in the authority — auth is a query
+      // param ("auth=...") rather than "auth@host" — so the fingerprint
+      // is just host:port plus the normalized query (auth included).
+      const withoutProto = uri.slice("hysteria://".length).split("#")[0];
+      const [hostPort, search] = splitOnce(withoutProto, "?");
+      const queryFp = normalizeQueryForFingerprint(search);
+      return `hysteria:${hostPort}:${queryFp}`;
+    }
     return `raw:${uri}`;
   } catch {
     return `raw:${uri}`;
@@ -761,6 +771,15 @@ function validateNodeUri(uri) {
         !port ||
         isNaN(Number(port))
       ) {
+        return { valid: false, reason: "malformed_host_port" };
+      }
+      return { valid: true };
+    }
+    if (uri.startsWith("hysteria://")) {
+      const withoutProto = uri.slice("hysteria://".length).split("#")[0];
+      const hostPortRaw = splitOnce(withoutProto, "?")[0];
+      const [host, port] = splitOnce(hostPortRaw.split("/")[0], ":");
+      if (!host || !port || isNaN(Number(port))) {
         return { valid: false, reason: "malformed_host_port" };
       }
       return { valid: true };
@@ -915,6 +934,28 @@ function parseNodeUri(uri) {
         remark: hash ? decodeURIComponent(hash) : "",
       };
     }
+    if (uri.startsWith("hysteria://")) {
+      const withoutProto = uri.slice("hysteria://".length);
+      const [beforeHash, hash] = splitOnce(withoutProto, "#");
+      const [hostPortRaw, search] = splitOnce(beforeHash, "?");
+      const [host, port] = splitOnce(hostPortRaw.split("/")[0], ":");
+      const params = new URLSearchParams(search);
+      return {
+        protocol: "hysteria",
+        address: host,
+        port: Number(port),
+        auth: params.get("auth") || "",
+        sni: params.get("peer") || params.get("sni") || "",
+        insecure: params.get("insecure") === "1",
+        upmbps: params.get("upmbps") || "",
+        downmbps: params.get("downmbps") || "",
+        obfs: params.get("obfs") || "",
+        obfsParam: params.get("obfsParam") || "",
+        alpn: params.get("alpn") || "",
+        transportProtocol: params.get("protocol") || "udp",
+        remark: hash ? decodeURIComponent(hash) : "",
+      };
+    }
     return null; // SSR/etc: not yet supported for structured parse
   } catch {
     return null;
@@ -1004,6 +1045,22 @@ function generateNodeUri(node) {
     const qs = params.toString();
     const creds = `${node.uuid}:${node.password || ""}`;
     return `tuic://${encodeURIComponent(creds)}@${node.address}:${node.port}${qs ? "?" + qs : ""}${remarkSuffix}`;
+  }
+
+  if (node.protocol === "hysteria") {
+    const params = new URLSearchParams();
+    if (node.auth) params.set("auth", node.auth);
+    if (node.sni) params.set("peer", node.sni);
+    if (node.insecure) params.set("insecure", "1");
+    if (node.upmbps) params.set("upmbps", node.upmbps);
+    if (node.downmbps) params.set("downmbps", node.downmbps);
+    if (node.obfs) params.set("obfs", node.obfs);
+    if (node.obfsParam) params.set("obfsParam", node.obfsParam);
+    if (node.alpn) params.set("alpn", node.alpn);
+    if (node.transportProtocol && node.transportProtocol !== "udp")
+      params.set("protocol", node.transportProtocol);
+    const qs = params.toString();
+    return `hysteria://${node.address}:${node.port}${qs ? "?" + qs : ""}${remarkSuffix}`;
   }
 
   throw new Error("unsupported_protocol_for_generation");

@@ -81,6 +81,15 @@ console.log("ADMIN_PASSWORD_HASH:", derivedKey);
 
 ## 📋 Changelog
 
+### **v1.5.0**
+
+feat: add Hysteria v1 link support (hysteria://)
+
+- Add URI parser, validator, and canonical exporter for Hysteria v1
+- Support params: auth, peer, insecure, upmbps, downmbps, obfs, obfsParam, alpn, protocol
+- Handle deduplication and fingerprinting
+- Note: v1 uses auth query param instead of userinfo in authority (unlike v2/tuic)
+
 ### **v1.4.0**
 
 feat: add TUIC link support (tuic://)
