@@ -3,7 +3,7 @@
 // =====================================================================
 //
 
-const VEXA_VERSION = "1.5.0";
+const VEXA_VERSION = "1.6.0";
 const VEXA_BUILD_DATE = "2026-07-29";
 
 export default {
@@ -343,6 +343,7 @@ function classifySourceString(str) {
     "hy2://",
     "tuic://",
     "hysteria://",
+    "wireguard://",
   ];
   if (rawProtocols.some((p) => str.startsWith(p)))
     return { type: "raw", value: str };
@@ -539,7 +540,7 @@ async function fetchSubscriptionNodes(url) {
   // isn't actually a URI list (stray prose, a misformatted JSON fragment,
   // an HTML error page, etc.) could otherwise leak non-link text through.
   const KNOWN_NODE_SCHEMES =
-    /^(vless|vmess|ss|ssr|trojan|hysteria2|hy2|tuic|hysteria):\/\//i;
+    /^(vless|vmess|ss|ssr|trojan|hysteria2|hy2|tuic|hysteria|wireguard):\/\//i;
   return body
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -673,6 +674,14 @@ function fingerprintNode(uri) {
       const queryFp = normalizeQueryForFingerprint(search);
       return `hysteria:${hostPort}:${queryFp}`;
     }
+    if (uri.startsWith("wireguard://")) {
+      const withoutProto = uri.slice("wireguard://".length).split("#")[0];
+      const [beforeQueryRaw, search] = splitOnce(withoutProto, "?");
+      const beforeQuery = beforeQueryRaw.split("/")[0];
+      const hostPort = splitOnce(beforeQuery, "@")[1] || beforeQuery;
+      const pubkey = new URLSearchParams(search).get("publickey") || "";
+      return `wireguard:${hostPort}:${pubkey}`;
+    }
     return `raw:${uri}`;
   } catch {
     return `raw:${uri}`;
@@ -781,6 +790,24 @@ function validateNodeUri(uri) {
       const [host, port] = splitOnce(hostPortRaw.split("/")[0], ":");
       if (!host || !port || isNaN(Number(port))) {
         return { valid: false, reason: "malformed_host_port" };
+      }
+      return { valid: true };
+    }
+    if (uri.startsWith("wireguard://")) {
+      const withoutProto = uri.slice("wireguard://".length).split("#")[0];
+      const [beforeQueryRaw, search] = splitOnce(withoutProto, "?");
+      const beforeQuery = beforeQueryRaw.split("/")[0];
+      const [privKey, hostPort] = splitOnce(beforeQuery, "@");
+      const [host, port] = splitOnce(hostPort, ":");
+      const params = new URLSearchParams(search);
+      if (
+        !privKey ||
+        !host ||
+        !port ||
+        isNaN(Number(port)) ||
+        !params.get("publickey")
+      ) {
+        return { valid: false, reason: "malformed_wireguard_link" };
       }
       return { valid: true };
     }
@@ -956,6 +983,26 @@ function parseNodeUri(uri) {
         remark: hash ? decodeURIComponent(hash) : "",
       };
     }
+    if (uri.startsWith("wireguard://")) {
+      const withoutProto = uri.slice("wireguard://".length);
+      const [beforeHash, hash] = splitOnce(withoutProto, "#");
+      const [privKey, rest] = splitOnce(beforeHash, "@");
+      const [hostPort, search] = splitOnce(rest, "?");
+      const [host, port] = splitOnce(hostPort, ":");
+      const params = new URLSearchParams(search);
+      return {
+        protocol: "wireguard",
+        address: host,
+        port: Number(port),
+        privateKey: decodeURIComponent(privKey || ""),
+        publicKey: params.get("publickey") || "",
+        presharedKey: params.get("presharedkey") || "",
+        localAddress: params.get("address") || "",
+        mtu: params.get("mtu") || "",
+        reserved: params.get("reserved") || "",
+        remark: hash ? decodeURIComponent(hash) : "",
+      };
+    }
     return null; // SSR/etc: not yet supported for structured parse
   } catch {
     return null;
@@ -1061,6 +1108,17 @@ function generateNodeUri(node) {
       params.set("protocol", node.transportProtocol);
     const qs = params.toString();
     return `hysteria://${node.address}:${node.port}${qs ? "?" + qs : ""}${remarkSuffix}`;
+  }
+
+  if (node.protocol === "wireguard") {
+    const params = new URLSearchParams();
+    if (node.publicKey) params.set("publickey", node.publicKey);
+    if (node.presharedKey) params.set("presharedkey", node.presharedKey);
+    if (node.localAddress) params.set("address", node.localAddress);
+    if (node.mtu) params.set("mtu", node.mtu);
+    if (node.reserved) params.set("reserved", node.reserved);
+    const qs = params.toString();
+    return `wireguard://${encodeURIComponent(node.privateKey || "")}@${node.address}:${node.port}${qs ? "?" + qs : ""}${remarkSuffix}`;
   }
 
   throw new Error("unsupported_protocol_for_generation");
@@ -1308,6 +1366,36 @@ function parseXrayOutbound(outbound) {
       };
     }
 
+    // Xray-core's native "wireguard" outbound (distinct shape from the URI
+    // link above: settings holds the local interface config directly, with
+    // one peer in settings.peers[0] — Xray-core doesn't support multiple
+    // peers per outbound, so only the first is used).
+    if (protocol === "wireguard") {
+      const peer = (settings.peers && settings.peers[0]) || {};
+      if (!peer.endpoint || !settings.secretKey || !peer.publicKey) return null;
+      const [address, portStr] = splitOnce(peer.endpoint, ":");
+      if (!address || !portStr) return null;
+      return {
+        protocol: "wireguard",
+        address,
+        port: Number(portStr),
+        privateKey: settings.secretKey,
+        publicKey: peer.publicKey,
+        presharedKey: peer.preSharedKey || "",
+        localAddress: Array.isArray(settings.address)
+          ? settings.address.join(",")
+          : settings.address || "",
+        mtu: settings.mtu ? String(settings.mtu) : "",
+        reserved: Array.isArray(settings.reserved)
+          ? settings.reserved.join(",")
+          : "",
+        allowedIPs: Array.isArray(peer.allowedIPs)
+          ? peer.allowedIPs.join(",")
+          : "",
+        remark: outbound.tag || "",
+      };
+    }
+
     return null; // protocol not yet supported for JSON import (Step 5 territory)
   } catch {
     return null;
@@ -1408,6 +1496,31 @@ function generateXrayOutbound(node) {
             password: node.password,
           },
         ],
+      },
+    };
+  }
+
+  if (node.protocol === "wireguard") {
+    return {
+      ...(tag ? { tag } : {}),
+      protocol: "wireguard",
+      settings: {
+        secretKey: node.privateKey,
+        address: node.localAddress ? node.localAddress.split(",") : [],
+        peers: [
+          {
+            publicKey: node.publicKey,
+            endpoint: `${node.address}:${node.port}`,
+            ...(node.presharedKey ? { preSharedKey: node.presharedKey } : {}),
+            allowedIPs: node.allowedIPs
+              ? node.allowedIPs.split(",")
+              : ["0.0.0.0/0"],
+          },
+        ],
+        ...(node.mtu ? { mtu: Number(node.mtu) } : {}),
+        ...(node.reserved
+          ? { reserved: node.reserved.split(",").map(Number) }
+          : {}),
       },
     };
   }

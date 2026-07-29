@@ -81,6 +81,15 @@ console.log("ADMIN_PASSWORD_HASH:", derivedKey);
 
 ## 📋 Changelog
 
+### **1.6.0**
+
+feat(wireguard): add WireGuard URI scheme and Xray-core outbound JSON mapping
+
+- Add URI parser, validator, and canonical exporter for wireguard:// scheme
+- Support params: publickey, presharedkey, address, mtu, reserved
+- Implement Xray-core native "wireguard" outbound JSON import/export
+- Note: Uses only the first peer on JSON import (Xray outbound limitation)
+
 ### **v1.5.0**
 
 feat: add Hysteria v1 link support (hysteria://)
