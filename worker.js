@@ -3,7 +3,7 @@
 // =====================================================================
 //
 
-const VEXA_VERSION = "1.3.0";
+const VEXA_VERSION = "1.4.0";
 const VEXA_BUILD_DATE = "2026-07-29";
 
 export default {
@@ -341,6 +341,7 @@ function classifySourceString(str) {
     "ssr://",
     "hysteria2://",
     "hy2://",
+    "tuic://",
   ];
   if (rawProtocols.some((p) => str.startsWith(p)))
     return { type: "raw", value: str };
@@ -536,7 +537,8 @@ async function fetchSubscriptionNodes(url) {
   // that happens to contain "://" somewhere in its value — a body that
   // isn't actually a URI list (stray prose, a misformatted JSON fragment,
   // an HTML error page, etc.) could otherwise leak non-link text through.
-  const KNOWN_NODE_SCHEMES = /^(vless|vmess|ss|ssr|trojan|hysteria2|hy2):\/\//i;
+  const KNOWN_NODE_SCHEMES =
+    /^(vless|vmess|ss|ssr|trojan|hysteria2|hy2|tuic):\/\//i;
   return body
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -653,6 +655,14 @@ function fingerprintNode(uri) {
       const queryFp = normalizeQueryForFingerprint(search);
       return `hy2:${hostPort}:${creds}:${queryFp}`;
     }
+    if (uri.startsWith("tuic://")) {
+      const withoutProto = uri.slice("tuic://".length).split("#")[0];
+      const [beforeQueryRaw, search] = splitOnce(withoutProto, "?");
+      const beforeQuery = beforeQueryRaw.split("/")[0];
+      const [creds, hostPort] = splitOnce(beforeQuery, "@");
+      const queryFp = normalizeQueryForFingerprint(search);
+      return `tuic:${hostPort}:${creds}:${queryFp}`;
+    }
     return `raw:${uri}`;
   } catch {
     return `raw:${uri}`;
@@ -723,6 +733,34 @@ function validateNodeUri(uri) {
       // comma-separated list ("1000,2000,3000") instead of a single port.
       const portOk = portField && /^\d+(-\d+)?(,\d+(-\d+)?)*$/.test(portField);
       if (!creds || !host || !portOk) {
+        return { valid: false, reason: "malformed_host_port" };
+      }
+      return { valid: true };
+    }
+    if (uri.startsWith("tuic://")) {
+      // tuic://uuid:password@host:port?params — same authority shape as
+      // vless/trojan (userinfo before "@", host:port after), just with a
+      // colon-joined uuid:password pair instead of a single credential.
+      const withoutProto = uri.slice("tuic://".length).split("#")[0];
+      if (!withoutProto.includes("@")) {
+        return { valid: false, reason: "missing_userinfo" };
+      }
+      const [creds, rest] = splitOnce(withoutProto, "@");
+      const hostPortRaw = splitOnce(rest, "?")[0];
+      const [host, port] = splitOnce(hostPortRaw.split("/")[0], ":");
+      let decodedCreds = "";
+      try {
+        decodedCreds = decodeURIComponent(creds || "");
+      } catch {
+        decodedCreds = creds || "";
+      }
+      if (
+        !decodedCreds ||
+        !decodedCreds.includes(":") ||
+        !host ||
+        !port ||
+        isNaN(Number(port))
+      ) {
         return { valid: false, reason: "malformed_host_port" };
       }
       return { valid: true };
@@ -854,6 +892,29 @@ function parseNodeUri(uri) {
         remark: hash ? decodeURIComponent(hash) : "",
       };
     }
+    if (uri.startsWith("tuic://")) {
+      const withoutProto = uri.slice("tuic://".length);
+      const [beforeHash, hash] = splitOnce(withoutProto, "#");
+      const [creds, rest] = splitOnce(beforeHash, "@");
+      const [hostPortRaw, search] = splitOnce(rest, "?");
+      const [host, port] = splitOnce(hostPortRaw.split("/")[0], ":");
+      const [uuid, password] = splitOnce(decodeURIComponent(creds), ":");
+      const params = new URLSearchParams(search);
+      return {
+        protocol: "tuic",
+        address: host,
+        port: Number(port),
+        uuid,
+        password: password || "",
+        congestionControl: params.get("congestion_control") || "bbr",
+        udpRelayMode: params.get("udp_relay_mode") || "native",
+        sni: params.get("sni") || "",
+        alpn: params.get("alpn") || "",
+        allowInsecure: params.get("allow_insecure") === "1",
+        disableSni: params.get("disable_sni") === "1",
+        remark: hash ? decodeURIComponent(hash) : "",
+      };
+    }
     return null; // SSR/etc: not yet supported for structured parse
   } catch {
     return null;
@@ -928,6 +989,21 @@ function generateNodeUri(node) {
     const qs = params.toString();
     const portField = node.portField || String(node.port);
     return `hysteria2://${encodeURIComponent(node.auth || "")}@${node.address}:${portField}${qs ? "?" + qs : ""}${remarkSuffix}`;
+  }
+
+  if (node.protocol === "tuic") {
+    const params = new URLSearchParams();
+    if (node.congestionControl && node.congestionControl !== "bbr")
+      params.set("congestion_control", node.congestionControl);
+    if (node.udpRelayMode && node.udpRelayMode !== "native")
+      params.set("udp_relay_mode", node.udpRelayMode);
+    if (node.sni) params.set("sni", node.sni);
+    if (node.alpn) params.set("alpn", node.alpn);
+    if (node.allowInsecure) params.set("allow_insecure", "1");
+    if (node.disableSni) params.set("disable_sni", "1");
+    const qs = params.toString();
+    const creds = `${node.uuid}:${node.password || ""}`;
+    return `tuic://${encodeURIComponent(creds)}@${node.address}:${node.port}${qs ? "?" + qs : ""}${remarkSuffix}`;
   }
 
   throw new Error("unsupported_protocol_for_generation");
