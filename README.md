@@ -81,6 +81,15 @@ console.log("ADMIN_PASSWORD_HASH:", derivedKey);
 
 ## 📋 Changelog
 
+### **v2.0.2**
+
+style(ui): update color tokens to match 3x-ui theme palette
+
+- Adopt Element-Plus accent colors (#409eff blue, #67c23a green, #f56c6c red)
+- Update content background to light-gray (#f0f2f5) with pure white cards
+- Apply fixed dark slate-navy sidebar styling (#304156 idle, #1f2d3d/#263445 active)
+- Keep existing 2.0.0 layout structure while refreshing theme token values
+
 ### **v2.0.1**
 
 fix(auth): require custom admin password during initial setup and regeneration

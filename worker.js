@@ -3,7 +3,7 @@
 // =====================================================================
 //
 
-const VEXA_VERSION = "2.0.1";
+const VEXA_VERSION = "2.0.2";
 const VEXA_BUILD_DATE = "2026-07-29";
 
 export default {
@@ -2994,36 +2994,44 @@ function renderApp() {
 
 const STYLES = `
 :root, [data-theme="dark"] {
-  --bg-page: #0f1115;
-  --bg-surface: #171a21;
-  --bg-surface-raised: #1d212a;
-  --border: rgba(255,255,255,0.09);
-  --accent: #7c6ef2;
-  --accent-strong: #6355e0;
-  --accent-soft: rgba(124,110,242,0.16);
-  --good: #34d399;
-  --good-soft: rgba(52,211,153,0.14);
-  --bad: #f36a6a;
-  --bad-soft: rgba(243,106,106,0.14);
-  --text-primary: #eef0f4;
-  --text-muted: #8b909c;
+  --bg-page: #141414;
+  --bg-surface: #1d1e1f;
+  --bg-surface-raised: #262727;
+  --border: rgba(255,255,255,0.12);
+  --accent: #409eff;
+  --accent-strong: #3375b9;
+  --accent-soft: rgba(64,158,255,0.16);
+  --good: #67c23a;
+  --good-soft: rgba(103,194,58,0.14);
+  --bad: #f56c6c;
+  --bad-soft: rgba(245,108,108,0.14);
+  --text-primary: #e5eaf3;
+  --text-muted: #a3a6ad;
+  --sidebar-bg: #1f2d3d;
+  --sidebar-text: #97a8be;
+  --sidebar-active-bg: #304156;
+  --sidebar-active-text: #ffffff;
   --font-stack: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --mono-stack: 'SF Mono', Consolas, monospace;
 }
 [data-theme="light"] {
-  --bg-page: #f4f5f7;
+  --bg-page: #f0f2f5;
   --bg-surface: #ffffff;
   --bg-surface-raised: #ffffff;
-  --border: rgba(15,17,21,0.09);
-  --accent: #6355e0;
-  --accent-strong: #4f43cf;
-  --accent-soft: rgba(99,85,224,0.10);
-  --good: #159066;
-  --good-soft: rgba(21,144,102,0.10);
-  --bad: #d3453f;
-  --bad-soft: rgba(211,69,63,0.10);
-  --text-primary: #16181d;
-  --text-muted: #6b7280;
+  --border: #e4e7ed;
+  --accent: #409eff;
+  --accent-strong: #337ecc;
+  --accent-soft: rgba(64,158,255,0.10);
+  --good: #67c23a;
+  --good-soft: rgba(103,194,58,0.10);
+  --bad: #f56c6c;
+  --bad-soft: rgba(245,108,108,0.10);
+  --text-primary: #303133;
+  --text-muted: #909399;
+  --sidebar-bg: #304156;
+  --sidebar-text: #bfcbd9;
+  --sidebar-active-bg: #263445;
+  --sidebar-active-text: #ffffff;
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -3063,7 +3071,7 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
 /* --- App shell: sidebar + topbar, 3x-ui style --- */
 .app-shell { display: flex; min-height: 100vh; }
 .sidebar {
-  width: 220px; flex-shrink: 0; background: var(--bg-surface); border-right: 1px solid var(--border);
+  width: 220px; flex-shrink: 0; background: var(--sidebar-bg); border-right: 1px solid rgba(0,0,0,.2);
   display: flex; flex-direction: column; padding: 16px 12px;
 }
 .sidebar-brand { display: flex; align-items: center; gap: 10px; padding: 8px 8px 20px; }
@@ -3071,19 +3079,20 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
   width: 30px; height: 30px; border-radius: 8px; background: var(--accent);
   display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; color: #fff;
 }
+.sidebar-brand .brand { color: #fff; }
 .sidebar-link {
   display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; margin-bottom: 2px;
-  color: var(--text-muted); cursor: pointer; font-size: 13px; font-weight: 500; text-decoration: none;
+  color: var(--sidebar-text); cursor: pointer; font-size: 13px; font-weight: 500; text-decoration: none;
 }
-.sidebar-link:hover { background: var(--accent-soft); color: var(--text-primary); }
-.sidebar-link.active { background: var(--accent-soft); color: var(--accent); }
-.sidebar-footer { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
-.theme-toggle { display: flex; gap: 4px; background: var(--bg-page); border: 1px solid var(--border); border-radius: 8px; padding: 3px; }
+.sidebar-link:hover { background: var(--sidebar-active-bg); color: var(--sidebar-active-text); }
+.sidebar-link.active { background: var(--sidebar-active-bg); color: var(--accent); }
+.sidebar-footer { margin-top: auto; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.08); display: flex; flex-direction: column; gap: 6px; }
+.theme-toggle { display: flex; gap: 4px; background: var(--sidebar-active-bg); border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: 3px; }
 .theme-toggle button {
   flex: 1; background: transparent; border: none; padding: 5px 0; border-radius: 6px; cursor: pointer;
-  font-size: 12px; color: var(--text-muted);
+  font-size: 12px; color: var(--sidebar-text);
 }
-.theme-toggle button.active { background: var(--bg-surface-raised); color: var(--text-primary); box-shadow: 0 1px 2px rgba(0,0,0,.1); }
+.theme-toggle button.active { background: var(--accent); color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
 .main { flex: 1; min-width: 0; }
 .topbar {
   display: flex; align-items: center; justify-content: space-between; padding: 16px 28px;
