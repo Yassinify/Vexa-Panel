@@ -2,19 +2,7 @@
 // VEXA — VPN Subscription Manager (single-file Cloudflare Worker)
 // =====================================================================
 //
-// CHANGELOG (semantic versioning — bump VEXA_VERSION whenever this file
-// changes, so the on-page footer badge always reflects what's deployed):
-//   1.3.0 (2026-07-29) — Add visible version badge (this entry).
-//   1.2.0 (2026-07-29) — Shadowsocks 2022: import/export for V2Fly's
-//                         separate "shadowsocks2022" protocol shape
-//                         (psk/ipsk fields); SIP022-compliant plain
-//                         (non-Base64) userinfo on ss:// export for
-//                         2022-* ciphers.
-//   1.1.0 (2026-07-29) — Fix: vless/trojan/ss URIs with an RFC3986 "/"
-//                         before the query string (e.g. official SIP002
-//                         plugin-link format) failed validation/parsing.
-//   1.0.0                Baseline.
-// =====================================================================
+
 const VEXA_VERSION = "1.3.0";
 const VEXA_BUILD_DATE = "2026-07-29";
 
@@ -26,7 +14,7 @@ export default {
       console.error(err);
       return json({ error: "internal_error" }, 500);
     }
-  }
+  },
 };
 
 // ---------------------------------------------------------------------
@@ -57,13 +45,22 @@ async function route(request, env, ctx) {
   // sensitive, and this lets the deployed build be checked with curl
   // (or a monitoring probe) without needing to load the UI or log in.
   if (pathname === "/api/version" && method === "GET") {
-    return withCors(request, json({ version: VEXA_VERSION, buildDate: VEXA_BUILD_DATE }), env);
+    return withCors(
+      request,
+      json({ version: VEXA_VERSION, buildDate: VEXA_BUILD_DATE }),
+      env,
+    );
   }
 
   if (pathname.startsWith("/api/")) {
     const authResult = await requireAuth(request, env);
-    if (authResult instanceof Response) return withCors(request, authResult, env);
-    return withCors(request, await handleApi(pathname, method, request, env, authResult), env);
+    if (authResult instanceof Response)
+      return withCors(request, authResult, env);
+    return withCors(
+      request,
+      await handleApi(pathname, method, request, env, authResult),
+      env,
+    );
   }
 
   return json({ error: "not_found" }, 404);
@@ -95,19 +92,23 @@ function withCors(request, response, env) {
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8" }
+    headers: { "Content-Type": "application/json; charset=utf-8" },
   });
 }
 
 function htmlResponse(html) {
   return new Response(html, {
     status: 200,
-    headers: { "Content-Type": "text/html; charset=utf-8" }
+    headers: { "Content-Type": "text/html; charset=utf-8" },
   });
 }
 
 async function safeJson(request) {
-  try { return await request.json(); } catch { return null; }
+  try {
+    return await request.json();
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -124,7 +125,9 @@ function hexToBytes(hex) {
 }
 
 function bytesToHex(bytes) {
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 async function deriveKey(password, saltHex) {
@@ -136,13 +139,13 @@ async function deriveKey(password, saltHex) {
     enc.encode(password),
     { name: "PBKDF2" },
     false,
-    ["deriveBits"]
+    ["deriveBits"],
   );
 
   const derivedBits = await crypto.subtle.deriveBits(
     { name: "PBKDF2", salt, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
     keyMaterial,
-    256
+    256,
   );
 
   return bytesToHex(new Uint8Array(derivedBits));
@@ -161,7 +164,8 @@ function timingSafeEqual(a, b) {
 // JWT (manual HMAC-SHA256, no dependencies)
 // ---------------------------------------------------------------------
 function base64UrlEncode(input) {
-  const bytes = typeof input === "string" ? new TextEncoder().encode(input) : input;
+  const bytes =
+    typeof input === "string" ? new TextEncoder().encode(input) : input;
   let str = btoa(String.fromCharCode(...bytes));
   return str.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
@@ -170,7 +174,7 @@ function base64UrlDecode(str) {
   str = str.replace(/-/g, "+").replace(/_/g, "/");
   while (str.length % 4) str += "=";
   const bin = atob(str);
-  return Uint8Array.from(bin, c => c.charCodeAt(0));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
 }
 
 async function hmacKey(secret) {
@@ -179,7 +183,7 @@ async function hmacKey(secret) {
     new TextEncoder().encode(secret),
     { name: "HMAC", hash: "SHA-256" },
     false,
-    ["sign", "verify"]
+    ["sign", "verify"],
   );
 }
 
@@ -196,7 +200,11 @@ async function signJwt(payload, secret, expiresInSeconds = 3600 * 12) {
   const signingInput = `${encodedHeader}.${encodedPayload}`;
 
   const key = await hmacKey(secret);
-  const sigBuffer = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(signingInput));
+  const sigBuffer = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(signingInput),
+  );
   const encodedSig = base64UrlEncode(new Uint8Array(sigBuffer));
 
   return `${signingInput}.${encodedSig}`;
@@ -212,11 +220,13 @@ async function verifyJwt(token, secret) {
     "HMAC",
     key,
     base64UrlDecode(encodedSig),
-    new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`)
+    new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`),
   );
   if (!valid) throw new Error("bad_signature");
 
-  const payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(encodedPayload)));
+  const payload = JSON.parse(
+    new TextDecoder().decode(base64UrlDecode(encodedPayload)),
+  );
   if (payload.exp && nowSeconds() > payload.exp) throw new Error("expired");
 
   return payload;
@@ -235,7 +245,10 @@ async function requireAuth(request, env) {
 }
 
 async function subCacheKeyFor(url) {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url));
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(url),
+  );
   return `subcache:${bytesToHex(new Uint8Array(digest))}`;
 }
 
@@ -302,9 +315,15 @@ function looksLikeXrayJson(str) {
     if (looksArr) {
       // Array of full client configs (e.g. BPB Panel's multi-config export)
       // or a bare array of outbound objects.
-      return Array.isArray(data) && data.length > 0 && data.some(
-        entry => entry && typeof entry === "object" &&
-          (Array.isArray(entry.outbounds) || entry.protocol)
+      return (
+        Array.isArray(data) &&
+        data.length > 0 &&
+        data.some(
+          (entry) =>
+            entry &&
+            typeof entry === "object" &&
+            (Array.isArray(entry.outbounds) || entry.protocol),
+        )
       );
     }
     return Boolean(Array.isArray(data.outbounds) || data.protocol);
@@ -314,11 +333,22 @@ function looksLikeXrayJson(str) {
 }
 
 function classifySourceString(str) {
-  const rawProtocols = ["vless://", "vmess://", "ss://", "trojan://", "ssr://", "hysteria2://", "hy2://"];
-  if (rawProtocols.some(p => str.startsWith(p))) return { type: "raw", value: str };
-  if (str.startsWith("http://") || str.startsWith("https://")) return { type: "subscription", url: str };
+  const rawProtocols = [
+    "vless://",
+    "vmess://",
+    "ss://",
+    "trojan://",
+    "ssr://",
+    "hysteria2://",
+    "hy2://",
+  ];
+  if (rawProtocols.some((p) => str.startsWith(p)))
+    return { type: "raw", value: str };
+  if (str.startsWith("http://") || str.startsWith("https://"))
+    return { type: "subscription", url: str };
   if (looksLikeXrayJson(str)) return { type: "json", value: str };
-  if (/^proxies:\s*(\[\s*\])?\s*$/m.test(str)) return { type: "yaml", value: str };
+  if (/^proxies:\s*(\[\s*\])?\s*$/m.test(str))
+    return { type: "yaml", value: str };
   return null;
 }
 
@@ -327,9 +357,14 @@ function normalizeSources(sources) {
   const invalid = [];
   const valid = [];
   for (const s of sources) {
-    const classified = typeof s === "string" ? classifySourceString(s.trim()) : s;
-    if (!classified || (classified.type === "subscription" ? !classified.url : !classified.value)) {
-      if (typeof s === "string" && s.trim()) invalid.push({ value: s.trim(), reason: "unrecognized_format" });
+    const classified =
+      typeof s === "string" ? classifySourceString(s.trim()) : s;
+    if (
+      !classified ||
+      (classified.type === "subscription" ? !classified.url : !classified.value)
+    ) {
+      if (typeof s === "string" && s.trim())
+        invalid.push({ value: s.trim(), reason: "unrecognized_format" });
       continue;
     }
     if (classified.type === "raw") {
@@ -342,14 +377,20 @@ function normalizeSources(sources) {
     if (classified.type === "json") {
       const { nodes } = parseXrayJsonSource(classified.value);
       if (nodes.length === 0) {
-        invalid.push({ value: classified.value, reason: "no_parseable_outbounds" });
+        invalid.push({
+          value: classified.value,
+          reason: "no_parseable_outbounds",
+        });
         continue;
       }
     }
     if (classified.type === "yaml") {
       const uris = parseClashYamlSource(classified.value);
       if (uris.length === 0) {
-        invalid.push({ value: classified.value, reason: "no_parseable_proxies" });
+        invalid.push({
+          value: classified.value,
+          reason: "no_parseable_proxies",
+        });
         continue;
       }
     }
@@ -361,17 +402,19 @@ function normalizeSources(sources) {
 async function listProfiles(env) {
   const list = await env.STORAGE.list({ prefix: "profile:" });
   const profiles = await Promise.all(
-    list.keys.map(async k => {
+    list.keys.map(async (k) => {
       const raw = await env.STORAGE.get(k.name);
       return raw ? JSON.parse(raw) : null;
-    })
+    }),
   );
-  const summarized = profiles.filter(Boolean).map(p => ({
+  const summarized = profiles.filter(Boolean).map((p) => ({
     id: p.id,
     name: p.name,
-    subCount: p.sources.filter(s => s.type === "subscription").length,
-    rawCount: p.sources.filter(s => s.type === "raw" || s.type === "json" || s.type === "yaml").length,
-    updatedAt: p.updatedAt
+    subCount: p.sources.filter((s) => s.type === "subscription").length,
+    rawCount: p.sources.filter(
+      (s) => s.type === "raw" || s.type === "json" || s.type === "yaml",
+    ).length,
+    updatedAt: p.updatedAt,
   }));
   return json({ profiles: summarized });
 }
@@ -389,7 +432,7 @@ async function createProfile(request, env) {
     name: body.name.trim(),
     sources,
     createdAt: now,
-    updatedAt: now
+    updatedAt: now,
   };
 
   await env.STORAGE.put(`profile:${profile.id}`, JSON.stringify(profile));
@@ -451,14 +494,21 @@ async function fetchSubscriptionNodes(url) {
   // Some self-hosted panels serve a raw Xray/V2Ray config.json (a single
   // outbound object, a full config, or — e.g. BPB Panel — an array of full
   // configs) at the subscription URL instead of a URI list.
-  const looksJsonBody = (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+  const looksJsonBody =
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
     (trimmed.startsWith("[") && trimmed.endsWith("]"));
   if (looksJsonBody) {
     const { nodes: jsonNodes } = parseXrayJsonSource(trimmed);
     if (jsonNodes.length > 0) {
-      return jsonNodes.map(n => {
-        try { return generateNodeUri(n); } catch { return null; }
-      }).filter(Boolean);
+      return jsonNodes
+        .map((n) => {
+          try {
+            return generateNodeUri(n);
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
     }
     // The body is JSON-shaped but yielded no parseable proxy outbounds
     // (invalid/truncated JSON, or an unrecognized outbound shape). Do NOT
@@ -489,8 +539,8 @@ async function fetchSubscriptionNodes(url) {
   const KNOWN_NODE_SCHEMES = /^(vless|vmess|ss|ssr|trojan|hysteria2|hy2):\/\//i;
   return body
     .split(/\r?\n/)
-    .map(l => l.trim())
-    .filter(l => l.length > 0 && KNOWN_NODE_SCHEMES.test(l));
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && KNOWN_NODE_SCHEMES.test(l));
 }
 
 function splitOnce(str, sep) {
@@ -512,8 +562,19 @@ function robustAtob(str) {
 // but different values here (e.g. different SNI, different path, different
 // security mode) are different nodes, not duplicates.
 const FINGERPRINT_QUERY_KEYS = [
-  "security", "sni", "type", "path", "host", "serviceName",
-  "flow", "alpn", "fp", "pbk", "sid", "headerType", "mode"
+  "security",
+  "sni",
+  "type",
+  "path",
+  "host",
+  "serviceName",
+  "flow",
+  "alpn",
+  "fp",
+  "pbk",
+  "sid",
+  "headerType",
+  "mode",
 ];
 
 function normalizeQueryForFingerprint(searchStr) {
@@ -700,7 +761,7 @@ function parseNodeUri(uri) {
         path: payload.path || "",
         tls: payload.tls || "",
         sni: payload.sni || "",
-        remark: payload.ps || ""
+        remark: payload.ps || "",
       };
     }
     if (uri.startsWith("vless://") || uri.startsWith("trojan://")) {
@@ -729,7 +790,7 @@ function parseNodeUri(uri) {
         fp: params.get("fp") || "",
         pbk: params.get("pbk") || "",
         sid: params.get("sid") || "",
-        remark: hash ? decodeURIComponent(hash) : ""
+        remark: hash ? decodeURIComponent(hash) : "",
       };
     }
     if (uri.startsWith("ss://")) {
@@ -748,7 +809,7 @@ function parseNodeUri(uri) {
           method,
           password,
           plugin: new URLSearchParams(search).get("plugin") || "",
-          remark: hash ? decodeURIComponent(hash) : ""
+          remark: hash ? decodeURIComponent(hash) : "",
         };
       }
       const decoded = robustAtob(beforeHash);
@@ -762,7 +823,7 @@ function parseNodeUri(uri) {
         method,
         password,
         plugin: "",
-        remark: hash ? decodeURIComponent(hash) : ""
+        remark: hash ? decodeURIComponent(hash) : "",
       };
     }
     if (uri.startsWith("hysteria2://") || uri.startsWith("hy2://")) {
@@ -790,7 +851,7 @@ function parseNodeUri(uri) {
         obfsPassword: params.get("obfs-password") || "",
         pinSHA256: params.get("pinSHA256") || "",
         alpn: params.get("alpn") || "",
-        remark: hash ? decodeURIComponent(hash) : ""
+        remark: hash ? decodeURIComponent(hash) : "",
       };
     }
     return null; // SSR/etc: not yet supported for structured parse
@@ -819,7 +880,7 @@ function generateNodeUri(node) {
       host: node.host || "",
       path: node.path || "",
       tls: node.tls || "",
-      sni: node.sni || ""
+      sni: node.sni || "",
     };
     return "vmess://" + utf8ToBase64(JSON.stringify(payload));
   }
@@ -828,7 +889,8 @@ function generateNodeUri(node) {
     const params = new URLSearchParams();
     if (node.security) params.set("security", node.security);
     if (node.sni) params.set("sni", node.sni);
-    if (node.network && node.network !== "tcp") params.set("type", node.network);
+    if (node.network && node.network !== "tcp")
+      params.set("type", node.network);
     if (node.path) params.set("path", node.path);
     if (node.host_header) params.set("host", node.host_header);
     if (node.serviceName) params.set("serviceName", node.serviceName);
@@ -849,7 +911,9 @@ function generateNodeUri(node) {
     const userinfo = is2022
       ? `${node.method}:${node.password}`
       : utf8ToBase64(`${node.method}:${node.password}`).replace(/=+$/, "");
-    const pluginQs = node.plugin ? `?plugin=${encodeURIComponent(node.plugin)}` : "";
+    const pluginQs = node.plugin
+      ? `?plugin=${encodeURIComponent(node.plugin)}`
+      : "";
     return `ss://${userinfo}@${node.address}:${node.port}${pluginQs}${remarkSuffix}`;
   }
 
@@ -884,17 +948,30 @@ function generateNodeUri(node) {
 function extractTransportFields(streamSettings) {
   const ss = streamSettings || {};
   const network = ss.network || "tcp";
-  let path = "", host = "", serviceName = "";
+  let path = "",
+    host = "",
+    serviceName = "";
 
   if (network === "ws" && ss.wsSettings) {
     path = ss.wsSettings.path || "";
-    host = (ss.wsSettings.headers && ss.wsSettings.headers.Host) || ss.wsSettings.host || "";
+    host =
+      (ss.wsSettings.headers && ss.wsSettings.headers.Host) ||
+      ss.wsSettings.host ||
+      "";
   } else if (network === "grpc" && ss.grpcSettings) {
     serviceName = ss.grpcSettings.serviceName || "";
-  } else if ((network === "xhttp" || network === "splithttp") && ss.xhttpSettings) {
+  } else if (
+    (network === "xhttp" || network === "splithttp") &&
+    ss.xhttpSettings
+  ) {
     path = ss.xhttpSettings.path || "";
     host = ss.xhttpSettings.host || "";
-  } else if (network === "tcp" && ss.tcpSettings && ss.tcpSettings.header && ss.tcpSettings.header.type === "http") {
+  } else if (
+    network === "tcp" &&
+    ss.tcpSettings &&
+    ss.tcpSettings.header &&
+    ss.tcpSettings.header.type === "http"
+  ) {
     const req = ss.tcpSettings.header.request;
     if (req) {
       path = (req.path && req.path[0]) || "";
@@ -903,11 +980,17 @@ function extractTransportFields(streamSettings) {
   }
 
   const security = ss.security || "";
-  let sni = "", fp = "", pbk = "", sid = "", alpn = "";
+  let sni = "",
+    fp = "",
+    pbk = "",
+    sid = "",
+    alpn = "";
   if (security === "tls" && ss.tlsSettings) {
     sni = ss.tlsSettings.serverName || "";
     fp = ss.tlsSettings.fingerprint || "";
-    alpn = Array.isArray(ss.tlsSettings.alpn) ? ss.tlsSettings.alpn.join(",") : (ss.tlsSettings.alpn || "");
+    alpn = Array.isArray(ss.tlsSettings.alpn)
+      ? ss.tlsSettings.alpn.join(",")
+      : ss.tlsSettings.alpn || "";
   } else if (security === "reality" && ss.realitySettings) {
     sni = ss.realitySettings.serverName || "";
     fp = ss.realitySettings.fingerprint || "";
@@ -915,18 +998,35 @@ function extractTransportFields(streamSettings) {
     sid = ss.realitySettings.shortId || "";
   }
 
-  return { network, path, host, serviceName, security, sni, fp, pbk, sid, alpn };
+  return {
+    network,
+    path,
+    host,
+    serviceName,
+    security,
+    sni,
+    fp,
+    pbk,
+    sid,
+    alpn,
+  };
 }
 
 function buildStreamSettings(node) {
   const streamSettings = { network: node.network || "tcp" };
 
   if (node.network === "ws") {
-    streamSettings.wsSettings = { path: node.path || "/", headers: node.host_header ? { Host: node.host_header } : {} };
+    streamSettings.wsSettings = {
+      path: node.path || "/",
+      headers: node.host_header ? { Host: node.host_header } : {},
+    };
   } else if (node.network === "grpc") {
     streamSettings.grpcSettings = { serviceName: node.serviceName || "" };
   } else if (node.network === "xhttp") {
-    streamSettings.xhttpSettings = { path: node.path || "/", host: node.host_header || "" };
+    streamSettings.xhttpSettings = {
+      path: node.path || "/",
+      host: node.host_header || "",
+    };
   }
 
   if (node.security === "tls") {
@@ -934,7 +1034,7 @@ function buildStreamSettings(node) {
     streamSettings.tlsSettings = {
       serverName: node.sni || "",
       ...(node.fp ? { fingerprint: node.fp } : {}),
-      ...(node.alpn ? { alpn: node.alpn.split(",") } : {})
+      ...(node.alpn ? { alpn: node.alpn.split(",") } : {}),
     };
   } else if (node.security === "reality") {
     streamSettings.security = "reality";
@@ -942,7 +1042,7 @@ function buildStreamSettings(node) {
       serverName: node.sni || "",
       fingerprint: node.fp || "",
       publicKey: node.pbk || "",
-      shortId: node.sid || ""
+      shortId: node.sid || "",
     };
   }
 
@@ -984,7 +1084,7 @@ function parseXrayOutbound(outbound) {
           fp: transport.fp,
           pbk: transport.pbk,
           sid: transport.sid,
-          remark: outbound.tag || ""
+          remark: outbound.tag || "",
         };
       }
 
@@ -1002,7 +1102,7 @@ function parseXrayOutbound(outbound) {
         path: transport.path,
         tls: transport.security === "tls" ? "tls" : "",
         sni: transport.sni,
-        remark: outbound.tag || ""
+        remark: outbound.tag || "",
       };
     }
 
@@ -1025,13 +1125,14 @@ function parseXrayOutbound(outbound) {
         fp: transport.fp,
         pbk: transport.pbk,
         sid: transport.sid,
-        remark: outbound.tag || ""
+        remark: outbound.tag || "",
       };
     }
 
     if (protocol === "shadowsocks") {
       const server = (settings.servers && settings.servers[0]) || settings;
-      if (!server.address || !server.port || !server.password || !server.method) return null;
+      if (!server.address || !server.port || !server.password || !server.method)
+        return null;
       return {
         protocol: "shadowsocks",
         address: server.address,
@@ -1039,7 +1140,7 @@ function parseXrayOutbound(outbound) {
         method: server.method,
         password: server.password,
         plugin: server.plugin || "",
-        remark: outbound.tag || ""
+        remark: outbound.tag || "",
       };
     }
 
@@ -1054,7 +1155,13 @@ function parseXrayOutbound(outbound) {
     // multi-identity PSK chain in a share link — it round-trips through JSON
     // export but is dropped on URI export.
     if (protocol === "shadowsocks2022") {
-      if (!settings.address || !settings.port || !settings.psk || !settings.method) return null;
+      if (
+        !settings.address ||
+        !settings.port ||
+        !settings.psk ||
+        !settings.method
+      )
+        return null;
       return {
         protocol: "shadowsocks",
         address: settings.address,
@@ -1064,7 +1171,7 @@ function parseXrayOutbound(outbound) {
         plugin: "",
         ipsk: Array.isArray(settings.ipsk) ? settings.ipsk.join(",") : "",
         xrayVariant: "shadowsocks2022",
-        remark: outbound.tag || ""
+        remark: outbound.tag || "",
       };
     }
 
@@ -1085,13 +1192,21 @@ function generateXrayOutbound(node) {
       ...(tag ? { tag } : {}),
       protocol: "vless",
       settings: {
-        vnext: [{
-          address: node.address,
-          port: node.port,
-          users: [{ id: node.id, encryption: "none", ...(node.flow ? { flow: node.flow } : {}) }]
-        }]
+        vnext: [
+          {
+            address: node.address,
+            port: node.port,
+            users: [
+              {
+                id: node.id,
+                encryption: "none",
+                ...(node.flow ? { flow: node.flow } : {}),
+              },
+            ],
+          },
+        ],
       },
-      streamSettings: buildStreamSettings(node)
+      streamSettings: buildStreamSettings(node),
     };
   }
 
@@ -1100,17 +1215,21 @@ function generateXrayOutbound(node) {
       ...(tag ? { tag } : {}),
       protocol: "vmess",
       settings: {
-        vnext: [{
-          address: node.address,
-          port: node.port,
-          users: [{ id: node.id, alterId: node.alterId || 0, security: "auto" }]
-        }]
+        vnext: [
+          {
+            address: node.address,
+            port: node.port,
+            users: [
+              { id: node.id, alterId: node.alterId || 0, security: "auto" },
+            ],
+          },
+        ],
       },
       streamSettings: buildStreamSettings({
         ...node,
         security: node.tls === "tls" ? "tls" : "",
-        host_header: node.host
-      })
+        host_header: node.host,
+      }),
     };
   }
 
@@ -1118,8 +1237,15 @@ function generateXrayOutbound(node) {
     return {
       ...(tag ? { tag } : {}),
       protocol: "trojan",
-      settings: { servers: [{ address: node.address, port: node.port, password: node.id }] },
-      streamSettings: buildStreamSettings({ ...node, security: node.security || "tls" })
+      settings: {
+        servers: [
+          { address: node.address, port: node.port, password: node.id },
+        ],
+      },
+      streamSettings: buildStreamSettings({
+        ...node,
+        security: node.security || "tls",
+      }),
     };
   }
 
@@ -1133,16 +1259,23 @@ function generateXrayOutbound(node) {
           port: node.port,
           method: node.method,
           psk: node.password,
-          ...(node.ipsk ? { ipsk: node.ipsk.split(",") } : {})
-        }
+          ...(node.ipsk ? { ipsk: node.ipsk.split(",") } : {}),
+        },
       };
     }
     return {
       ...(tag ? { tag } : {}),
       protocol: "shadowsocks",
       settings: {
-        servers: [{ address: node.address, port: node.port, method: node.method, password: node.password }]
-      }
+        servers: [
+          {
+            address: node.address,
+            port: node.port,
+            method: node.method,
+            password: node.password,
+          },
+        ],
+      },
     };
   }
 
@@ -1163,18 +1296,21 @@ const GENERIC_TAG_RE = /^(proxy|out|outbound)(-\d+)?$/i;
 function extractOutboundsFromConfig(data, configRemark) {
   const outbounds = Array.isArray(data.outbounds)
     ? data.outbounds
-    : (data.protocol ? [data] : []);
+    : data.protocol
+      ? [data]
+      : [];
 
   const proxyOutbounds = outbounds.filter(
-    ob => !["freedom", "blackhole", "dns", "loopback"].includes(ob.protocol)
+    (ob) => !["freedom", "blackhole", "dns", "loopback"].includes(ob.protocol),
   );
   const multiple = proxyOutbounds.length > 1;
 
-  return proxyOutbounds.map(ob => {
+  return proxyOutbounds.map((ob) => {
     if (!configRemark) return ob;
     const tagIsGeneric = !ob.tag || GENERIC_TAG_RE.test(ob.tag);
     if (!tagIsGeneric) return ob; // outbound already has a meaningful tag of its own
-    const label = multiple && ob.tag ? `${configRemark} (${ob.tag})` : configRemark;
+    const label =
+      multiple && ob.tag ? `${configRemark} (${ob.tag})` : configRemark;
     return { ...ob, tag: label };
   });
 }
@@ -1199,7 +1335,9 @@ function parseXrayJsonSource(jsonText) {
   if (Array.isArray(data)) {
     for (const entry of data) {
       if (!entry || typeof entry !== "object") continue;
-      proxyOutbounds.push(...extractOutboundsFromConfig(entry, entry.remarks || entry.ps));
+      proxyOutbounds.push(
+        ...extractOutboundsFromConfig(entry, entry.remarks || entry.ps),
+      );
     }
   } else {
     proxyOutbounds = extractOutboundsFromConfig(data, data.remarks || data.ps);
@@ -1226,7 +1364,8 @@ function parseXrayJsonSource(jsonText) {
 // It is NOT a general YAML parser and should not be used as one.
 // ---------------------------------------------------------------------
 function stripYamlComment(line) {
-  let inSingle = false, inDouble = false;
+  let inSingle = false,
+    inDouble = false;
   for (let i = 0; i < line.length; i++) {
     const c = line[i];
     if (c === "'" && !inDouble) inSingle = !inSingle;
@@ -1241,7 +1380,10 @@ function stripYamlComment(line) {
 function unquoteYamlScalar(raw) {
   let s = raw.trim();
   if (s === "") return "";
-  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  ) {
     s = s.slice(1, -1);
   }
   if (s === "true") return true;
@@ -1255,18 +1397,25 @@ function parseYamlFlowMap(str) {
   const inner = str.trim().replace(/^\{/, "").replace(/\}$/, "");
   const obj = {};
   const parts = [];
-  let buf = "", inS = false, inD = false;
+  let buf = "",
+    inS = false,
+    inD = false;
   for (const ch of inner) {
     if (ch === "'" && !inD) inS = !inS;
     else if (ch === '"' && !inS) inD = !inD;
-    if (ch === "," && !inS && !inD) { parts.push(buf); buf = ""; }
-    else buf += ch;
+    if (ch === "," && !inS && !inD) {
+      parts.push(buf);
+      buf = "";
+    } else buf += ch;
   }
   if (buf.trim()) parts.push(buf);
   for (const part of parts) {
     const idx = part.indexOf(":");
     if (idx === -1) continue;
-    const key = part.slice(0, idx).trim().replace(/^['"]|['"]$/g, "");
+    const key = part
+      .slice(0, idx)
+      .trim()
+      .replace(/^['"]|['"]$/g, "");
     obj[key] = unquoteYamlScalar(part.slice(idx + 1));
   }
   return obj;
@@ -1278,11 +1427,20 @@ function parseYamlBlockMapLines(lines) {
   while (i < lines.length) {
     const line = lines[i];
     const trimmed = line.trim();
-    if (!trimmed) { i++; continue; }
+    if (!trimmed) {
+      i++;
+      continue;
+    }
     const indent = line.length - line.trimStart().length;
     const colonIdx = trimmed.indexOf(":");
-    if (colonIdx === -1) { i++; continue; }
-    const key = trimmed.slice(0, colonIdx).trim().replace(/^['"]|['"]$/g, "");
+    if (colonIdx === -1) {
+      i++;
+      continue;
+    }
+    const key = trimmed
+      .slice(0, colonIdx)
+      .trim()
+      .replace(/^['"]|['"]$/g, "");
     const rest = trimmed.slice(colonIdx + 1).trim();
 
     if (rest === "" || rest === "|" || rest === ">") {
@@ -1290,7 +1448,10 @@ function parseYamlBlockMapLines(lines) {
       let j = i + 1;
       while (j < lines.length) {
         const l2 = lines[j];
-        if (!l2.trim()) { j++; continue; }
+        if (!l2.trim()) {
+          j++;
+          continue;
+        }
         const indent2 = l2.length - l2.trimStart().length;
         if (indent2 <= indent) break;
         nested.push(l2);
@@ -1317,7 +1478,10 @@ function parseClashProxiesYaml(yamlText) {
 
   let start = -1;
   for (let i = 0; i < rawLines.length; i++) {
-    if (/^proxies:\s*(\[\s*\])?\s*$/.test(rawLines[i]) && !/^\s/.test(rawLines[i])) {
+    if (
+      /^proxies:\s*(\[\s*\])?\s*$/.test(rawLines[i]) &&
+      !/^\s/.test(rawLines[i])
+    ) {
       start = i;
       break;
     }
@@ -1327,7 +1491,10 @@ function parseClashProxiesYaml(yamlText) {
   const blockLines = [];
   for (let i = start + 1; i < rawLines.length; i++) {
     const line = rawLines[i];
-    if (line.trim() === "") { blockLines.push(line); continue; }
+    if (line.trim() === "") {
+      blockLines.push(line);
+      continue;
+    }
     const indent = line.length - line.trimStart().length;
     if (indent === 0) break;
     blockLines.push(line);
@@ -1344,7 +1511,10 @@ function parseClashProxiesYaml(yamlText) {
   const items = [];
   let current = null;
   for (const line of blockLines) {
-    if (!line.trim()) { if (current) current.push(line); continue; }
+    if (!line.trim()) {
+      if (current) current.push(line);
+      continue;
+    }
     const indent = line.length - line.trimStart().length;
     if (indent === baseIndent && line.trimStart().startsWith("-")) {
       if (current) items.push(current);
@@ -1381,13 +1551,15 @@ function parseClashProxiesYaml(yamlText) {
 // supported (e.g. clash-only types like socks5/http/snell — Step 5 territory
 // for socks5/http; snell has no vexa-side URI format to export to).
 function clashProxyToNode(p) {
-  if (!p || typeof p !== "object" || !p.type || !p.server || !p.port) return null;
+  if (!p || typeof p !== "object" || !p.type || !p.server || !p.port)
+    return null;
 
   const wsOpts = p["ws-opts"] || {};
   const grpcOpts = p["grpc-opts"] || {};
   const realityOpts = p["reality-opts"] || {};
   const network = p.network || (wsOpts.path || wsOpts.headers ? "ws" : "tcp");
-  const wsHost = (wsOpts.headers && (wsOpts.headers.Host || wsOpts.headers.host)) || "";
+  const wsHost =
+    (wsOpts.headers && (wsOpts.headers.Host || wsOpts.headers.host)) || "";
   const isReality = Boolean(realityOpts["public-key"]);
   const isTls = Boolean(p.tls) || isReality;
 
@@ -1399,18 +1571,18 @@ function clashProxyToNode(p) {
         address: p.server,
         port: Number(p.port),
         id: p.uuid,
-        security: isReality ? "reality" : (isTls ? "tls" : ""),
+        security: isReality ? "reality" : isTls ? "tls" : "",
         sni: p.servername || p.sni || "",
         network,
         path: wsOpts.path || "",
         host_header: wsHost,
         serviceName: grpcOpts["grpc-service-name"] || "",
         flow: p.flow || "",
-        alpn: Array.isArray(p.alpn) ? p.alpn.join(",") : (p.alpn || ""),
+        alpn: Array.isArray(p.alpn) ? p.alpn.join(",") : p.alpn || "",
         fp: p["client-fingerprint"] || "",
         pbk: realityOpts["public-key"] || "",
         sid: realityOpts["short-id"] || "",
-        remark: p.name || ""
+        remark: p.name || "",
       };
     }
 
@@ -1428,7 +1600,7 @@ function clashProxyToNode(p) {
         path: wsOpts.path || "",
         tls: isTls ? "tls" : "",
         sni: p.servername || p.sni || "",
-        remark: p.name || ""
+        remark: p.name || "",
       };
     }
 
@@ -1446,11 +1618,11 @@ function clashProxyToNode(p) {
         host_header: wsHost,
         serviceName: grpcOpts["grpc-service-name"] || "",
         flow: "",
-        alpn: Array.isArray(p.alpn) ? p.alpn.join(",") : (p.alpn || ""),
+        alpn: Array.isArray(p.alpn) ? p.alpn.join(",") : p.alpn || "",
         fp: p["client-fingerprint"] || "",
         pbk: "",
         sid: "",
-        remark: p.name || ""
+        remark: p.name || "",
       };
     }
 
@@ -1463,7 +1635,7 @@ function clashProxyToNode(p) {
         method: p.cipher,
         password: String(p.password),
         plugin: p.plugin || "",
-        remark: p.name || ""
+        remark: p.name || "",
       };
     }
 
@@ -1483,7 +1655,11 @@ function parseClashYamlSource(yamlText) {
   for (const p of proxies) {
     const node = clashProxyToNode(p);
     if (!node) continue;
-    try { uris.push(generateNodeUri(node)); } catch { /* unsupported combo, skip */ }
+    try {
+      uris.push(generateNodeUri(node));
+    } catch {
+      /* unsupported combo, skip */
+    }
   }
   return uris;
 }
@@ -1504,10 +1680,16 @@ async function mergeProfileNodes(profile, env) {
         // source can fall back to it instead of silently dropping nodes.
         if (cacheKey) {
           try {
-            await env.STORAGE.put(cacheKey, JSON.stringify({ nodes, fetchedAt: Date.now() }), {
-              expirationTtl: SUB_CACHE_TTL_SECONDS
-            });
-          } catch { /* cache write failure shouldn't fail the merge itself */ }
+            await env.STORAGE.put(
+              cacheKey,
+              JSON.stringify({ nodes, fetchedAt: Date.now() }),
+              {
+                expirationTtl: SUB_CACHE_TTL_SECONDS,
+              },
+            );
+          } catch {
+            /* cache write failure shouldn't fail the merge itself */
+          }
         }
       } catch (e) {
         let usedCache = false;
@@ -1521,9 +1703,16 @@ async function mergeProfileNodes(profile, env) {
               usedCache = true;
               cacheAgeMs = Date.now() - cached.fetchedAt;
             }
-          } catch { /* cache read/parse failure: fall through to reporting the error below */ }
+          } catch {
+            /* cache read/parse failure: fall through to reporting the error below */
+          }
         }
-        errors.push({ url: source.url, error: e.message, usedCache, cacheAgeMs });
+        errors.push({
+          url: source.url,
+          error: e.message,
+          usedCache,
+          cacheAgeMs,
+        });
       }
     } else if (source.type === "json") {
       const { nodes: jsonNodes } = parseXrayJsonSource(source.value);
@@ -1558,13 +1747,14 @@ async function mergeProfileNodes(profile, env) {
     nodes: deduped,
     totalFetched: allNodes.length,
     duplicatesRemoved: duplicateCount,
-    sourceErrors: errors
+    sourceErrors: errors,
   };
 }
 
 async function mergePreviewHandler(request, env) {
   const body = await safeJson(request);
-  if (!body || !body.profileId) return json({ error: "profile_id_required" }, 400);
+  if (!body || !body.profileId)
+    return json({ error: "profile_id_required" }, 400);
 
   const raw = await env.STORAGE.get(`profile:${body.profileId}`);
   if (!raw) return json({ error: "not_found" }, 404);
@@ -1577,7 +1767,7 @@ async function mergePreviewHandler(request, env) {
     totalFetched: result.totalFetched,
     duplicatesRemoved: result.duplicatesRemoved,
     sourceErrors: result.sourceErrors,
-    subUrl: `/sub/${profile.id}`
+    subUrl: `/sub/${profile.id}`,
   });
 }
 
@@ -1602,7 +1792,7 @@ async function handlePublicSub(id, env, url) {
   // preserve exact existing behavior for current subscribers.
   const wantsCanonical = url && url.searchParams.get("canonical") === "1";
   const outputNodes = wantsCanonical
-    ? nodes.map(n => {
+    ? nodes.map((n) => {
         const parsed = parseNodeUri(n);
         if (!parsed) return n;
         try {
@@ -1625,8 +1815,8 @@ async function handlePublicSub(id, env, url) {
       "Content-Disposition": `attachment; filename="${encodeURIComponent(subtitle)}"`,
       "Profile-Title": `base64:${encodedTitle}`,
       "Profile-Update-Interval": "24",
-      "Subscription-Userinfo": "upload=0; download=0; total=0; expire=0"
-    }
+      "Subscription-Userinfo": "upload=0; download=0; total=0; expire=0",
+    },
   });
 }
 
