@@ -3,8 +3,7 @@
 // =====================================================================
 //
 
-const VEXA_VERSION = "2.2.1";
-const VEXA_BUILD_DATE = "2026-07-29";
+const VEXA_VERSION = "3.2.1";
 
 export default {
   async fetch(request, env, ctx) {
@@ -29,6 +28,27 @@ async function route(request, env, ctx) {
     return withCors(request, new Response(null, { status: 204 }), env);
   }
 
+  // The KV binding is required for every other feature (sessions, users,
+  // profiles, secret generation). If it isn't bound yet, stop here and walk
+  // the admin through binding it rather than letting every downstream call
+  // fail with an opaque internal_error.
+  if (!kvBound(env)) {
+    if (pathname === "/api/version") {
+      return withCors(request, json({ version: VEXA_VERSION }), env);
+    }
+    if (pathname.startsWith("/api/") || pathname.startsWith("/sub/")) {
+      return withCors(request, json({ error: "kv_not_configured" }, 503), env);
+    }
+    return htmlResponse(renderKvSetupGuide());
+  }
+
+  // Per-user combined subscription link — merges every profile owned by the
+  // user into a single output. Checked before the generic /sub/:profileId
+  // route below since both share the /sub/ prefix.
+  if (pathname.startsWith("/sub/user/") && method === "GET") {
+    return handlePublicUserSub(pathname.split("/sub/user/")[1], env, url);
+  }
+
   if (pathname.startsWith("/sub/") && method === "GET") {
     return handlePublicSub(pathname.split("/sub/")[1], env, url);
   }
@@ -36,18 +56,36 @@ async function route(request, env, ctx) {
   // Required Cloudflare Variables/Secrets missing → force the admin through
   // the setup page rather than serving a panel that can't log anyone in.
   if (
-    (pathname === "/" || pathname === "/index.html") &&
+    (pathname === "/" ||
+      pathname === "/index.html" ||
+      pathname === "/login" ||
+      pathname === "/panel") &&
     !secretsConfigured(env)
   ) {
     return Response.redirect(`${url.origin}/secret`, 302);
   }
 
-  if (pathname === "/" || pathname === "/index.html") {
+  if (
+    pathname === "/" ||
+    pathname === "/index.html" ||
+    pathname === "/login" ||
+    pathname === "/panel"
+  ) {
     return htmlResponse(renderApp());
   }
 
-  if (pathname === "/secret" && method === "GET") {
+  if ((pathname === "/secret" || pathname === "/secrets") && method === "GET") {
     return htmlResponse(renderSecretPage(secretsConfigured(env)));
+  }
+
+  // Dedicated deep link for the panel's Settings → "Change Panel Password"
+  // action. Nothing to change if secrets were never generated in the first
+  // place, so send the admin through initial setup instead.
+  if (pathname === "/change-panel-password" && method === "GET") {
+    if (!secretsConfigured(env)) {
+      return Response.redirect(`${url.origin}/secret`, 302);
+    }
+    return htmlResponse(renderChangePanelPasswordPage());
   }
 
   // Generating new secret values never reads or writes any existing secret
@@ -90,11 +128,7 @@ async function route(request, env, ctx) {
   // sensitive, and this lets the deployed build be checked with curl
   // (or a monitoring probe) without needing to load the UI or log in.
   if (pathname === "/api/version" && method === "GET") {
-    return withCors(
-      request,
-      json({ version: VEXA_VERSION, buildDate: VEXA_BUILD_DATE }),
-      env,
-    );
+    return withCors(request, json({ version: VEXA_VERSION }), env);
   }
 
   if (pathname.startsWith("/api/")) {
@@ -115,6 +149,12 @@ async function route(request, env, ctx) {
 // and ADMIN_PASSWORD_HASH gate login, JWT_SECRET signs/verifies sessions.
 function secretsConfigured(env) {
   return Boolean(env.ADMIN_SALT && env.ADMIN_PASSWORD_HASH && env.JWT_SECRET);
+}
+
+// The KV namespace binding (Variable name: STORAGE) that backs every read
+// and write in this Worker. Nothing else can run without it.
+function kvBound(env) {
+  return Boolean(env.STORAGE);
 }
 
 // ---------------------------------------------------------------------
@@ -242,7 +282,7 @@ function nowSeconds() {
   return Math.floor(Date.now() / 1000);
 }
 
-async function signJwt(payload, secret, expiresInSeconds = 3600 * 12) {
+async function signJwt(payload, secret, expiresInSeconds = 3600 * 48) {
   const header = { alg: "HS256", typ: "JWT" };
   const fullPayload = { ...payload, exp: nowSeconds() + expiresInSeconds };
 
@@ -575,6 +615,7 @@ async function listUsers(env) {
       return {
         id: user.id,
         name: user.name,
+        enabled: user.enabled !== false,
         profileCount: profileIds.length,
         primaryProfileId: profileIds[0] || null,
         createdAt: user.createdAt,
@@ -594,6 +635,7 @@ async function createUser(request, env) {
   const user = {
     id: crypto.randomUUID(),
     name: body.name.trim(),
+    enabled: true,
     createdAt: now,
     updatedAt: now,
   };
@@ -610,7 +652,9 @@ async function createUser(request, env) {
 async function getUser(id, env) {
   const raw = await env.STORAGE.get(`user:${id}`);
   if (!raw) return json({ error: "not_found" }, 404);
-  return json({ user: JSON.parse(raw) });
+  const user = JSON.parse(raw);
+  user.enabled = user.enabled !== false;
+  return json({ user });
 }
 
 async function updateUser(id, request, env) {
@@ -618,10 +662,26 @@ async function updateUser(id, request, env) {
   if (!raw) return json({ error: "not_found" }, 404);
   const user = JSON.parse(raw);
   const body = await safeJson(request);
-  if (body && body.name) user.name = body.name.trim();
+  let toggled = false;
+  // Name is locked after creation — intentionally ignore body.name here even
+  // if a client sends one, so the name can't be changed via a stale/crafted
+  // request either.
+  if (
+    body &&
+    typeof body.enabled === "boolean" &&
+    body.enabled !== (user.enabled !== false)
+  ) {
+    user.enabled = body.enabled;
+    toggled = true;
+  }
   user.updatedAt = Date.now();
   await kvPutJson(env, `user:${id}`, user);
-  await recordActivity(env, `Renamed user to "${user.name}"`);
+  if (toggled)
+    await recordActivity(
+      env,
+      `${user.enabled ? "Enabled" : "Disabled"} user "${user.name}"`,
+    );
+  user.enabled = user.enabled !== false;
   return json({ user });
 }
 
@@ -670,6 +730,7 @@ async function duplicateUser(id, env) {
   const clone = {
     id: crypto.randomUUID(),
     name: `${source.name} (copy)`,
+    enabled: source.enabled !== false,
     createdAt: now,
     updatedAt: now,
   };
@@ -908,7 +969,9 @@ async function updateProfile(id, request, env) {
 
   const body = await safeJson(request);
   let invalid = [];
-  if (body && body.name) existing.name = body.name.trim();
+  // Name is locked after creation — intentionally ignore body.name here even
+  // if a client sends one, so the name can't be changed via a stale/crafted
+  // request either.
   if (body && body.sources) {
     const result = normalizeSources(body.sources);
     existing.sources = result.sources;
@@ -1016,7 +1079,6 @@ async function getStats(env) {
     stats,
     activity,
     version: VEXA_VERSION,
-    buildDate: VEXA_BUILD_DATE,
   });
 }
 
@@ -1649,6 +1711,30 @@ function parseNodeUri(uri) {
         password,
         padding: params.get("padding") || "",
         remark: hash ? decodeURIComponent(hash) : "",
+      };
+    }
+    if (uri.startsWith("ssr://")) {
+      const decoded = robustAtob(uri.slice("ssr://".length).split("#")[0]);
+      const [mainPart, queryPart] = splitOnce(decoded, "/?");
+      const segments = mainPart.split(":");
+      if (segments.length < 6) return null;
+      const [host, port, protocol, method, obfs, passwordB64] = segments;
+      const params = new URLSearchParams(queryPart || "");
+      return {
+        protocol: "shadowsocksr",
+        address: host,
+        port: Number(port),
+        ssrProtocol: protocol,
+        method,
+        obfs,
+        password: robustAtob(passwordB64),
+        obfsParam: params.get("obfsparam")
+          ? robustAtob(params.get("obfsparam"))
+          : "",
+        protoParam: params.get("protoparam")
+          ? robustAtob(params.get("protoparam"))
+          : "",
+        remark: params.get("remarks") ? robustAtob(params.get("remarks")) : "",
       };
     }
     return null; // SSR/etc: not yet supported for structured parse
@@ -2764,6 +2850,491 @@ async function mergePreviewHandler(request, env) {
 // ---------------------------------------------------------------------
 // PUBLIC /sub/:id ROUTE
 // ---------------------------------------------------------------------
+// ---------------------------------------------------------------------
+// SING-BOX / CLASH OUTPUT — converts our parsed node objects (see
+// parseNodeUri above) into sing-box outbound objects / Clash proxy maps.
+// Only the protocols listed below can be structurally converted; anything
+// else (SSR, WireGuard, TUIC, naive+, plain socks, etc.) is skipped rather
+// than guessed at, since a wrong config is worse than a missing node.
+// ---------------------------------------------------------------------
+function uniqueName(base, used) {
+  let name = base && base.trim() ? base.trim() : "node";
+  let i = 2;
+  while (used.has(name)) {
+    name = `${base || "node"} (${i++})`;
+  }
+  used.add(name);
+  return name;
+}
+
+function nodeToSingboxOutbound(node, tag) {
+  const common = { tag, server: node.address, server_port: node.port };
+  switch (node.protocol) {
+    case "vmess":
+      return {
+        ...common,
+        type: "vmess",
+        uuid: node.id,
+        alter_id: node.alterId || 0,
+        security: "auto",
+        tls:
+          node.tls === "tls"
+            ? {
+                enabled: true,
+                server_name: node.sni || node.host || node.address,
+              }
+            : undefined,
+        transport:
+          node.network && node.network !== "tcp"
+            ? {
+                type: node.network === "ws" ? "ws" : node.network,
+                path: node.path || "",
+                headers: node.host ? { Host: node.host } : undefined,
+              }
+            : undefined,
+      };
+    case "vless":
+      return {
+        ...common,
+        type: "vless",
+        uuid: node.id,
+        flow: node.flow || undefined,
+        tls:
+          node.security === "tls" || node.security === "reality"
+            ? {
+                enabled: true,
+                server_name: node.sni || node.address,
+                reality:
+                  node.security === "reality"
+                    ? {
+                        enabled: true,
+                        public_key: node.pbk || "",
+                        short_id: node.sid || "",
+                      }
+                    : undefined,
+                utls: node.fp
+                  ? { enabled: true, fingerprint: node.fp }
+                  : undefined,
+              }
+            : undefined,
+        transport:
+          node.network && node.network !== "tcp"
+            ? {
+                type: node.network === "ws" ? "ws" : node.network,
+                path: node.path || "",
+                headers: node.host_header
+                  ? { Host: node.host_header }
+                  : undefined,
+                service_name:
+                  node.network === "grpc" ? node.serviceName || "" : undefined,
+              }
+            : undefined,
+      };
+    case "trojan":
+      return {
+        ...common,
+        type: "trojan",
+        password: node.id,
+        tls: { enabled: true, server_name: node.sni || node.address },
+        transport:
+          node.network && node.network !== "tcp"
+            ? {
+                type: node.network === "ws" ? "ws" : node.network,
+                path: node.path || "",
+                headers: node.host_header
+                  ? { Host: node.host_header }
+                  : undefined,
+                service_name:
+                  node.network === "grpc" ? node.serviceName || "" : undefined,
+              }
+            : undefined,
+      };
+    case "shadowsocks":
+      return {
+        ...common,
+        type: "shadowsocks",
+        method: node.method,
+        password: node.password,
+      };
+    case "hysteria2":
+      return {
+        ...common,
+        type: "hysteria2",
+        password: node.auth || "",
+        tls: {
+          enabled: true,
+          server_name: node.sni || node.address,
+          insecure: !!node.insecure,
+        },
+        obfs: node.obfs
+          ? { type: node.obfs, password: node.obfsPassword || "" }
+          : undefined,
+      };
+    case "hysteria":
+      return {
+        ...common,
+        type: "hysteria",
+        up_mbps: node.upmbps ? Number(node.upmbps) : undefined,
+        down_mbps: node.downmbps ? Number(node.downmbps) : undefined,
+        obfs: node.obfs || undefined,
+        auth_str: node.auth || undefined,
+        tls: {
+          enabled: true,
+          server_name: node.sni || node.address,
+          insecure: !!node.insecure,
+        },
+      };
+    case "tuic":
+      return {
+        ...common,
+        type: "tuic",
+        uuid: node.uuid,
+        password: node.password || "",
+        congestion_control: node.congestionControl || "bbr",
+        udp_relay_mode: node.udpRelayMode || "native",
+        tls: {
+          enabled: true,
+          server_name: node.sni || node.address,
+          insecure: !!node.allowInsecure,
+          disable_sni: !!node.disableSni,
+        },
+      };
+    case "wireguard":
+      return {
+        ...common,
+        type: "wireguard",
+        local_address: node.localAddress
+          ? node.localAddress
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : [],
+        private_key: node.privateKey,
+        peer_public_key: node.publicKey,
+        pre_shared_key: node.presharedKey || undefined,
+        mtu: node.mtu ? Number(node.mtu) : undefined,
+      };
+    default:
+      return null;
+  }
+}
+
+function nodeToClashProxy(node, name) {
+  const common = { name, server: node.address, port: node.port };
+  switch (node.protocol) {
+    case "vmess":
+      return {
+        ...common,
+        type: "vmess",
+        uuid: node.id,
+        alterId: node.alterId || 0,
+        cipher: "auto",
+        tls: node.tls === "tls",
+        network: node.network || "tcp",
+        "ws-opts":
+          node.network === "ws"
+            ? {
+                path: node.path || "",
+                headers: node.host ? { Host: node.host } : undefined,
+              }
+            : undefined,
+        servername: node.sni || undefined,
+      };
+    case "vless":
+      return {
+        ...common,
+        type: "vless",
+        uuid: node.id,
+        flow: node.flow || undefined,
+        tls: node.security === "tls" || node.security === "reality",
+        network: node.network || "tcp",
+        servername: node.sni || undefined,
+        "client-fingerprint": node.fp || undefined,
+        "ws-opts":
+          node.network === "ws"
+            ? {
+                path: node.path || "",
+                headers: node.host_header
+                  ? { Host: node.host_header }
+                  : undefined,
+              }
+            : undefined,
+        "grpc-opts":
+          node.network === "grpc"
+            ? { "grpc-service-name": node.serviceName || "" }
+            : undefined,
+        "reality-opts":
+          node.security === "reality"
+            ? { "public-key": node.pbk || "", "short-id": node.sid || "" }
+            : undefined,
+      };
+    case "trojan":
+      return {
+        ...common,
+        type: "trojan",
+        password: node.id,
+        sni: node.sni || undefined,
+        network:
+          node.network && node.network !== "tcp" ? node.network : undefined,
+        "ws-opts":
+          node.network === "ws"
+            ? {
+                path: node.path || "",
+                headers: node.host_header
+                  ? { Host: node.host_header }
+                  : undefined,
+              }
+            : undefined,
+        "grpc-opts":
+          node.network === "grpc"
+            ? { "grpc-service-name": node.serviceName || "" }
+            : undefined,
+      };
+    case "shadowsocks":
+      return {
+        ...common,
+        type: "ss",
+        cipher: node.method,
+        password: node.password,
+      };
+    case "hysteria2":
+      return {
+        ...common,
+        type: "hysteria2",
+        password: node.auth || "",
+        sni: node.sni || undefined,
+        "skip-cert-verify": !!node.insecure,
+        obfs: node.obfs || undefined,
+        "obfs-password": node.obfsPassword || undefined,
+      };
+    case "hysteria":
+      return {
+        ...common,
+        type: "hysteria",
+        "auth-str": node.auth || undefined,
+        up: node.upmbps || undefined,
+        down: node.downmbps || undefined,
+        obfs: node.obfs || undefined,
+        sni: node.sni || undefined,
+        "skip-cert-verify": !!node.insecure,
+      };
+    case "tuic":
+      return {
+        ...common,
+        type: "tuic",
+        uuid: node.uuid,
+        password: node.password || "",
+        "congestion-controller": node.congestionControl || "bbr",
+        "udp-relay-mode": node.udpRelayMode || "native",
+        sni: node.sni || undefined,
+        "disable-sni": !!node.disableSni,
+        "skip-cert-verify": !!node.allowInsecure,
+      };
+    case "wireguard":
+      return {
+        ...common,
+        type: "wireguard",
+        ip: node.localAddress
+          ? node.localAddress.split(",")[0].split("/")[0].trim()
+          : undefined,
+        "private-key": node.privateKey,
+        "public-key": node.publicKey,
+        "preshared-key": node.presharedKey || undefined,
+        mtu: node.mtu ? Number(node.mtu) : undefined,
+      };
+    case "shadowsocksr":
+      return {
+        ...common,
+        type: "ssr",
+        cipher: node.method,
+        password: node.password,
+        protocol: node.ssrProtocol,
+        obfs: node.obfs,
+        "protocol-param": node.protoParam || undefined,
+        "obfs-param": node.obfsParam || undefined,
+      };
+    default:
+      return null;
+  }
+}
+
+// Drops any key whose value is undefined so the emitted JSON/YAML is clean
+// instead of littered with "key: undefined".
+function pruneUndefined(obj) {
+  if (Array.isArray(obj)) return obj.map(pruneUndefined);
+  if (obj && typeof obj === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (v === undefined) continue;
+      out[k] = pruneUndefined(v);
+    }
+    return out;
+  }
+  return obj;
+}
+
+function buildSingboxConfig(nodes, title) {
+  const used = new Set();
+  const outbounds = [];
+  for (const uri of nodes) {
+    const parsed = parseNodeUri(uri);
+    if (!parsed) continue;
+    const tag = uniqueName(
+      parsed.remark || `${parsed.protocol}-${parsed.address}`,
+      used,
+    );
+    const ob = nodeToSingboxOutbound(parsed, tag);
+    if (ob) outbounds.push(pruneUndefined(ob));
+  }
+  const tags = outbounds.map((o) => o.tag);
+  const config = {
+    log: { level: "info" },
+    outbounds: [
+      {
+        type: "selector",
+        tag: title || "select",
+        outbounds: ["auto", ...tags],
+        default: "auto",
+      },
+      { type: "urltest", tag: "auto", outbounds: tags },
+      ...outbounds,
+      { type: "direct", tag: "direct" },
+      { type: "block", tag: "block" },
+    ],
+    route: { rules: [], final: title || "select" },
+  };
+  return { json: JSON.stringify(config, null, 2), count: outbounds.length };
+}
+
+// Minimal hand-rolled YAML writer — sufficient for the flat proxy maps and
+// small proxy-groups list this config needs, without pulling in a library.
+function toYamlValue(v) {
+  if (typeof v === "string") {
+    return /^[A-Za-z0-9_.\-]+$/.test(v) && v !== "" ? v : JSON.stringify(v);
+  }
+  if (typeof v === "boolean" || typeof v === "number") return String(v);
+  return JSON.stringify(v);
+}
+
+function proxyToYamlBlock(proxy) {
+  const parts = Object.entries(proxy).map(([k, v]) => {
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const inner = Object.entries(v)
+        .map(([ik, iv]) => `${ik}: ${toYamlValue(iv)}`)
+        .join(", ");
+      return `${k}: {${inner}}`;
+    }
+    return `${k}: ${toYamlValue(v)}`;
+  });
+  return `  { ${parts.join(", ")} }`;
+}
+
+function buildClashConfig(nodes, title) {
+  const used = new Set();
+  const proxies = [];
+  for (const uri of nodes) {
+    const parsed = parseNodeUri(uri);
+    if (!parsed) continue;
+    const name = uniqueName(
+      parsed.remark || `${parsed.protocol}-${parsed.address}`,
+      used,
+    );
+    const proxy = nodeToClashProxy(parsed, name);
+    if (proxy) proxies.push(pruneUndefined(proxy));
+  }
+  const names = proxies.map((p) => p.name);
+  const lines = [];
+  lines.push("port: 7890");
+  lines.push("socks-port: 7891");
+  lines.push("allow-lan: true");
+  lines.push("mode: rule");
+  lines.push("log-level: info");
+  lines.push("proxies:");
+  for (const p of proxies) lines.push(`-${proxyToYamlBlock(p).slice(1)}`);
+  lines.push("proxy-groups:");
+  lines.push(`  - name: "${title || "PROXY"}"`);
+  lines.push("    type: select");
+  lines.push(
+    `    proxies: [${["AUTO", ...names].map((n) => JSON.stringify(n)).join(", ")}]`,
+  );
+  lines.push('  - name: "AUTO"');
+  lines.push("    type: url-test");
+  lines.push(
+    `    proxies: [${names.map((n) => JSON.stringify(n)).join(", ")}]`,
+  );
+  lines.push('    url: "http://www.gstatic.com/generate_204"');
+  lines.push("    interval: 300");
+  lines.push("rules:");
+  lines.push(`  - MATCH,${title || "PROXY"}`);
+  return { yaml: lines.join("\n"), count: proxies.length };
+}
+
+// Dispatches to base64 (default, unchanged behavior), sing-box, or Clash
+// output depending on the ?format= query param. Unknown/missing format
+// always falls back to plain base64 so existing links never change.
+function buildFormattedSubResponse(nodes, subtitle, url) {
+  const format = url ? url.searchParams.get("format") : null;
+
+  if (format === "singbox") {
+    const { json } = buildSingboxConfig(nodes, subtitle);
+    return new Response(json, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${encodeURIComponent(subtitle)}.json"`,
+        "Profile-Update-Interval": "24",
+      },
+    });
+  }
+
+  if (format === "clash") {
+    const { yaml } = buildClashConfig(nodes, subtitle);
+    return new Response(yaml, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/yaml; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${encodeURIComponent(subtitle)}.yaml"`,
+        "Profile-Update-Interval": "24",
+      },
+    });
+  }
+
+  return buildSubResponse(nodes, subtitle, url);
+}
+
+// Shared by both the per-profile and per-user public sub routes: applies the
+// optional canonical re-serialization, then wraps the node list into the
+// same base64 response format subscription clients already expect.
+function buildSubResponse(nodes, subtitle, url) {
+  const wantsCanonical = url && url.searchParams.get("canonical") === "1";
+  const outputNodes = wantsCanonical
+    ? nodes.map((n) => {
+        const parsed = parseNodeUri(n);
+        if (!parsed) return n;
+        try {
+          return generateNodeUri(parsed);
+        } catch {
+          return n;
+        }
+      })
+    : nodes;
+
+  const payload = outputNodes.join("\n");
+  const base64Payload = btoa(unescape(encodeURIComponent(payload)));
+  const encodedTitle = btoa(unescape(encodeURIComponent(subtitle)));
+
+  return new Response(base64Payload, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${encodeURIComponent(subtitle)}"`,
+      "Profile-Title": `base64:${encodedTitle}`,
+      "Profile-Update-Interval": "24",
+      "Subscription-Userinfo": "upload=0; download=0; total=0; expire=0",
+    },
+  });
+}
+
 async function handlePublicSub(id, env, url) {
   if (!id || !/^[a-f0-9-]{36}$/.test(id)) {
     return new Response("Not found", { status: 404 });
@@ -2780,39 +3351,98 @@ async function handlePublicSub(id, env, url) {
   // params and normalizing formatting. Nodes we can't structurally parse
   // (SSR, Hysteria2, etc.) pass through unchanged. Off by default to
   // preserve exact existing behavior for current subscribers.
-  const wantsCanonical = url && url.searchParams.get("canonical") === "1";
-  const outputNodes = wantsCanonical
-    ? nodes.map((n) => {
-        const parsed = parseNodeUri(n);
-        if (!parsed) return n;
-        try {
-          return generateNodeUri(parsed);
-        } catch {
-          return n;
-        }
-      })
-    : nodes;
+  return buildFormattedSubResponse(nodes, `Vexa - ${profile.name}`, url);
+}
 
-  const payload = outputNodes.join("\n");
-  const base64Payload = btoa(unescape(encodeURIComponent(payload)));
-  const subtitle = `Vexa - ${profile.name}`;
-  const encodedTitle = btoa(unescape(encodeURIComponent(subtitle)));
+// ---------------------------------------------------------------------
+// PUBLIC /sub/user/:id ROUTE — combines every profile owned by a user into
+// a single subscription link. This is the link shown next to a user's name
+// in the panel; it stays valid as profiles are added, edited, or removed
+// under that user, and stops serving nodes the moment the user is disabled.
+// ---------------------------------------------------------------------
+async function handlePublicUserSub(id, env, url) {
+  if (!id || !/^[a-f0-9-]{36}$/.test(id)) {
+    return new Response("Not found", { status: 404 });
+  }
 
-  return new Response(base64Payload, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${encodeURIComponent(subtitle)}"`,
-      "Profile-Title": `base64:${encodedTitle}`,
-      "Profile-Update-Interval": "24",
-      "Subscription-Userinfo": "upload=0; download=0; total=0; expire=0",
-    },
-  });
+  const userRaw = await env.STORAGE.get(`user:${id}`);
+  if (!userRaw) return new Response("Not found", { status: 404 });
+  const user = JSON.parse(userRaw);
+
+  // A disabled user's link stops serving nodes immediately, without needing
+  // to touch or remember each of their individual profiles.
+  if (user.enabled === false) {
+    return new Response("Not found", { status: 404 });
+  }
+
+  const profileIds = await kvGetJson(env, `idx:userProfiles:${id}`, []);
+  const allNodes = [];
+  for (const pid of profileIds) {
+    const raw = await env.STORAGE.get(`profile:${pid}`);
+    if (!raw) continue;
+    const profile = JSON.parse(raw);
+    const { nodes } = await mergeProfileNodes(profile, env);
+    allNodes.push(...nodes);
+  }
+
+  // Re-dedupe across profiles, since the same node could appear in more than
+  // one of this user's profiles (mergeProfileNodes only dedupes within a
+  // single profile).
+  const seen = new Set();
+  const deduped = [];
+  for (const node of allNodes) {
+    const fp = fingerprintNode(node);
+    if (seen.has(fp)) continue;
+    seen.add(fp);
+    deduped.push(node);
+  }
+
+  return buildFormattedSubResponse(deduped, `Vexa - ${user.name}`, url);
 }
 
 // =====================================================================
 // FRONTEND (HTML + CSS + client JS, all inline)
 // =====================================================================
+// ---------------------------------------------------------------------
+// /KV SETUP GUIDE — standalone page shown for every route when the KV
+// namespace isn't bound yet. Nothing in this Worker (sessions, users,
+// profiles, secrets) can function without it, so this takes priority over
+// every other page, including the secret setup flow.
+// ---------------------------------------------------------------------
+function renderKvSetupGuide() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VEXA — KV Namespace Setup Required</title>
+<style>${STYLES}</style>
+</head>
+<body data-theme="dark">
+<div class="login-wrap">
+  <div class="glass-card login-card" style="max-width:560px;text-align:left;">
+    <div style="text-align:center;">
+      <div class="logo-glow">🗄️</div>
+      <div class="brand">KV Namespace Required</div>
+      <div class="brand-sub">This Worker needs a KV namespace bound before it can run</div>
+    </div>
+    <div class="helper-text" style="margin:16px 0 10px;">Follow these steps in the Cloudflare dashboard:</div>
+    <ol style="margin:0 0 18px 18px;padding:0;font-size:13px;color:var(--text-primary);line-height:1.9;">
+      <li>Open your Worker in the Cloudflare dashboard.</li>
+      <li>Go to <strong>Settings → Bindings</strong>.</li>
+      <li>Click <strong>Add binding</strong> and choose <strong>KV Namespace</strong>.</li>
+      <li>Set the <strong>Variable name</strong> to exactly <code>STORAGE</code> (all uppercase).</li>
+      <li>Select an existing KV namespace, or create a new one right there.</li>
+      <li>Click <strong>Save and deploy</strong>.</li>
+      <li>Reload this page.</li>
+    </ol>
+    <button class="btn-primary" style="width:100%;" onclick="location.reload()">I've added it — Reload</button>
+  </div>
+</div>
+</body>
+</html>`;
+}
+
 // ---------------------------------------------------------------------
 // /secret PAGE — standalone, deliberately independent of the SPA/session
 // state below (it has to work with zero configured secrets).
@@ -2830,7 +3460,7 @@ function renderSecretPage(configured) {
 <div class="login-wrap">
   <div class="glass-card login-card" style="max-width:520px;text-align:left;">
     <div style="text-align:center;">
-      <div class="logo-glow" style="font-size:32px;">🔑</div>
+      <div class="logo-glow">🔑</div>
       <div class="brand">${configured ? "Admin Secrets" : "VEXA Initial Setup"}</div>
       <div class="brand-sub">${
         configured
@@ -2909,7 +3539,9 @@ async function generate(password) {
     <button class="btn-primary" style="width:100%;margin-top:6px;" id="copyAllBtn">Copy All Secrets</button>
     <div class="helper-text" style="margin-top:14px;">
       Paste these into <strong>Cloudflare Dashboard → Workers → Settings → Variables and Secrets</strong>,
-      then redeploy / save.
+      then redeploy / save. Cloudflare defaults each new variable to type <strong>Text</strong> — for
+      all three of these, switch the type dropdown to <strong>Secret</strong> before saving, so the
+      values are encrypted at rest instead of stored as plain text.
     </div>
     \${configured ? '<div class="error-text" style="margin-top:10px;">Existing sessions, tokens, and subscription links tied to the OLD secrets stop working the moment you save these — only after you update them in Cloudflare.</div>' : ''}
   \`;
@@ -2949,7 +3581,8 @@ async function changePassword(password) {
     <button class="btn-primary" style="width:100%;margin-top:6px;" id="copyAllBtn">Copy Value</button>
     <div class="helper-text" style="margin-top:14px;">
       Paste this into <strong>Cloudflare Dashboard → Workers → Settings → Variables and Secrets</strong>,
-      then redeploy / save.
+      then redeploy / save. Make sure <strong>ADMIN_PASSWORD_HASH</strong>'s type is set to
+      <strong>Secret</strong> (not the default Text), so it's encrypted at rest.
     </div>
   \`;
   document.getElementById("copyAllBtn").onclick = () => {
@@ -3021,7 +3654,12 @@ function renderRegenGate() {
     }
     const data = await res.json();
     sessionToken = data.token; // kept in memory only, never persisted for this page
-    renderChoice();
+    const action = new URLSearchParams(location.search).get("action");
+    if (action === "destroy") {
+      renderDestroyConfirm();
+    } else {
+      renderChoice();
+    }
   };
   document.getElementById("gatePassword")?.addEventListener("keydown", e => {
     if (e.key === "Enter") document.getElementById("gateBtn").click();
@@ -3092,6 +3730,152 @@ if (configured) {
 </html>`;
 }
 
+// ---------------------------------------------------------------------
+// /change-panel-password PAGE — standalone deep link reached from the
+// panel's Settings menu. Skips straight to the change-password form if a
+// still-valid session token is already in localStorage; otherwise asks for
+// the current password first, same as the /secret regen gate.
+// ---------------------------------------------------------------------
+function renderChangePanelPasswordPage() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VEXA — Change Panel Password</title>
+<style>${STYLES}</style>
+</head>
+<body data-theme="dark">
+<div class="login-wrap">
+  <div class="glass-card login-card" style="max-width:520px;text-align:left;">
+    <div style="text-align:center;">
+      <div class="logo-glow">🔑</div>
+      <div class="brand">Change Panel Password</div>
+      <div class="brand-sub">Rotates only ADMIN_PASSWORD_HASH — sessions and links keep working</div>
+    </div>
+    <div id="changePwBody"></div>
+    <button class="btn-secondary" style="width:100%;margin-top:14px;" onclick="location.href='/panel'">Back to Panel</button>
+  </div>
+</div>
+<script>
+let sessionToken = localStorage.getItem("vexa_token");
+
+function fieldsHtml(values) {
+  return Object.entries(values).map(([k, v]) => \`
+    <div class="field-group">
+      <label class="field-label">\${k}</label>
+      <input readonly value="\${v}" onclick="this.select()" style="font-family:monospace;font-size:12px;" />
+    </div>
+  \`).join("");
+}
+
+function copyAllText(values) {
+  return Object.entries(values).map(([k, v]) => k + "=" + v).join("\\n");
+}
+
+function showToast(msg) {
+  const existing = document.querySelector(".toast");
+  if (existing) existing.remove();
+  const toast = document.createElement("div");
+  toast.className = "toast";
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 2500);
+}
+
+function renderGate() {
+  sessionToken = null;
+  document.getElementById("changePwBody").innerHTML = \`
+    <div class="field-group">
+      <label class="field-label">Current Admin Password</label>
+      <input type="password" id="gatePassword" placeholder="Enter current password" />
+    </div>
+    <button class="btn-secondary" style="width:100%;" id="gateBtn">Continue</button>
+    <div class="error-text" id="gateError"></div>
+  \`;
+  document.getElementById("gateBtn").onclick = async () => {
+    const password = document.getElementById("gatePassword").value;
+    const res = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password })
+    });
+    if (!res.ok) {
+      document.getElementById("gateError").textContent = "Incorrect password.";
+      return;
+    }
+    const data = await res.json();
+    sessionToken = data.token;
+    renderForm();
+  };
+  document.getElementById("gatePassword")?.addEventListener("keydown", e => {
+    if (e.key === "Enter") document.getElementById("gateBtn").click();
+  });
+}
+
+function renderForm() {
+  document.getElementById("changePwBody").innerHTML = \`
+    <div class="field-group">
+      <label class="field-label">New Admin Password</label>
+      <input type="password" id="newPw" placeholder="At least 8 characters" />
+    </div>
+    <button class="btn-primary" style="width:100%;" id="submitBtn">Change Password</button>
+    <div class="error-text" id="formError"></div>
+  \`;
+  const submit = async () => {
+    const password = document.getElementById("newPw").value;
+    if (password.length < 8) {
+      document.getElementById("formError").textContent = "Password must be at least 8 characters.";
+      return;
+    }
+    document.getElementById("changePwBody").innerHTML = '<div class="skel" style="width:100%;height:36px;margin-top:6px;"></div>';
+    const res = await fetch("/api/secret/change-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+      body: JSON.stringify({ password })
+    });
+    if (res.status === 401) {
+      renderGate();
+      return;
+    }
+    if (!res.ok) {
+      renderForm();
+      document.getElementById("formError").textContent = "Could not change password. Try again.";
+      return;
+    }
+    const data = await res.json();
+    document.getElementById("changePwBody").innerHTML = \`
+      <div class="helper-text" style="margin:16px 0;">
+        Copy this value now — the plaintext password is not stored anywhere and cannot be
+        recovered after you leave this page. ADMIN_SALT and JWT_SECRET are unchanged, so
+        existing sessions stay valid.
+      </div>
+      \${fieldsHtml(data.values)}
+      <button class="btn-primary" style="width:100%;margin-top:6px;" id="copyAllBtn">Copy Value</button>
+      <div class="helper-text" style="margin-top:14px;">
+        In <strong>Cloudflare Dashboard → Workers → Settings → Variables and Secrets</strong>,
+        update <strong>ADMIN_PASSWORD_HASH</strong> with this value. Set its type to
+        <strong>Secret</strong> (not the default Text), then save and redeploy.
+      </div>
+    \`;
+    document.getElementById("copyAllBtn").onclick = () => {
+      navigator.clipboard.writeText(copyAllText(data.values));
+      showToast("Copied — paste into Cloudflare now.");
+    };
+  };
+  document.getElementById("submitBtn").onclick = submit;
+}
+
+if (sessionToken) {
+  renderForm();
+} else {
+  renderGate();
+}
+</script>
+</body>
+</html>`;
+}
+
 function renderApp() {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -3104,17 +3888,17 @@ function renderApp() {
 // Applied before first paint (inline, not deferred with the rest of the
 // client script) so there's no flash of the wrong theme.
 (function() {
-  var pref = localStorage.getItem("vexa_theme") || "system";
-  var effective = pref === "system"
-    ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-    : pref;
+  var stored = localStorage.getItem("vexa_theme");
+  var effective = (stored === "light" || stored === "dark")
+    ? stored
+    : (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   document.documentElement.setAttribute("data-theme", effective);
 })();
 </script>
 </head>
 <body>
   <div id="app"></div>
-  <div class="version-badge" title="Deployed ${VEXA_BUILD_DATE}">VEXA v${VEXA_VERSION}</div>
+  <a class="version-badge" href="https://github.com/Yassinify/Vexa-Panel" target="_blank" rel="noopener noreferrer" title="Open project on GitHub">VEXA v${VEXA_VERSION}</a>
   <script>${QR_LIB}</script>
   <script>${CLIENT_SCRIPT}</script>
 </body>
@@ -3180,9 +3964,19 @@ const STYLES = `
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 html { color-scheme: light dark; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+/* Theme-switch animation — every element that reads a themed CSS variable
+   (background, border, text, shadow) cross-fades between light/dark instead
+   of snapping. Applied broadly first so it covers cards, tables, modals,
+   badges, inputs, etc.; components below that need a different/faster
+   transition for their own state (hover fades, switch-knob slides, spinner
+   spin) simply redeclare transition and take priority as usual. Disabled
+   wholesale by the prefers-reduced-motion rule further down. */
+*, *::before, *::after {
+  transition: background-color .45s cubic-bezier(.4,0,.2,1), border-color .45s cubic-bezier(.4,0,.2,1), color .45s cubic-bezier(.4,0,.2,1), box-shadow .45s cubic-bezier(.4,0,.2,1), fill .45s cubic-bezier(.4,0,.2,1);
+}
 body {
   margin: 0; min-height: 100vh; background: var(--bg-page);
-  font-family: var(--font-stack); color: var(--text-primary); font-size: 14px;
+  font-family: var(--font-stack); color: var(--text-primary); font-size: clamp(13px, 1.1vw + 11px, 14px);
   -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
   -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none;
 }
@@ -3212,11 +4006,52 @@ a { color: inherit; }
 .btn-danger:hover { background: var(--bad-light); border-color: var(--bad-light); color: #fff; }
 .btn-danger:active { background: var(--bad); border-color: var(--bad); }
 .btn-icon {
-  background: transparent; border: none; color: var(--text-muted); cursor: pointer; font-size: 14px;
-  width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
-  transition: background .1s, color .1s;
+  background: transparent; border: none; color: var(--text-muted); cursor: pointer;
+  /* Fluid across the full 320px–3840px+ range: bigger near mobile widths
+     (better tap target), settles to a compact desktop size by ~1024px,
+     then holds flat on larger screens instead of shrinking further. */
+  font-size: clamp(13px, calc(16px - 0.35vw), 16px);
+  width: clamp(26px, calc(40px - 1.2vw), 40px); height: clamp(26px, calc(40px - 1.2vw), 40px);
+  border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  transition: background .15s ease, color .15s ease, transform .15s cubic-bezier(.34,1.56,.64,1);
 }
-.btn-icon:hover { background: var(--accent-soft); color: var(--accent); }
+.btn-icon:hover { background: var(--accent-soft); color: var(--accent); transform: translateY(-2px) scale(1.08); }
+.btn-icon:active { transform: translateY(0) scale(.94); transition-duration: .08s; }
+/* Inline SVG icons (Heroicons outline) replace the old emoji glyphs. They
+   inherit color via currentColor/stroke, so every .icon-* hue rule and
+   hover state below applies to them the same way it did to text glyphs —
+   no separate color logic needed. Sized to roughly match cap-height of the
+   emoji they replaced, fluidly via clamp() so they scale with the button. */
+.ui-icon {
+  width: clamp(15px, calc(18px - 0.35vw), 18px); height: clamp(15px, calc(18px - 0.35vw), 18px);
+  stroke: currentColor; fill: none; flex-shrink: 0; display: block;
+}
+.nav-icon .ui-icon { width: 17px; height: 17px; }
+.menu-icon .ui-icon { width: clamp(18px, 4.4vw, 22px); height: clamp(18px, 4.4vw, 22px); }
+.theme-icon .ui-icon { width: clamp(12px, 3vw, 14px); height: clamp(12px, 3vw, 14px); }
+.empty-state-icon .ui-icon { width: clamp(26px, 7vw, 32px); height: clamp(26px, 7vw, 32px); margin: 0 auto; }
+/* Purpose-colored icon accents — each action gets its own hue so the row
+   actions read at a glance instead of sitting in flat neutral gray. Resting
+   state is the full hue (vibrant, not washed out); hover/focus deepens it
+   with a tinted background for feedback. */
+/* Plain-color fallback first (older Safari/Firefox without color-mix()
+   support just get the flat hue at rest), then color-mix() overrides it
+   with a near-full-strength tint on browsers that support it — mixed
+   mostly with itself and only a touch of --text-muted so it stays vivid
+   instead of fading toward gray. Cascade order, not @supports, keeps this
+   terse across six repeated icon variants. */
+.btn-icon.icon-link { color: var(--accent); color: color-mix(in srgb, var(--accent) 95%, var(--text-muted)); }
+.btn-icon.icon-link:hover { background: var(--accent-soft); color: var(--accent); }
+.btn-icon.icon-open { color: var(--good); color: color-mix(in srgb, var(--good) 95%, var(--text-muted)); }
+.btn-icon.icon-open:hover { background: var(--good-soft); color: var(--good); }
+.btn-icon.icon-merge { color: #a78bfa; color: color-mix(in srgb, #a78bfa 95%, var(--text-muted)); }
+.btn-icon.icon-merge:hover { background: rgba(167,139,250,0.16); color: #a78bfa; }
+.btn-icon.icon-edit { color: #f0a020; color: color-mix(in srgb, #f0a020 95%, var(--text-muted)); }
+.btn-icon.icon-edit:hover { background: rgba(240,160,32,0.16); color: #f0a020; }
+.btn-icon.icon-duplicate { color: #38bdf8; color: color-mix(in srgb, #38bdf8 95%, var(--text-muted)); }
+.btn-icon.icon-duplicate:hover { background: rgba(56,189,248,0.16); color: #38bdf8; }
+.btn-icon.icon-delete { color: var(--bad); color: color-mix(in srgb, var(--bad) 95%, var(--text-muted)); }
+.btn-icon.icon-delete:hover { background: var(--bad-soft); color: var(--bad); transform: translateY(-2px) scale(1.08) rotate(-6deg); }
 input, textarea, select {
   width: 100%; background: var(--bg-surface); border: 1px solid var(--border);
   color: var(--text-primary); padding: 8px 11px; border-radius: 4px; font-size: 13px; font-family: inherit;
@@ -3232,8 +4067,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
 .login-card { width: 100%; max-width: 380px; padding: 36px 32px; text-align: center; }
-.logo-glow { margin-bottom: 8px; }
-.brand { font-weight: 700; font-size: 20px; letter-spacing: -.01em; margin-bottom: 4px; }
+.logo-glow { margin-bottom: 8px; font-size: clamp(24px, 7vw, 32px); }
+.brand { font-weight: 700; font-size: clamp(17px, 1.6vw + 13px, 20px); letter-spacing: -.01em; margin-bottom: 4px; }
 .brand-sub { color: var(--text-muted); font-size: 13px; margin-bottom: 24px; }
 
 /* --- App shell: sidebar + topbar, 3x-ui style --- */
@@ -3247,20 +4082,26 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   width: 30px; height: 30px; border-radius: 8px; background: var(--accent);
   display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; color: #fff;
 }
-.sidebar-brand .brand { color: #fff; }
+.sidebar-brand .brand { color: var(--accent-light); }
 .sidebar-link {
   display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: 8px; margin-bottom: 2px;
   color: var(--sidebar-text); cursor: pointer; font-size: 13px; font-weight: 500; text-decoration: none;
+  transition: background .15s ease, color .15s ease, transform .15s ease;
 }
-.sidebar-link:hover { background: var(--sidebar-active-bg); color: var(--sidebar-active-text); }
+.sidebar-link:hover { background: var(--sidebar-active-bg); color: var(--sidebar-active-text); transform: translateX(2px); }
 .sidebar-link.active { background: var(--sidebar-active-bg); color: var(--accent); }
+.sidebar-link .nav-icon { display: inline-flex; transition: transform .2s cubic-bezier(.34,1.56,.64,1), color .15s ease; }
+.sidebar-link.active .nav-icon { color: var(--accent); transform: scale(1.15); }
+.sidebar-link:hover .nav-icon { transform: scale(1.15) rotate(-4deg); }
 .sidebar-footer { margin-top: auto; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.08); display: flex; flex-direction: column; gap: 6px; }
-.theme-toggle { display: flex; gap: var(--space-1); background: var(--sidebar-active-bg); border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: var(--space-1); }
-.theme-toggle button {
-  flex: 1; background: transparent; border: none; padding: 5px 0; border-radius: 6px; cursor: pointer;
-  font-size: 12px; color: var(--sidebar-text);
-}
-.theme-toggle button.active { background: var(--accent); color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+.theme-switch { position: relative; width: clamp(50px, 12vw, 60px); height: clamp(26px, 6vw, 30px); border-radius: 999px; background: var(--sidebar-active-bg); border: 1px solid var(--border); cursor: pointer; padding: 0; flex-shrink: 0; }
+.theme-switch .theme-icon { position: absolute; top: 50%; transform: translateY(-50%); font-size: clamp(12px, 3vw, 14px); line-height: 1; z-index: 1; transition: transform .3s cubic-bezier(.34,1.56,.64,1), opacity .2s ease; }
+.theme-switch .theme-icon.sun { left: clamp(5px, 1.6vw, 7px); }
+.theme-switch .theme-icon.moon { right: clamp(5px, 1.6vw, 7px); }
+.theme-switch:hover .theme-icon.sun { transform: translateY(-50%) rotate(25deg) scale(1.15); }
+.theme-switch:hover .theme-icon.moon { transform: translateY(-50%) rotate(-20deg) scale(1.15); }
+.theme-switch .theme-knob { position: absolute; top: 3px; left: 3px; width: calc(clamp(26px, 6vw, 30px) - 8px); height: calc(clamp(26px, 6vw, 30px) - 8px); border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.35); transition: transform .35s cubic-bezier(.34,1.56,.64,1), background-color .35s cubic-bezier(.4,0,.2,1); z-index: 2; }
+.theme-switch.dark .theme-knob { transform: translateX(calc(clamp(50px, 12vw, 60px) - clamp(26px, 6vw, 30px))); }
 .main { flex: 1; min-width: 0; }
 /* Off-canvas sidebar controls — hidden on desktop, switched on for narrow
    viewports in the @media block below. Sized to a 40px touch target
@@ -3269,9 +4110,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .menu-toggle-btn {
   display: none; align-items: center; justify-content: center;
   background: var(--bg-page); border: 1px solid var(--border); color: var(--text-primary);
-  width: 40px; height: 40px; border-radius: 8px; font-size: 18px; line-height: 1; cursor: pointer; flex-shrink: 0;
+  width: clamp(38px, 9vw, 44px); height: clamp(38px, 9vw, 44px); border-radius: 8px;
+  font-size: clamp(16px, 4vw, 20px); line-height: 1; cursor: pointer; flex-shrink: 0;
+  transition: background .15s ease, color .15s ease, border-color .15s ease, transform .2s ease;
 }
 .menu-toggle-btn:hover { background: var(--accent-soft); color: var(--accent); }
+.menu-toggle-btn:active { transform: scale(.92); }
+.menu-toggle-btn .menu-icon { display: inline-block; transition: transform .25s ease; }
+.menu-toggle-btn.is-open .menu-icon { transform: rotate(90deg); }
 .sidebar-backdrop {
   display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 39;
   opacity: 0; pointer-events: none; transition: opacity .2s ease;
@@ -3279,30 +4125,58 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .sidebar-backdrop.visible { opacity: 1; pointer-events: auto; }
 .topbar {
   display: flex; align-items: center; justify-content: space-between; padding: 16px 28px;
-  border-bottom: 1px solid var(--border); background: var(--bg-surface);
+  border-bottom: 1px solid var(--border); background: var(--bg-surface); gap: var(--space-3);
 }
-.topbar h1 { font-size: 16px; margin: 0; font-weight: 600; }
-.topbar-sub { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+.topbar h1 {
+  font-size: clamp(14px, 1vw + 11px, 16px); margin: 0; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46vw;
+}
+.topbar-sub {
+  color: var(--text-muted); font-size: clamp(11px, .5vw + 10px, 12px); margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46vw;
+}
 .container { max-width: 1180px; margin: 0 auto; padding: 24px 28px 60px; }
 
 /* --- Stat cards --- */
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-4); margin-bottom: var(--space-5); }
 .stat-card { padding: 18px 20px; }
-.stat-card-label { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
-.stat-card-num { font-size: 26px; font-weight: 700; }
+.stat-card-label { font-size: clamp(11px, .5vw + 10px, 12px); color: var(--text-muted); margin-bottom: 8px; }
+.stat-card-num { font-size: clamp(20px, 2.2vw + 13px, 26px); font-weight: 700; }
 .section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin: 0 0 12px; }
 .activity-list { padding: 4px 0; }
 .activity-row { display: flex; justify-content: space-between; gap: 12px; padding: 10px 20px; border-bottom: 1px solid var(--border); font-size: 13px; }
 .activity-row:last-child { border-bottom: none; }
 .activity-time { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
 .status-row { display: flex; align-items: center; gap: 8px; padding: 10px 20px; font-size: 13px; }
-.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 3px var(--good-soft); }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 3px var(--good-soft); animation: status-pulse 2.4s ease-in-out infinite; }
+@keyframes status-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--good-soft); }
+  50% { box-shadow: 0 0 0 6px transparent; }
+}
 
 /* --- Toolbar / search / table --- */
 .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
 .toolbar-left { display: flex; align-items: center; gap: var(--space-3); flex: 1; min-width: 200px; }
+/* Mobile floating action button — the primary "+ New X" action becomes a
+   thumb-reachable FAB pinned to the bottom-right on phones (Digikala/most
+   native apps put primary creation actions here rather than in a toolbar
+   that scrolls out of reach). Hidden on desktop, where the toolbar button
+   next to search is already convenient with a mouse. */
+.mobile-fab {
+  display: none; position: fixed; z-index: 30; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff; border: none; border-radius: 50%; cursor: pointer;
+  width: 56px; height: 56px; box-shadow: 0 4px 14px rgba(0,0,0,.3);
+  transition: transform .15s cubic-bezier(.34,1.56,.64,1), background .15s ease;
+}
+.mobile-fab:hover { background: var(--accent-light); transform: scale(1.06); }
+.mobile-fab:active { transform: scale(.92); }
+.mobile-fab .ui-icon { width: 24px; height: 24px; }
 .search-input { max-width: 280px; }
-.breadcrumb { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 13px; margin-bottom: 4px; }
+.breadcrumb {
+  display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 13px; margin-bottom: 4px;
+  white-space: nowrap; overflow: hidden;
+}
+.breadcrumb span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .breadcrumb a { cursor: pointer; }
 .breadcrumb a:hover { color: var(--accent); }
 .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -3312,18 +4186,56 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   padding: 10px 16px; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; white-space: nowrap;
 }
 .data-table th:hover { color: var(--text-primary); }
-.data-table td { padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
+.data-table td { padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: clamp(12px, .5vw + 11px, 13px); vertical-align: middle; }
 .data-table tr:last-child td { border-bottom: none; }
 .data-table tr.row-hover:hover { background: var(--accent-soft); }
-.row-name { font-weight: 600; cursor: pointer; }
+.data-table tbody tr { animation: row-in .3s ease both; }
+.data-table tbody tr:nth-child(1) { animation-delay: 0s; }
+.data-table tbody tr:nth-child(2) { animation-delay: .03s; }
+.data-table tbody tr:nth-child(3) { animation-delay: .06s; }
+.data-table tbody tr:nth-child(4) { animation-delay: .09s; }
+.data-table tbody tr:nth-child(5) { animation-delay: .12s; }
+.data-table tbody tr:nth-child(n+6) { animation-delay: .15s; }
+@keyframes row-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.row-name {
+  font-weight: 600; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%; display: inline-block; vertical-align: middle;
+}
 .row-name:hover { color: var(--accent); }
-.row-actions { display: flex; gap: 4px; justify-content: flex-end; }
+.row-actions { display: flex; gap: 4px; justify-content: flex-end; flex-wrap: nowrap; }
 .badge-row { display: flex; gap: 6px; flex-wrap: wrap; }
-.badge { font-size: 11px; padding: 3px 8px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.badge {
+  font-size: 11px; padding: 3px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent);
+  font-weight: 600; letter-spacing: .02em; border: 1px solid transparent; display: inline-flex; align-items: center;
+  white-space: nowrap;
+}
+.switch { position: relative; width: clamp(34px, 8vw, 40px); height: clamp(19px, 4.4vw, 22px); border-radius: 999px; border: none; background: var(--border); cursor: pointer; padding: 0; flex-shrink: 0; transition: background .15s ease; }
+.switch.on { background: var(--accent); }
+.switch.pending { cursor: default; pointer-events: none; }
+.switch-knob { position: absolute; top: 2px; left: 2px; width: calc(clamp(19px, 4.4vw, 22px) - 4px); height: calc(clamp(19px, 4.4vw, 22px) - 4px); border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s ease; }
+.switch.on .switch-knob { transform: translateX(calc(clamp(34px, 8vw, 40px) - clamp(19px, 4.4vw, 22px))); }
+/* Cloudflare-style spinner: a partial ring that rotates. Used on buttons
+   (and inline next to a row's name for actions with no persistent button,
+   like create/duplicate) while a save is in flight, replacing the old
+   "saving…" text badge. */
+.spinner { display: inline-block; width: clamp(13px, 3vw, 15px); height: clamp(13px, 3vw, 15px); border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; flex-shrink: 0; }
+.switch-spinner { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: calc(clamp(19px, 4.4vw, 22px) - 8px); height: calc(clamp(19px, 4.4vw, 22px) - 8px); border-width: 2px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.format-menu { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-2); }
+.format-menu-item { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 12px 14px; font-size: 13px; font-weight: 600; color: var(--text-primary); background: var(--bg-surface-raised); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; transition: background .15s ease, border-color .15s ease; }
+.format-menu-item:hover { background: var(--sidebar-active-bg); border-color: var(--accent); }
+.format-menu-arrow { color: var(--text-muted); font-size: clamp(14px, 3.4vw, 16px); }
 .badge.green { background: var(--good-soft); color: var(--good); }
 .timestamp { color: var(--text-muted); font-size: 12px; }
 .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
-.empty-state-icon { font-size: 28px; margin-bottom: 10px; opacity: .6; }
+.empty-state-icon {
+  font-size: clamp(22px, 6vw, 28px); margin-bottom: 10px; opacity: .85; color: var(--accent);
+  display: inline-block; animation: empty-float 3s ease-in-out infinite;
+}
+@keyframes empty-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
 /* --- Skeleton screens: shimmer bars sized/positioned to match the real
    content they stand in for, so nothing jumps once data arrives --- */
 .skel {
@@ -3339,25 +4251,32 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .skel-row-actions { display: flex; gap: 6px; justify-content: flex-end; }
 
 /* --- Modals / confirm dialog / toasts --- */
-.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50; }
-.modal-card { width: 100%; max-width: 520px; padding: 24px; max-height: 85vh; overflow-y: auto; }
+@keyframes modal-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes modal-card-in { from { opacity: 0; transform: translateY(14px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center;
+  padding: 20px; z-index: 50; animation: modal-overlay-in .18s ease both;
+}
+.modal-card { width: 100%; max-width: 520px; padding: 24px; max-height: 85vh; overflow-y: auto; animation: modal-card-in .22s cubic-bezier(.2,.8,.3,1) both; }
 .modal-card.small { max-width: 400px; }
-.modal-title { font-size: 16px; font-weight: 700; margin-bottom: var(--space-4); }
+.modal-title { font-size: clamp(14px, 1vw + 11px, 16px); font-weight: 700; margin-bottom: var(--space-4); }
 .field-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin-bottom: 6px; display: block; }
 .field-group { margin-bottom: 16px; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .stat-row { display: flex; gap: var(--space-3); margin-bottom: var(--space-4); flex-wrap: wrap; }
 .stat-box { flex: 1; min-width: 100px; text-align: center; padding: var(--space-4); background: var(--bg-page); border-radius: 10px; border: 1px solid var(--border); }
-.stat-num { font-size: 22px; font-weight: 700; }
+.stat-num { font-size: clamp(18px, 1.6vw + 12px, 22px); font-weight: 700; }
 .stat-label { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 .qr-box { background: #fff; border-radius: 12px; padding: var(--space-4); display: flex; align-items: center; justify-content: center; margin: var(--space-4) 0; }
-.qr-box svg { width: 180px; height: 180px; }
+.qr-box svg { width: clamp(140px, 45vw, 180px); height: clamp(140px, 45vw, 180px); }
 .link-row { display: flex; gap: 8px; align-items: center; }
 .link-row input { font-family: var(--mono-stack); font-size: 12px; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 .toast {
-  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  position: fixed; bottom: 24px; right: 24px; max-width: min(340px, calc(100vw - 48px));
   background: var(--bg-surface-raised); border: 1px solid var(--good-soft); color: var(--good);
-  padding: 10px 20px; border-radius: 10px; font-size: 13px; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,.2);
+  padding: 10px 20px; border-radius: 10px; font-size: clamp(12px, 2.2vw, 13px); z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,.2);
+  animation: toast-in .2s cubic-bezier(.2,.8,.3,1) both;
 }
 .toast.error { border-color: var(--bad-soft); color: var(--bad); }
 .version-badge {
@@ -3365,11 +4284,20 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   background: var(--bg-surface-raised); border: 1px solid var(--border);
   color: var(--text-muted); font-family: var(--mono-stack); font-size: 11px;
   letter-spacing: .02em; padding: 4px 12px; border-radius: 20px;
-  z-index: 20; pointer-events: none; user-select: none;
+  z-index: 20; cursor: pointer; text-decoration: none; display: inline-block;
 }
+.version-badge:hover { color: var(--text-primary); border-color: var(--accent, var(--border)); }
 .error-text { color: var(--bad); font-size: 13px; margin-top: 10px; min-height: 16px; }
 .helper-text { color: var(--text-muted); font-size: 12px; margin-top: 6px; }
 /* --- Responsive tiers ---
+   Icons (.btn-icon, .switch, .theme-switch, .spinner, .menu-toggle-btn,
+   .logo-glow, .empty-state-icon, .format-menu-arrow, .qr-box svg) size
+   themselves fluidly via clamp()/calc() tied to viewport width, so they
+   scale smoothly at any width from 320px up through 4K+ rather than
+   jumping at fixed breakpoints — bigger near mobile widths (better tap
+   target), settling to a compact size by ~1024px and holding flat beyond
+   that. Layout still uses discrete tiers below for things that need to
+   actually restructure (columns, sidebar, modal shape):
    1024px: tablet — sidebar narrows, content margins tighten.
    780px:  mobile — sidebar goes off-canvas behind the hamburger + backdrop,
            tables/modals adapt, inputs bump to 16px (stops iOS Safari's
@@ -3393,10 +4321,46 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   /* iOS Safari zooms the page in on focus of any input under 16px; this is
      the single fix for that without changing how text looks anywhere else. */
   input, textarea, select { font-size: 16px; }
-  /* Icon buttons stay visually small but grow their tap area toward the
-     44px touch-target guideline via a transparent hit-area extension. */
-  .btn-icon { width: 36px; height: 36px; }
   .stat-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .desktop-only-action { display: none; }
+  .mobile-fab {
+    display: flex; right: max(18px, env(safe-area-inset-right));
+    bottom: max(18px, env(safe-area-inset-bottom, 0px) + 18px);
+  }
+
+  /* --- Table → card transform ---
+     Below 780px a <table> can never look native (it either overflows and
+     forces horizontal scroll, or squashes columns into unreadable slivers).
+     Instead of fighting that, the table is restructured purely with CSS:
+     header row is hidden, each <tr> becomes a self-contained rounded card,
+     and each <td> becomes a label/value line using its data-label attribute.
+     No horizontal scroll is possible because nothing is ever wider than the
+     viewport — every cell stacks vertically instead. */
+  .table-wrap { overflow-x: hidden; }
+  .data-table, .data-table tbody, .data-table tr, .data-table td { display: block; width: 100%; }
+  .data-table thead { display: none; }
+  .data-table tr {
+    border: 1px solid var(--border); border-radius: 12px; margin-bottom: var(--space-3);
+    padding: var(--space-3) var(--space-4); background: var(--bg-surface-raised);
+  }
+  .data-table tr:last-child { margin-bottom: 0; }
+  .data-table td {
+    border-bottom: none; padding: 7px 0; display: flex; align-items: center;
+    justify-content: space-between; gap: var(--space-3); white-space: normal;
+  }
+  .data-table td:not([data-label=""])::before {
+    content: attr(data-label); font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--text-muted); flex-shrink: 0;
+  }
+  .data-table td[data-label=""] { justify-content: flex-end; padding-top: var(--space-2); margin-top: 4px; border-top: 1px solid var(--border); }
+  .data-table td[data-label="Name"] { padding-top: 0; }
+  .data-table td[data-label="Name"] .row-name { max-width: 62vw; }
+  .row-actions { gap: 2px; }
+  .card { border-radius: 14px; }
+  /* Belt-and-suspenders: nothing on the page should ever be able to force
+     the viewport to scroll sideways on a phone, no matter what content or
+     third-party string ends up inside a cell, badge, or modal. */
+  html, body { overflow-x: hidden; max-width: 100vw; }
 }
 @media (max-width: 480px) {
   .stat-grid { grid-template-columns: 1fr 1fr; }
@@ -3405,7 +4369,24 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .login-card { padding: var(--space-5) var(--space-4); }
   .stat-row { flex-direction: column; }
   .modal-overlay { padding: 0; align-items: flex-end; }
-  .modal-card { max-height: 92vh; border-radius: 16px 16px 0 0; }
+  .modal-card { max-height: 92vh; border-radius: 16px 16px 0 0; padding: 14px 18px 20px; position: relative; }
+  .modal-card::before {
+    content: ""; position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+    width: 36px; height: 4px; border-radius: 999px; background: var(--border);
+  }
+  .modal-title { margin-top: 10px; }
+  /* Bottom-sheet buttons go full-width and stack, largest/primary action on
+     top — mirrors how Digikala's mobile sheets present a single dominant
+     thumb-reach action instead of two small buttons squeezed to one corner. */
+  .modal-footer { flex-direction: column-reverse; gap: var(--space-2); }
+  .modal-footer button { width: 100%; padding: 12px 15px; }
+  .card { border-radius: 12px; }
+  .data-table tr { border-radius: 10px; padding: var(--space-3); }
+  .stat-box { border-radius: 8px; }
+  .badge, .switch, .theme-switch { border-radius: 999px; }
+  /* Names and badges keep their single-line ellipsis truncation down to the
+     smallest phones instead of ever breaking to a second line. */
+  .topbar h1, .breadcrumb, .stat-card-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 /* Devices that support hover (mouse/trackpad) get the hover states above;
    touch-only devices skip them by re-asserting each button's own base
@@ -3421,7 +4402,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 /* iPhone/Android notch and home-indicator safe areas, for elements pinned
    to a screen edge. Falls back to the existing fixed value on browsers
    without env() support (older Android/desktop). */
-.toast { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+.toast { padding-bottom: max(10px, env(safe-area-inset-bottom)); right: max(16px, env(safe-area-inset-right)); }
 .version-badge { bottom: max(10px, env(safe-area-inset-bottom)); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 `;
@@ -3890,22 +4871,28 @@ const state = {
   editingUser: null,
   editingProfile: null,
   mergeResult: null,
-  confirmDialog: null
+  confirmDialog: null,
+  subFormatTarget: null,
+  subFormatSelected: null
 };
 
 // ---------------------------------------------------------------------
-// THEME
+// THEME — a single light/dark switch. Until the user flips it, the
+// effective theme always follows the browser's own color-scheme
+// preference (recomputed live); once flipped, the explicit choice sticks.
 // ---------------------------------------------------------------------
 function getThemePref() {
-  return localStorage.getItem("vexa_theme") || "system";
-}
-function effectiveTheme(pref) {
-  return pref === "system" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : pref;
+  const stored = localStorage.getItem("vexa_theme");
+  if (stored === "light" || stored === "dark") return stored;
+  return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 function setTheme(pref) {
   localStorage.setItem("vexa_theme", pref);
-  document.documentElement.setAttribute("data-theme", effectiveTheme(pref));
+  document.documentElement.setAttribute("data-theme", pref);
   render();
+}
+function toggleTheme() {
+  setTheme(getThemePref() === "dark" ? "light" : "dark");
 }
 
 // ---------------------------------------------------------------------
@@ -3967,6 +4954,7 @@ async function apiFetch(path, opts = {}) {
     state.token = null;
     localStorage.removeItem("vexa_token");
     state.view = "login";
+    if (location.pathname !== "/login") history.replaceState(null, "", "/login");
     render();
     throw new Error("unauthorized");
   }
@@ -4023,6 +5011,32 @@ function renderSourceIssues(sourceErrors) {
   return parts.join("");
 }
 
+// Heroicons (outline, 1.5 stroke) inline SVGs for every UI icon. Using
+// currentColor for stroke means each icon inherits whatever color its
+// wrapping .icon-* class sets — same mechanism as the emoji glyphs they
+// replace, so no other CSS needs to change. icon() wraps the raw path
+// markup in a consistently-sized <svg class="ui-icon"> shell.
+const ICONS = {
+  dashboard: '<path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z" />',
+  users: '<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />',
+  link: '<path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />',
+  open: '<path stroke-linecap="round" stroke-linejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932H19.05a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 9v.776" />',
+  duplicate: '<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75" />',
+  delete: '<path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />',
+  merge: '<path stroke-linecap="round" stroke-linejoin="round" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0 1 3.75 9.375v-4.5ZM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 0 1-1.125-1.125v-4.5ZM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0 1 13.5 9.375v-4.5Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 6.75h.75v.75h-.75v-.75ZM6.75 16.5h.75v.75h-.75v-.75ZM16.5 6.75h.75v.75h-.75v-.75ZM13.5 13.5h.75v.75h-.75v-.75ZM13.5 19.5h.75v.75h-.75v-.75ZM19.5 13.5h.75v.75h-.75v-.75ZM19.5 19.5h.75v.75h-.75v-.75ZM16.5 16.5h.75v.75h-.75v-.75Z" />',
+  edit: '<path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />',
+  menu: '<path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />',
+  sun: '<path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z" />',
+  moon: '<path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z" />',
+  plus: '<path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />',
+  settings: '<path stroke-linecap="round" stroke-linejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 0 1 1.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.559.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.894.149c-.424.07-.764.383-.929.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 0 1-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.398.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 0 1-.12-1.45l.527-.737c.25-.35.272-.806.108-1.204-.165-.397-.506-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.108-1.204l-.526-.738a1.125 1.125 0 0 1 .12-1.45l.773-.773a1.125 1.125 0 0 1 1.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />',
+  logout: '<path stroke-linecap="round" stroke-linejoin="round" d="M5.636 5.636a9 9 0 1 0 12.728 0M12 3v9" />',
+};
+function icon(name, extraClass) {
+  const paths = ICONS[name] || "";
+  return '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="ui-icon' + (extraClass ? " " + extraClass : "") + '" aria-hidden="true">' + paths + '</svg>';
+}
+
 function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str == null ? "" : str;
@@ -4063,7 +5077,7 @@ function renderLoginView() {
   return \`
     <div class="login-wrap">
       <div class="card login-card">
-        <div class="logo-glow" style="font-size:30px;">🔒</div>
+        <div class="logo-glow">🔒</div>
         <div class="brand">VEXA</div>
         <div class="brand-sub">Secure subscription manager</div>
         <div class="field-group" style="text-align:left;">
@@ -4097,6 +5111,7 @@ async function doLogin() {
     state.token = data.token;
     localStorage.setItem("vexa_token", data.token);
     state.view = "dashboard";
+    history.pushState(null, "", "/panel");
     await bootAuthenticated();
   } catch (e) {
     state.errorMsg = "Connection error.";
@@ -4104,10 +5119,13 @@ async function doLogin() {
   }
 }
 
+// Manual logout clears the session outright — the next visit gets no
+// "less than 48h since last login" grace period and lands back on /login.
 function logout() {
   state.token = null;
   localStorage.removeItem("vexa_token");
   state.view = "login";
+  history.pushState(null, "", "/login");
   render();
 }
 
@@ -4129,12 +5147,22 @@ async function bootAuthenticated() {
 // visible there via the media query), so these are no-ops above the
 // 780px breakpoint.
 function toggleSidebar() {
-  document.getElementById("sidebar")?.classList.toggle("open");
+  const isOpen = document.getElementById("sidebar")?.classList.toggle("open");
   document.getElementById("sidebarBackdrop")?.classList.toggle("visible");
+  const btn = document.getElementById("menuToggleBtn");
+  if (btn) {
+    btn.classList.toggle("is-open", !!isOpen);
+    btn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  }
 }
 function closeSidebar() {
   document.getElementById("sidebar")?.classList.remove("open");
   document.getElementById("sidebarBackdrop")?.classList.remove("visible");
+  const btn = document.getElementById("menuToggleBtn");
+  if (btn) {
+    btn.classList.remove("is-open");
+    btn.setAttribute("aria-expanded", "false");
+  }
 }
 
 function navigate(view) {
@@ -4162,10 +5190,9 @@ function openUser(userId) {
 }
 
 function renderSidebar() {
-  const pref = getThemePref();
   const items = [
-    { key: "dashboard", label: "Dashboard", icon: "▦" },
-    { key: "users", label: "Users", icon: "◫" }
+    { key: "dashboard", label: "Dashboard", icon: icon("dashboard") },
+    { key: "users", label: "Users", icon: icon("users") }
   ];
   const isUsersActive = state.view === "users" || state.view === "userProfiles";
   return \`
@@ -4173,26 +5200,28 @@ function renderSidebar() {
       <div class="sidebar-brand">
         <div class="avatar">V</div>
         <div>
-          <div style="font-weight:700;font-size:14px;">VEXA</div>
-          <div style="font-size:10px;color:var(--text-muted);">Admin Panel</div>
+          <div style="font-weight:700;font-size:clamp(13px, .6vw + 12px, 14px);color:var(--accent-light);">VEXA</div>
+          <div style="font-size:clamp(9px, .3vw + 8px, 10px);color:var(--text-muted);">Admin Panel</div>
         </div>
       </div>
       \${items.map(it => \`
         <div class="sidebar-link \${(it.key === "dashboard" ? state.view === "dashboard" : isUsersActive) ? "active" : ""}"
              onclick="navigate('\${it.key}')">
-          <span>\${it.icon}</span><span>\${it.label}</span>
+          <span class="nav-icon">\${it.icon}</span><span>\${it.label}</span>
         </div>
       \`).join("")}
       <div class="sidebar-footer">
-        <div class="theme-toggle">
-          <button class="\${pref === "light" ? "active" : ""}" onclick="setTheme('light')">Light</button>
-          <button class="\${pref === "dark" ? "active" : ""}" onclick="setTheme('dark')">Dark</button>
-          <button class="\${pref === "system" ? "active" : ""}" onclick="setTheme('system')">Auto</button>
-        </div>
-        <button class="btn-secondary" style="width:100%;" onclick="logout()">Log out</button>
+        <button class="btn-secondary" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;" onclick="openSettings()"><span class="nav-icon">\${icon("settings")}</span>Settings</button>
+        <button class="btn-secondary" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;" onclick="logout()"><span class="nav-icon">\${icon("logout")}</span>Log out</button>
       </div>
     </div>
   \`;
+}
+
+function openSettings() {
+  closeSidebar();
+  state.modal = "settings";
+  render();
 }
 
 function shellTitle() {
@@ -4211,12 +5240,17 @@ function renderShell(innerHtml) {
       <div class="main">
         <div class="topbar">
           <div style="display:flex;align-items:center;gap:var(--space-3);">
-            <button class="menu-toggle-btn" aria-label="Toggle menu" onclick="toggleSidebar()">☰</button>
+            <button class="menu-toggle-btn" id="menuToggleBtn" aria-label="Toggle menu" aria-expanded="false" onclick="toggleSidebar()"><span class="menu-icon">\${icon("menu")}</span></button>
             <div>
               <h1>\${title}</h1>
               <div class="topbar-sub">\${sub}</div>
             </div>
           </div>
+          <button class="theme-switch \${getThemePref() === "dark" ? "dark" : ""}" onclick="toggleTheme()" title="Toggle light/dark theme">
+            <span class="theme-icon sun">\${icon("sun")}</span>
+            <span class="theme-icon moon">\${icon("moon")}</span>
+            <span class="theme-knob"></span>
+          </button>
         </div>
         <div class="container">\${innerHtml}</div>
       </div>
@@ -4320,12 +5354,13 @@ function renderUsersView() {
       <div class="card">
         <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Name</th><th>Profiles</th><th>Updated</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Profiles</th><th>Active</th><th>Updated</th><th></th></tr></thead>
           <tbody>
             \${[1,2,3,4,5].map(() => \`
               <tr>
                 <td><div class="skel" style="width:130px;height:13px;"></div></td>
                 <td><div class="skel" style="width:76px;height:19px;border-radius:4px;"></div></td>
+                <td><div class="skel" style="width:36px;height:20px;border-radius:10px;"></div></td>
                 <td><div class="skel" style="width:64px;height:12px;"></div></td>
                 <td><div class="skel-row-actions">\${[1,2,3,4].map(() => '<div class="skel" style="width:22px;height:22px;border-radius:50%;"></div>').join("")}</div></td>
               </tr>
@@ -4344,16 +5379,20 @@ function renderUsersView() {
 
   const rows = sorted.map(u => \`
     <tr class="row-hover">
-      <td><span class="row-name" onclick="openUser('\${u.id}')">\${escapeHtml(u.name)}</span>\${u._pending ? ' <span class="badge">saving…</span>' : ''}</td>
-      <td><span class="badge">\${u.profileCount} profile\${u.profileCount === 1 ? "" : "s"}</span></td>
-      <td class="timestamp">\${timeAgo(u.updatedAt)}</td>
-      <td>
+      <td data-label="Name"><span class="row-name" onclick="openUser('\${u.id}')">\${escapeHtml(u.name)}</span>\${u._pending && u._pendingKind !== "toggle" ? ' <span class="spinner" title="Saving…"></span>' : ''}</td>
+      <td data-label="Profiles"><span class="badge">\${u.profileCount} profile\${u.profileCount === 1 ? "" : "s"}</span></td>
+      <td data-label="Active">
+        <button class="switch \${u.enabled ? "on" : ""} \${u._pending && u._pendingKind === "toggle" ? "pending" : ""}" role="switch" aria-checked="\${u.enabled ? "true" : "false"}"
+                title="\${u.enabled ? "Active — click to disable" : "Disabled — click to enable"}"
+                onclick="toggleUserEnabled('\${u.id}')"><span class="switch-knob"></span>\${u._pending && u._pendingKind === "toggle" ? '<span class="spinner switch-spinner"></span>' : ''}</button>
+      </td>
+      <td class="timestamp" data-label="Updated">\${timeAgo(u.updatedAt)}</td>
+      <td data-label="">
         <div class="row-actions">
-          \${u.primaryProfileId ? \`<button class="btn-icon" title="Copy subscription link" onclick="copyUserPrimaryLink('\${u.primaryProfileId}')">🔗</button>\` : ""}
-          <button class="btn-icon" title="Open" onclick="openUser('\${u.id}')">↗</button>
-          <button class="btn-icon" title="Rename" onclick="openUserEditor('\${u.id}')">✎</button>
-          <button class="btn-icon" title="Duplicate" onclick="duplicateUser('\${u.id}')">⧉</button>
-          <button class="btn-icon" title="Delete" onclick="askDeleteUser('\${u.id}', '\${escapeHtml(u.name).replace(/'/g, "&#39;")}')">🗑</button>
+          <button class="btn-icon icon-link" title="Get subscription link" onclick="openSubFormatPicker('user', '\${u.id}', '\${escapeHtml(u.name).replace(/'/g, "&#39;")}')">\${icon("link")}</button>
+          <button class="btn-icon icon-open" title="Open" onclick="openUser('\${u.id}')">\${icon("open")}</button>
+          <button class="btn-icon icon-duplicate" title="Duplicate" onclick="duplicateUser('\${u.id}')">\${icon("duplicate")}</button>
+          <button class="btn-icon icon-delete" title="Delete" onclick="askDeleteUser('\${u.id}', '\${escapeHtml(u.name).replace(/'/g, "&#39;")}')">\${icon("delete")}</button>
         </div>
       </td>
     </tr>
@@ -4365,11 +5404,12 @@ function renderUsersView() {
         <input class="search-input" placeholder="Search users…" value="\${escapeHtml(state.userSearch)}"
                oninput="state.userSearch=this.value; render();" />
       </div>
-      <button class="btn-primary" onclick="openUserEditor(null)">+ New User</button>
+      <button class="btn-primary desktop-only-action" onclick="openUserEditor()">+ New User</button>
     </div>
+    <button class="mobile-fab" onclick="openUserEditor()" aria-label="New User" title="New User">\${icon("plus")}</button>
     <div class="card">
       \${sorted.length === 0
-        ? '<div class="empty-state"><div class="empty-state-icon">◫</div>No users yet. Create one to get started.</div>'
+        ? '<div class="empty-state"><div class="empty-state-icon">' + icon("users") + '</div>No users yet. Create one to get started.</div>'
         : \`
           <div class="table-wrap">
           <table class="data-table">
@@ -4377,6 +5417,7 @@ function renderUsersView() {
               <tr>
                 <th onclick="setUserSort('name')">Name\${sortIndicator(state.userSort, "name")}</th>
                 <th onclick="setUserSort('profileCount')">Profiles\${sortIndicator(state.userSort, "profileCount")}</th>
+                <th>Active</th>
                 <th onclick="setUserSort('updatedAt')">Updated\${sortIndicator(state.userSort, "updatedAt")}</th>
                 <th></th>
               </tr>
@@ -4389,8 +5430,8 @@ function renderUsersView() {
   \`);
 }
 
-function openUserEditor(id) {
-  state.editingUser = id ? state.users.find(u => u.id === id) : null;
+function openUserEditor() {
+  state.editingUser = null;
   state.modal = "userEditor";
   render();
 }
@@ -4398,37 +5439,21 @@ function openUserEditor(id) {
 async function saveUser() {
   const name = document.getElementById("userNameInput").value.trim();
   if (!name) { showToast("Name is required.", true); return; }
-  const isEdit = state.editingUser && state.editingUser.id;
 
   closeModal();
-  if (isEdit) {
-    const idx = state.users.findIndex(u => u.id === state.editingUser.id);
-    const prevName = state.users[idx].name;
-    state.users[idx] = { ...state.users[idx], name, _pending: true };
+  const tempId = "temp-" + Date.now();
+  state.users.push({ id: tempId, name, enabled: true, profileCount: 0, primaryProfileId: null, updatedAt: Date.now(), _pending: true, _pendingKind: "create" });
+  render();
+  try {
+    const result = await apiFetch("/api/users", { method: "POST", body: JSON.stringify({ name }) });
+    const idx = state.users.findIndex(u => u.id === tempId);
+    state.users[idx] = { ...result.user, enabled: result.user.enabled !== false, profileCount: 0, primaryProfileId: null, _pending: false };
     render();
-    try {
-      await apiFetch("/api/users/" + state.editingUser.id, { method: "PUT", body: JSON.stringify({ name }) });
-      state.users[idx]._pending = false;
-      render();
-    } catch (e) {
-      state.users[idx] = { ...state.users[idx], name: prevName, _pending: false };
-      showToast("Could not rename user.", true);
-      render();
-    }
-  } else {
-    const tempId = "temp-" + Date.now();
-    state.users.push({ id: tempId, name, profileCount: 0, primaryProfileId: null, updatedAt: Date.now(), _pending: true });
+    showToast("User created.");
+  } catch (e) {
+    state.users = state.users.filter(u => u.id !== tempId);
+    showToast("Could not create user.", true);
     render();
-    try {
-      const result = await apiFetch("/api/users", { method: "POST", body: JSON.stringify({ name }) });
-      const idx = state.users.findIndex(u => u.id === tempId);
-      state.users[idx] = { ...result.user, profileCount: 0, primaryProfileId: null, _pending: false };
-      render();
-    } catch (e) {
-      state.users = state.users.filter(u => u.id !== tempId);
-      showToast("Could not create user.", true);
-      render();
-    }
   }
 }
 
@@ -4464,7 +5489,7 @@ async function duplicateUser(id) {
   if (idx === -1) return;
   const original = state.users[idx];
   const tempId = "temp-" + Date.now();
-  state.users.splice(idx + 1, 0, { ...original, id: tempId, name: original.name + " (copy)", _pending: true });
+  state.users.splice(idx + 1, 0, { ...original, id: tempId, name: original.name + " (copy)", _pending: true, _pendingKind: "create" });
   render();
   try {
     const result = await apiFetch("/api/users/" + id + "/duplicate", { method: "POST" });
@@ -4479,10 +5504,71 @@ async function duplicateUser(id) {
   }
 }
 
-function copyUserPrimaryLink(profileId) {
-  const fullUrl = location.origin + "/sub/" + profileId;
-  navigator.clipboard.writeText(fullUrl);
-  showToast("Subscription link copied.");
+const SUB_FORMATS = [
+  { key: "base64", label: "Normal Link" },
+  { key: "singbox", label: "sing-box" },
+  { key: "clash", label: "Clash" },
+];
+
+// kind is "user" (combined per-user link, /sub/user/:id) or "profile"
+// (single-profile link, /sub/:id) — same three formats, same picker/QR UI.
+function buildSubUrl(kind, id, format) {
+  const base = location.origin + (kind === "profile" ? "/sub/" + id : "/sub/user/" + id);
+  return format === "base64" ? base : base + "?format=" + format;
+}
+
+function openSubFormatPicker(kind, id, name) {
+  state.modal = "subFormat";
+  state.subFormatTarget = { kind, id, name };
+  state.subFormatSelected = null;
+  render();
+}
+
+// Picking a format shows its link and QR code together on one screen,
+// rather than separate Copy-Link / QR-Code actions per row.
+function selectSubFormat(format) {
+  state.subFormatSelected = format;
+  render();
+  setTimeout(() => {
+    const el = document.getElementById("subFormatQrBox");
+    const t = state.subFormatTarget;
+    if (el && window.qrcodegen && t) {
+      const qr = qrcodegen.QrCode.encodeText(buildSubUrl(t.kind, t.id, format), qrcodegen.QrCode.Ecc.MEDIUM);
+      el.innerHTML = qr.toSvgString(4);
+    }
+  }, 0);
+}
+
+function backToSubFormatMenu() {
+  state.subFormatSelected = null;
+  render();
+}
+
+function copySubFormatLink() {
+  const t = state.subFormatTarget;
+  const format = state.subFormatSelected;
+  if (!t || !format) return;
+  navigator.clipboard.writeText(buildSubUrl(t.kind, t.id, format));
+  const f = SUB_FORMATS.find(x => x.key === format);
+  showToast((f ? f.label : "Link") + " copied to clipboard!");
+}
+
+async function toggleUserEnabled(id) {
+  const idx = state.users.findIndex(u => u.id === id);
+  if (idx === -1 || state.users[idx]._pending) return;
+  const prevEnabled = state.users[idx].enabled;
+  state.users[idx] = { ...state.users[idx], enabled: !prevEnabled, _pending: true, _pendingKind: "toggle" };
+  render();
+  try {
+    const result = await apiFetch("/api/users/" + id, { method: "PUT", body: JSON.stringify({ enabled: !prevEnabled }) });
+    state.users[idx] = { ...state.users[idx], enabled: result.user.enabled, _pending: false };
+    render();
+    showToast(result.user.enabled ? "User enabled." : "User disabled.");
+  } catch (e) {
+    state.users[idx] = { ...state.users[idx], enabled: prevEnabled, _pending: false };
+    showToast("Could not update user status.", true);
+    render();
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -4518,21 +5604,21 @@ function renderUserProfilesView() {
 
   const cards = state.profiles.map(p => \`
     <tr class="row-hover">
-      <td><span class="row-name" onclick="openProfileEditor('\${p.id}')">\${escapeHtml(p.name)}</span>\${p._pending ? ' <span class="badge">saving…</span>' : ''}</td>
-      <td>
+      <td data-label="Name"><span class="row-name" onclick="openProfileEditor('\${p.id}')">\${escapeHtml(p.name)}</span>\${p._pending ? ' <span class="spinner" title="Saving…"></span>' : ''}</td>
+      <td data-label="Sources">
         <div class="badge-row">
           <span class="badge">\${p.subCount} subs</span>
           <span class="badge green">\${p.rawCount} raw</span>
         </div>
       </td>
-      <td class="timestamp">\${timeAgo(p.updatedAt)}</td>
-      <td>
+      <td class="timestamp" data-label="Updated">\${timeAgo(p.updatedAt)}</td>
+      <td data-label="">
         <div class="row-actions">
-          <button class="btn-icon" title="Copy subscription link" onclick="copyUserPrimaryLink('\${p.id}')">🔗</button>
-          <button class="btn-icon" title="Merge / QR" onclick="openMerge('\${p.id}')">▣</button>
-          <button class="btn-icon" title="Edit sources" onclick="openProfileEditor('\${p.id}')">✎</button>
-          <button class="btn-icon" title="Duplicate" onclick="duplicateProfile('\${p.id}')">⧉</button>
-          <button class="btn-icon" title="Delete" onclick="askDeleteProfile('\${p.id}', '\${escapeHtml(p.name).replace(/'/g, "&#39;")}')">🗑</button>
+          <button class="btn-icon icon-link" title="Get subscription link" onclick="openSubFormatPicker('profile', '\${p.id}', '\${escapeHtml(p.name).replace(/'/g, "&#39;")}')">\${icon("link")}</button>
+          <button class="btn-icon icon-merge" title="Merge / QR" onclick="openMerge('\${p.id}')">\${icon("merge")}</button>
+          <button class="btn-icon icon-edit" title="Edit sources" onclick="openProfileEditor('\${p.id}')">\${icon("edit")}</button>
+          <button class="btn-icon icon-duplicate" title="Duplicate" onclick="duplicateProfile('\${p.id}')">\${icon("duplicate")}</button>
+          <button class="btn-icon icon-delete" title="Delete" onclick="askDeleteProfile('\${p.id}', '\${escapeHtml(p.name).replace(/'/g, "&#39;")}')">\${icon("delete")}</button>
         </div>
       </td>
     </tr>
@@ -4542,11 +5628,12 @@ function renderUserProfilesView() {
     <div class="breadcrumb"><a onclick="navigate('users')">Users</a> / \${escapeHtml(state.currentUser ? state.currentUser.name : "")}</div>
     <div class="toolbar">
       <div class="toolbar-left"></div>
-      <button class="btn-primary" onclick="openProfileEditor(null)">+ New Profile</button>
+      <button class="btn-primary desktop-only-action" onclick="openProfileEditor(null)">+ New Profile</button>
     </div>
+    <button class="mobile-fab" onclick="openProfileEditor(null)" aria-label="New Profile" title="New Profile">\${icon("plus")}</button>
     <div class="card">
       \${state.profiles.length === 0
-        ? '<div class="empty-state"><div class="empty-state-icon">▣</div>No profiles yet for this user.</div>'
+        ? '<div class="empty-state"><div class="empty-state-icon">' + icon("merge") + '</div>No profiles yet for this user.</div>'
         : \`
           <div class="table-wrap">
           <table class="data-table">
@@ -4573,23 +5660,23 @@ function openProfileEditor(id) {
 }
 
 async function saveProfile() {
-  const name = document.getElementById("profileNameInput").value.trim();
+  const isEdit = state.editingProfile && state.editingProfile.id;
+  const name = isEdit ? state.editingProfile.name : document.getElementById("profileNameInput").value.trim();
   const sourcesText = document.getElementById("profileSourcesInput").value;
   const sources = splitSourceEntries(sourcesText);
   if (!name) { showToast("Name is required.", true); return; }
 
-  const isEdit = state.editingProfile && state.editingProfile.id;
   closeModal();
 
   if (isEdit) {
     const idx = state.profiles.findIndex(p => p.id === state.editingProfile.id);
     const prev = state.profiles[idx];
-    state.profiles[idx] = { ...prev, name, _pending: true };
+    state.profiles[idx] = { ...prev, _pending: true };
     render();
     try {
       const result = await apiFetch("/api/profiles/" + state.editingProfile.id, {
         method: "PUT",
-        body: JSON.stringify({ name, sources })
+        body: JSON.stringify({ sources })
       });
       const p = result.profile;
       state.profiles[idx] = {
@@ -4601,6 +5688,8 @@ async function saveProfile() {
       render();
       if (result.invalidSources && result.invalidSources.length) {
         showToast(result.invalidSources.length + " line(s) skipped — invalid format.", true);
+      } else {
+        showToast("Profile updated.");
       }
     } catch (e) {
       state.profiles[idx] = prev;
@@ -4630,6 +5719,8 @@ async function saveProfile() {
       render();
       if (result.invalidSources && result.invalidSources.length) {
         showToast(result.invalidSources.length + " line(s) skipped — invalid format.", true);
+      } else {
+        showToast("Profile created.");
       }
     } catch (e) {
       state.profiles = state.profiles.filter(p => p.id !== tempId);
@@ -4728,19 +5819,66 @@ function closeModal() {
   state.editingProfile = null;
   state.editingUser = null;
   state.confirmDialog = null;
+  state.subFormatTarget = null;
+  state.subFormatSelected = null;
   render();
 }
 
 function renderModal() {
-  if (state.modal === "userEditor") {
-    const u = state.editingUser;
+  if (state.modal === "subFormat") {
+    const t = state.subFormatTarget;
+
+    if (!state.subFormatSelected) {
+      const menuItems = SUB_FORMATS.map(f => \`
+        <button class="format-menu-item" onclick="selectSubFormat('\${f.key}')">
+          <span>\${escapeHtml(f.label)}</span>
+          <span class="format-menu-arrow">›</span>
+        </button>
+      \`).join("");
+      return \`
+        <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+          <div class="card modal-card small">
+            <div class="modal-title">Subscription — \${escapeHtml(t.name)}</div>
+            <div class="helper-text" style="margin-bottom:10px;">Choose a format to get its link and QR code.</div>
+            <div class="format-menu">\${menuItems}</div>
+            <div class="modal-footer">
+              <button class="btn-secondary" onclick="closeModal()">Close</button>
+            </div>
+          </div>
+        </div>
+      \`;
+    }
+
+    const f = SUB_FORMATS.find(x => x.key === state.subFormatSelected);
+    const fullUrl = buildSubUrl(t.kind, t.id, state.subFormatSelected);
     return \`
       <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
         <div class="card modal-card small">
-          <div class="modal-title">\${u ? "Rename User" : "New User"}</div>
+          <div class="modal-title">\${escapeHtml(t.name)} — \${escapeHtml(f ? f.label : "")}</div>
+          <div class="qr-box" id="subFormatQrBox"></div>
+          <label class="field-label">Subscription Link</label>
+          <div class="link-row">
+            <input id="subFormatLinkInput" readonly value="\${fullUrl}" />
+            <button class="btn-primary" onclick="copySubFormatLink()">Copy</button>
+          </div>
+          <div class="modal-footer">
+            <button class="btn-secondary" onclick="backToSubFormatMenu()">← Back</button>
+            <button class="btn-secondary" onclick="closeModal()">Close</button>
+          </div>
+        </div>
+      </div>
+    \`;
+  }
+
+  if (state.modal === "userEditor") {
+    return \`
+      <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+        <div class="card modal-card small">
+          <div class="modal-title">New User</div>
           <div class="field-group">
             <label class="field-label">Name</label>
-            <input id="userNameInput" value="\${u ? escapeHtml(u.name) : ""}" placeholder="e.g. Alice" />
+            <input id="userNameInput" value="" placeholder="e.g. Alice" />
+            <div class="helper-text">Names can't be changed after creation.</div>
           </div>
           <div class="modal-footer">
             <button class="btn-secondary" onclick="closeModal()">Cancel</button>
@@ -4763,7 +5901,10 @@ function renderModal() {
           <div class="modal-title">\${p ? "Edit Profile" : "New Profile"}</div>
           <div class="field-group">
             <label class="field-label">Profile Name</label>
-            <input id="profileNameInput" value="\${p ? escapeHtml(p.name) : ""}" placeholder="e.g. My Main VPN" />
+            \${p
+              ? \`<input value="\${escapeHtml(p.name)}" disabled />
+                 <div class="helper-text">Names can't be changed after creation.</div>\`
+              : \`<input id="profileNameInput" value="" placeholder="e.g. My Main VPN" />\`}
           </div>
           <div class="field-group">
             <label class="field-label">Sources (one per line)</label>
@@ -4790,7 +5931,7 @@ function renderModal() {
               <div class="stat-box"><div class="skel" style="width:36px;height:22px;margin:0 auto 4px;"></div><div class="skel" style="width:64px;height:11px;margin:0 auto;"></div></div>
               <div class="stat-box"><div class="skel" style="width:36px;height:22px;margin:0 auto 4px;"></div><div class="skel" style="width:90px;height:11px;margin:0 auto;"></div></div>
             </div>
-            <div class="skel" style="width:180px;height:180px;margin:16px auto;border-radius:12px;"></div>
+            <div class="skel" style="width:clamp(140px, 45vw, 180px);height:clamp(140px, 45vw, 180px);margin:16px auto;border-radius:12px;"></div>
             <div class="skel" style="width:90px;height:11px;margin-bottom:6px;"></div>
             <div class="skel" style="width:100%;height:36px;"></div>
           </div>
@@ -4813,6 +5954,30 @@ function renderModal() {
             <button class="btn-primary" onclick="copyLink()">Copy</button>
           </div>
           \${renderSourceIssues(r.sourceErrors)}
+          <div class="modal-footer">
+            <button class="btn-secondary" onclick="closeModal()">Close</button>
+          </div>
+        </div>
+      </div>
+    \`;
+  }
+
+  if (state.modal === "settings") {
+    return \`
+      <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+        <div class="card modal-card small">
+          <div class="modal-title">Settings</div>
+          <button class="btn-primary" style="width:100%;" onclick="location.href='/change-panel-password'">Change Panel Password</button>
+          <div class="helper-text" style="margin-bottom:16px;">
+            Rotates only ADMIN_PASSWORD_HASH — update just that one value in
+            <strong>Variables and Secrets</strong> (type <strong>Secret</strong>). Sessions and links keep working.
+          </div>
+          <button class="btn-danger btn-secondary" style="width:100%;" onclick="location.href='/secret?action=destroy'">Regenerate All Secrets</button>
+          <div class="helper-text">
+            Step-by-step walkthrough to replace ADMIN_SALT, ADMIN_PASSWORD_HASH, and JWT_SECRET
+            all at once. Every existing session, login token, and subscription link stops
+            working until the new values are saved in Cloudflare.
+          </div>
           <div class="modal-footer">
             <button class="btn-secondary" onclick="closeModal()">Close</button>
           </div>
@@ -4865,10 +6030,13 @@ function render() {
 }
 
 (async function init() {
-  document.documentElement.setAttribute("data-theme", effectiveTheme(getThemePref()));
+  document.documentElement.setAttribute("data-theme", getThemePref());
+  // Live-follow the OS theme only while the user hasn't made an explicit
+  // choice of their own (no stored override yet).
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-    if (getThemePref() === "system") {
-      document.documentElement.setAttribute("data-theme", effectiveTheme("system"));
+    if (!localStorage.getItem("vexa_theme")) {
+      document.documentElement.setAttribute("data-theme", getThemePref());
+      render();
     }
   });
   document.addEventListener("keydown", e => { if (e.key === "Escape") closeSidebar(); });
@@ -4876,11 +6044,16 @@ function render() {
   if (state.token) {
     try {
       state.view = "dashboard";
+      if (location.pathname !== "/panel") history.replaceState(null, "", "/panel");
       await bootAuthenticated();
       return;
     } catch {
       state.view = "login";
+      if (location.pathname !== "/login") history.replaceState(null, "", "/login");
     }
+  } else {
+    state.view = "login";
+    if (location.pathname !== "/login") history.replaceState(null, "", "/login");
   }
   render();
 })();

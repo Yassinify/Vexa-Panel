@@ -2,7 +2,7 @@
 
 > **A secure, single-file Cloudflare Worker for merging, managing, and canonicalizing V2Ray / Xray / Shadowsocks / Hysteria2 VPN subscription links.**
 
-VEXA is a lightweight, zero-dependency subscription panel and aggregator built to run entirely inside a single Cloudflare Worker. It fetches proxy nodes from multiple subscription links or raw URI lists, deduplicates them by structural fingerprinting, and provides clean, unified subscription links for your VPN clients.
+VEXA is a lightweight, zero-dependency subscription panel and aggregator built to run entirely inside a single Cloudflare Worker. It fetches proxy nodes from multiple subscription links or raw URI lists, deduplicates them by structural fingerprinting, and provides clean, unified subscription links for your VPN clients — in raw, sing-box, or Clash/Mihomo format.
 
 ---
 
@@ -10,14 +10,18 @@ VEXA is a lightweight, zero-dependency subscription panel and aggregator built t
 
 - **Single-File Deployment:** Everything (Backend API, Router, Logic, Base64/JWT, QR Generator, and Glassmorphism Frontend) is bundled in a single Worker file.
 - **Protocol & Format Support:**
-  - Protocols: VLESS, VMess, Trojan, Shadowsocks (including SIP022 / Shadowsocks 2022), and Hysteria2 (hy2).
-  - Formats: Plaintext URI lists, Base64-encoded subscriptions, Xray/V2Ray JSON configs, and Clash/Mihomo YAML lists.
-- **Smart Deduplication & Fingerprinting:** Identifies identical proxy nodes based on host, credentials, transport types, SNI, path, and security parameters—removing redundant proxies cleanly.
+  - Protocols: VLESS, VMess, Trojan, Shadowsocks (including SIP022 / Shadowsocks 2022), Shadowsocksr, Hysteria (v1 & v2/hy2), TUIC, WireGuard, SOCKS5, HTTP, and NaiveProxy.
+  - Input Formats: Plaintext URI lists, Base64-encoded subscriptions, Xray/V2Ray JSON configs, and Clash/Mihomo YAML lists.
+  - Output Formats: Raw Base64 URI list (default), **sing-box JSON**, and **Clash/Mihomo YAML** — selectable per subscription link via `?format=`.
+- **Multi-User Ownership:** Profiles belong to users; each user gets a combined `/sub/user/:id` link that merges every profile they own, and can be **enabled or disabled** from the panel without touching individual profiles.
+- **Smart Deduplication & Fingerprinting:** Identifies identical proxy nodes based on host, credentials, transport types, SNI, path, and security parameters—removing redundant proxies cleanly, including when merging across multiple profiles for a combined user link.
 - **Fault-Tolerant Cache:** Caches external subscription nodes for up to 14 days. If a remote subscription goes down, VEXA serves the fallback cache seamlessly.
+- **Guided KV Setup:** If the `STORAGE` KV binding isn't configured yet, the Worker now serves a step-by-step setup guide instead of failing with an opaque error.
 - **Security & Authentication:**
-  - Single-admin authentication using PBKDF2 (100,000 iterations) and HS256 JWT tokens.
+  - Single-admin authentication using PBKDF2 (100,000 iterations) and HS256 JWT tokens (sessions now last 48 hours, up from 12).
+  - Dedicated `/change-panel-password` deep link for rotating the admin password from Settings.
   - Strict CORS policies and rate-limiting on authentication attempts.
-- **Modern Web Interface:** Built-in glassmorphism UI with a native byte-mode QR Code generator for quick mobile imports.
+- **Modern Web Interface:** Built-in glassmorphism UI with light/dark/system theming, a Settings panel, a per-link format picker, and a native byte-mode QR Code generator for quick mobile imports.
 
 ---
 
@@ -26,15 +30,15 @@ VEXA is a lightweight, zero-dependency subscription panel and aggregator built t
 ### 1. Prerequisites
 
 - A [Cloudflare](https://dash.cloudflare.com/) account.
-- A Cloudflare KV Namespace created for persistent storage (e.g., profiles, login rate-limiting, and subscription fallback caches).
+- A Cloudflare KV Namespace created for persistent storage (e.g., profiles, login rate-limiting, and subscription fallback caches). If this binding is missing, visiting the Worker now shows an in-app setup guide instead of an error.
 
 ### 2. Environment Variables & KV Bindings
 
 Configure the following bindings in your Cloudflare Worker setting (`wrangler.toml` or via Cloudflare Dashboard):
 
 | Variable / Binding    | Type             | Description                                                    |
-| :-------------------- | :--------------- | :------------------------------------------------------------- |
-| `STORAGE`             | **KV Namespace** | Required for storing profiles and subscription fallback cache. |
+| :-------------------- | :--------------- | :--------------------------------------------------------------- |
+| `STORAGE`             | **KV Namespace** | Required for storing users, profiles, and subscription fallback cache. |
 | `JWT_SECRET`          | **Secret Text**  | A long, secure random string used to sign JWT tokens.          |
 | `ADMIN_SALT`          | **Secret Text**  | Hex-encoded salt used for PBKDF2 password derivation.          |
 | `ADMIN_PASSWORD_HASH` | **Secret Text**  | Hex-encoded derived PBKDF2 hash of your admin password.        |
@@ -56,20 +60,33 @@ console.log("ADMIN_SALT:", salt);
 console.log("ADMIN_PASSWORD_HASH:", derivedKey);
 ```
 
+Alternatively, visit `/secret` in your deployed Worker to generate these values through the UI, or `/change-panel-password` to rotate just the password later.
+
 ---
 
 ## 📡 API Endpoints Summary
 
 ### Public Routes
 
-- `GET /` or `/index.html`: Serves the integrated web UI dashboard.
-- `GET /sub/:profileId`: Public subscription download link (returns Base64-encoded URI list).
-  - _Query Parameter:_ `?canonical=1` (Optional) — Normalizes and re-serializes nodes through canonical URI generation.
-- `GET /api/version`: Unauthenticated endpoint returning version and build date.
+- `GET /` / `/index.html` / `/login` / `/panel`: Serves the integrated web UI dashboard.
+- `GET /secret` or `/secrets`: Initial setup / secret regeneration page.
+- `GET /change-panel-password`: Dedicated page for rotating the admin password.
+- `GET /sub/:profileId`: Public subscription download link for a single profile (returns Base64-encoded URI list by default).
+  - _Query Parameters:_
+    - `?canonical=1` (Optional) — Normalizes and re-serializes nodes through canonical URI generation.
+    - `?format=singbox` (Optional) — Returns a ready-to-use sing-box JSON config instead of the raw list.
+    - `?format=clash` (Optional) — Returns a Clash/Mihomo YAML config instead of the raw list.
+- `GET /sub/user/:userId`: Public combined subscription link merging **all** profiles owned by that user, re-deduplicated across profiles. Stops serving nodes immediately if the user is disabled. Supports the same `?format=` options as `/sub/:profileId`.
+- `GET /api/version`: Unauthenticated endpoint returning the current version.
 
 ### Authenticated Routes (`Bearer <JWT>`)
 
-- `POST /api/login`: Validates the admin password and returns a JWT token.
+- `POST /api/login`: Validates the admin password and returns a JWT token (now valid for 48 hours).
+- `POST /api/secret/change-password`: Rotates `ADMIN_PASSWORD_HASH` without invalidating other secrets.
+- `GET /api/stats`: Returns dashboard summary statistics.
+- `GET /api/users`: Lists all users.
+- `POST /api/users`: Creates a new user.
+- `PUT /api/users/:id`: Updates a user, including toggling `enabled` to activate/deactivate their combined subscription link.
 - `GET /api/profiles`: Lists all created subscription profiles.
 - `POST /api/profiles`: Creates a new profile with subscription sources or raw URIs.
 - `GET /api/profiles/:id`: Retrieves full configuration details for a given profile ID.
@@ -80,6 +97,20 @@ console.log("ADMIN_PASSWORD_HASH:", derivedKey);
 ---
 
 ## 📋 Changelog
+
+### **v3.2.1** *(current)*
+
+feat: multi-format subscription export and per-user combined links
+
+- Add `?format=singbox` and `?format=clash` output options on `/sub/:profileId`, generating ready-to-use sing-box JSON or Clash/Mihomo YAML configs on the fly
+- Add `GET /sub/user/:userId`, a combined subscription link merging every profile a user owns, with cross-profile re-deduplication
+- Add per-user `enabled` flag: disabling a user immediately stops their combined link from serving nodes, without touching individual profiles
+- Add in-panel format picker for copying/sharing a profile or user link in the desired format
+- Add guided setup screen (`renderKvSetupGuide`) shown when the `STORAGE` KV binding isn't configured yet, replacing opaque `internal_error` responses
+- Add dedicated `/change-panel-password` page for rotating the admin password from Settings
+- Add `/login` and `/panel` as aliases serving the same app shell as `/`
+- Extend admin session lifetime from 12 hours to 48 hours
+- Add Settings panel and light/dark/system theme toggle to the admin UI
 
 ### **v2.2.1**
 
