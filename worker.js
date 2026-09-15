@@ -1187,6 +1187,8 @@ const FINGERPRINT_QUERY_KEYS = [
   "sid",
   "headerType",
   "mode",
+  "encryption",
+  "pqv",
 ];
 
 function normalizeQueryForFingerprint(searchStr) {
@@ -1502,6 +1504,7 @@ function parseNodeUri(uri) {
         tls: payload.tls || "",
         sni: payload.sni || "",
         remark: payload.ps || "",
+        rawUrl: uri,
       };
     }
     if (uri.startsWith("vless://") || uri.startsWith("trojan://")) {
@@ -1519,6 +1522,7 @@ function parseNodeUri(uri) {
         address: host,
         port: Number(port),
         id: creds,
+        encryption: params.get("encryption") || "",
         security: params.get("security") || "",
         sni: params.get("sni") || "",
         network: params.get("type") || "tcp",
@@ -1531,6 +1535,7 @@ function parseNodeUri(uri) {
         pbk: params.get("pbk") || "",
         sid: params.get("sid") || "",
         remark: hash ? decodeURIComponent(hash) : "",
+        rawUrl: uri,
       };
     }
     if (uri.startsWith("ss://")) {
@@ -1748,6 +1753,11 @@ function utf8ToBase64(str) {
 }
 
 function generateNodeUri(node) {
+
+  if (node.rawUrl) {
+    return node.rawUrl;
+  }
+
   const remarkSuffix = node.remark ? "#" + encodeURIComponent(node.remark) : "";
 
   if (node.protocol === "vmess") {
@@ -1770,10 +1780,17 @@ function generateNodeUri(node) {
 
   if (node.protocol === "vless" || node.protocol === "trojan") {
     const params = new URLSearchParams();
+    if (node.protocol === "vless" && node.encryption) {
+      params.set("encryption", node.encryption);
+    }
     if (node.security) params.set("security", node.security);
     if (node.sni) params.set("sni", node.sni);
-    if (node.network && node.network !== "tcp")
+    if (node.network && node.network !== "tcp") {
       params.set("type", node.network);
+    } else if (node.network === "tcp" && (node.host_header || node.path)) {
+      params.set("type", "tcp");
+      params.set("headerType", "http");
+    }
     if (node.path) params.set("path", node.path);
     if (node.host_header) params.set("host", node.host_header);
     if (node.serviceName) params.set("serviceName", node.serviceName);
@@ -1783,7 +1800,8 @@ function generateNodeUri(node) {
     if (node.pbk) params.set("pbk", node.pbk);
     if (node.sid) params.set("sid", node.sid);
     const qs = params.toString();
-    return `${node.protocol}://${node.id}@${node.address}:${node.port}${qs ? "?" + qs : ""}${remarkSuffix}`;
+    return `${node.protocol}://${node.id}@${node.address}:${node.port}${qs ? "?" + qs : ""
+      }${remarkSuffix}`;
   }
 
   if (node.protocol === "shadowsocks") {
@@ -1975,6 +1993,23 @@ function buildStreamSettings(node) {
       path: node.path || "/",
       host: node.host_header || "",
     };
+  } else if (node.network === "tcp" && (node.host_header || node.path)) {
+    streamSettings.tcpSettings = {
+      header: {
+        type: "http",
+        request: {
+          version: "1.1",
+          method: "GET",
+          path: [node.path || "/"],
+          headers: {
+            Host: [node.host_header || ""],
+            "Accept-Encoding": ["gzip, deflate"],
+            Connection: ["keep-alive"],
+            Pragma: "no-cache"
+          }
+        }
+      }
+    };
   }
 
   if (node.security === "tls") {
@@ -2021,6 +2056,7 @@ function parseXrayOutbound(outbound) {
           address: server.address,
           port: Number(server.port),
           id: user.id,
+          encryption: user.encryption || "",
           security: transport.security,
           sni: transport.sni,
           network: transport.network,
@@ -2214,7 +2250,7 @@ function generateXrayOutbound(node) {
             users: [
               {
                 id: node.id,
-                encryption: "none",
+                encryption: node.encryption || "none",
                 ...(node.flow ? { flow: node.flow } : {}),
               },
             ],
@@ -2647,6 +2683,7 @@ function clashProxyToNode(p) {
         address: p.server,
         port: Number(p.port),
         id: p.uuid,
+        encryption: p.encryption || "",
         security: isReality ? "reality" : isTls ? "tls" : "",
         sni: p.servername || p.sni || "",
         network,
@@ -2880,17 +2917,17 @@ function nodeToSingboxOutbound(node, tag) {
         tls:
           node.tls === "tls"
             ? {
-                enabled: true,
-                server_name: node.sni || node.host || node.address,
-              }
+              enabled: true,
+              server_name: node.sni || node.host || node.address,
+            }
             : undefined,
         transport:
           node.network && node.network !== "tcp"
             ? {
-                type: node.network === "ws" ? "ws" : node.network,
-                path: node.path || "",
-                headers: node.host ? { Host: node.host } : undefined,
-              }
+              type: node.network === "ws" ? "ws" : node.network,
+              path: node.path || "",
+              headers: node.host ? { Host: node.host } : undefined,
+            }
             : undefined,
       };
     case "vless":
@@ -2902,32 +2939,32 @@ function nodeToSingboxOutbound(node, tag) {
         tls:
           node.security === "tls" || node.security === "reality"
             ? {
-                enabled: true,
-                server_name: node.sni || node.address,
-                reality:
-                  node.security === "reality"
-                    ? {
-                        enabled: true,
-                        public_key: node.pbk || "",
-                        short_id: node.sid || "",
-                      }
-                    : undefined,
-                utls: node.fp
-                  ? { enabled: true, fingerprint: node.fp }
+              enabled: true,
+              server_name: node.sni || node.address,
+              reality:
+                node.security === "reality"
+                  ? {
+                    enabled: true,
+                    public_key: node.pbk || "",
+                    short_id: node.sid || "",
+                  }
                   : undefined,
-              }
+              utls: node.fp
+                ? { enabled: true, fingerprint: node.fp }
+                : undefined,
+            }
             : undefined,
         transport:
           node.network && node.network !== "tcp"
             ? {
-                type: node.network === "ws" ? "ws" : node.network,
-                path: node.path || "",
-                headers: node.host_header
-                  ? { Host: node.host_header }
-                  : undefined,
-                service_name:
-                  node.network === "grpc" ? node.serviceName || "" : undefined,
-              }
+              type: node.network === "ws" ? "ws" : node.network,
+              path: node.path || "",
+              headers: node.host_header
+                ? { Host: node.host_header }
+                : undefined,
+              service_name:
+                node.network === "grpc" ? node.serviceName || "" : undefined,
+            }
             : undefined,
       };
     case "trojan":
@@ -2939,14 +2976,14 @@ function nodeToSingboxOutbound(node, tag) {
         transport:
           node.network && node.network !== "tcp"
             ? {
-                type: node.network === "ws" ? "ws" : node.network,
-                path: node.path || "",
-                headers: node.host_header
-                  ? { Host: node.host_header }
-                  : undefined,
-                service_name:
-                  node.network === "grpc" ? node.serviceName || "" : undefined,
-              }
+              type: node.network === "ws" ? "ws" : node.network,
+              path: node.path || "",
+              headers: node.host_header
+                ? { Host: node.host_header }
+                : undefined,
+              service_name:
+                node.network === "grpc" ? node.serviceName || "" : undefined,
+            }
             : undefined,
       };
     case "shadowsocks":
@@ -3005,9 +3042,9 @@ function nodeToSingboxOutbound(node, tag) {
         type: "wireguard",
         local_address: node.localAddress
           ? node.localAddress
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean)
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
           : [],
         private_key: node.privateKey,
         peer_public_key: node.publicKey,
@@ -3034,9 +3071,9 @@ function nodeToClashProxy(node, name) {
         "ws-opts":
           node.network === "ws"
             ? {
-                path: node.path || "",
-                headers: node.host ? { Host: node.host } : undefined,
-              }
+              path: node.path || "",
+              headers: node.host ? { Host: node.host } : undefined,
+            }
             : undefined,
         servername: node.sni || undefined,
       };
@@ -3053,11 +3090,11 @@ function nodeToClashProxy(node, name) {
         "ws-opts":
           node.network === "ws"
             ? {
-                path: node.path || "",
-                headers: node.host_header
-                  ? { Host: node.host_header }
-                  : undefined,
-              }
+              path: node.path || "",
+              headers: node.host_header
+                ? { Host: node.host_header }
+                : undefined,
+            }
             : undefined,
         "grpc-opts":
           node.network === "grpc"
@@ -3079,11 +3116,11 @@ function nodeToClashProxy(node, name) {
         "ws-opts":
           node.network === "ws"
             ? {
-                path: node.path || "",
-                headers: node.host_header
-                  ? { Host: node.host_header }
-                  : undefined,
-              }
+              path: node.path || "",
+              headers: node.host_header
+                ? { Host: node.host_header }
+                : undefined,
+            }
             : undefined,
         "grpc-opts":
           node.network === "grpc"
@@ -3309,14 +3346,14 @@ function buildSubResponse(nodes, subtitle, url) {
   const wantsCanonical = url && url.searchParams.get("canonical") === "1";
   const outputNodes = wantsCanonical
     ? nodes.map((n) => {
-        const parsed = parseNodeUri(n);
-        if (!parsed) return n;
-        try {
-          return generateNodeUri(parsed);
-        } catch {
-          return n;
-        }
-      })
+      const parsed = parseNodeUri(n);
+      if (!parsed) return n;
+      try {
+        return generateNodeUri(parsed);
+      } catch {
+        return n;
+      }
+    })
     : nodes;
 
   const payload = outputNodes.join("\n");
@@ -3351,7 +3388,7 @@ async function handlePublicSub(id, env, url) {
   // params and normalizing formatting. Nodes we can't structurally parse
   // (SSR, Hysteria2, etc.) pass through unchanged. Off by default to
   // preserve exact existing behavior for current subscribers.
-  return buildFormattedSubResponse(nodes, `Vexa - ${profile.name}`, url);
+  return buildFormattedSubResponse(nodes, `${profile.name}`, url);
 }
 
 // ---------------------------------------------------------------------
@@ -3397,7 +3434,7 @@ async function handlePublicUserSub(id, env, url) {
     deduped.push(node);
   }
 
-  return buildFormattedSubResponse(deduped, `Vexa - ${user.name}`, url);
+  return buildFormattedSubResponse(deduped, `${user.name}`, url);
 }
 
 // =====================================================================
@@ -3462,11 +3499,10 @@ function renderSecretPage(configured) {
     <div style="text-align:center;">
       <div class="logo-glow">🔑</div>
       <div class="brand">${configured ? "Admin Secrets" : "VEXA Initial Setup"}</div>
-      <div class="brand-sub">${
-        configured
-          ? "Change your password, or destroy and rotate every secret"
-          : "Required Cloudflare Variables and Secrets are missing"
-      }</div>
+      <div class="brand-sub">${configured
+      ? "Change your password, or destroy and rotate every secret"
+      : "Required Cloudflare Variables and Secrets are missing"
+    }</div>
     </div>
     <div id="secretBody"></div>
   </div>
