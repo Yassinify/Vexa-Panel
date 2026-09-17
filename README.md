@@ -38,7 +38,35 @@ There is no separate "Profile" layer — sources live directly on the User, and 
 - Access to Cloudflare Workers, Workers KV, and Durable Objects on that account.
 - The `worker.js` file attached to this repository's latest GitHub Release.
 
-Nothing is installed on your computer, and nothing runs on your computer. Cloudflare hosts and executes the panel.
+Nothing is installed on your computer, and nothing runs on your computer. Cloudflare hosts and executes the panel. The only tool you need is a web browser.
+
+---
+
+## 🧭 First, Five Cloudflare Words
+
+If you have never used Cloudflare Workers, these five words are all you need to follow the guide. Nothing here assumes you know them already.
+
+- **Worker** — a small program Cloudflare runs for you on its own servers. Vexa Panel *is* a Worker. You create an empty one and paste Vexa Panel's code into it.
+- **KV Namespace** — a storage box Cloudflare provides, where a program can save data and read it back later. Vexa Panel keeps all of its data in one of these.
+- **Durable Object** — a special Cloudflare component used for coordination: it makes sure two changes arriving at the same moment cannot overwrite each other. Vexa Panel uses exactly one, called `IndexCoordinator`.
+- **Binding** — the connection between your Worker and a resource, given a **variable name**. A Worker cannot touch a KV Namespace or a Durable Object until it has been bound, under the exact variable name the program looks for.
+- **Secret** — a value saved with your Worker and encrypted by Cloudflare. Cloudflare also offers plain **Text** variables, which are *not* encrypted. Vexa Panel's three login values must be saved as **Secret**, not Text.
+
+### "Create" vs "Bind" — the one distinction that trips people up
+
+> **Create** means making the Cloudflare resource itself exist (for example, a KV Namespace).
+> **Bind** means connecting that already-existing resource to your Worker, under the variable name Vexa Panel expects.
+
+They are two separate actions, done on two different screens, and **creating comes first**. A resource that exists but is not bound is invisible to the Worker. A binding that points at nothing cannot be saved.
+
+This also means each resource ends up with **two names**:
+
+| | You choose it? | Where it is used | Example |
+| --- | --- | --- | --- |
+| **Resource name** | Yes, anything you like | Only in Cloudflare's own lists, so you can recognize it | `vexa-panel-storage` |
+| **Binding variable name** | No — fixed by Vexa Panel | Inside the code, to find the resource | `STORAGE` |
+
+The guide below always says which of the two it is asking for.
 
 ---
 
@@ -50,7 +78,7 @@ Per current official Cloudflare documentation, a **new** Durable Object class is
 
 What the Cloudflare Dashboard **can** do is bind a Durable Object namespace that **already exists** on the account: **Settings → Bindings → Add → Durable Object**, then select an existing namespace.
 
-**What this means for you:** every step below is fully doable in the Dashboard **except Step 5**. If the `IndexCoordinator` namespace does not already exist on your Cloudflare account, the Dashboard alone cannot create it, and deployment cannot be completed Dashboard-only. This is a gap in what Cloudflare currently exposes, not something Vexa Panel chooses. Step 5 explains exactly what to check and what to do if it isn't there.
+**What this means for you:** every step below is fully doable in the Dashboard **except Step 6**. If the `IndexCoordinator` namespace does not already exist on your Cloudflare account, the Dashboard alone cannot create it, and deployment cannot be completed Dashboard-only. This is a gap in what Cloudflare currently exposes, not something Vexa Panel chooses. Step 6 explains exactly what to check and what to do if it isn't there.
 
 This limitation is described honestly here rather than papered over with Dashboard clicks that do not exist.
 
@@ -58,113 +86,182 @@ This limitation is described honestly here rather than papered over with Dashboa
 
 ## 🌐 Deploy With the Cloudflare Dashboard
 
-Everything below happens in your web browser, at [dash.cloudflare.com](https://dash.cloudflare.com/).
+Everything below happens in your web browser, at [dash.cloudflare.com](https://dash.cloudflare.com/). Do the steps in order — each one depends on the one before it.
+
+The order is: **get the file → create the Worker → paste the code → create storage → bind storage → bind the Durable Object → deploy → generate your login values → save them as Secrets → deploy again → create a User → use the subscription link.**
 
 Cloudflare occasionally renames menu items. Where the exact label differs, the section names ("Bindings", "Variables and Secrets") are the ones to look for.
 
-### Step 1 — Download `worker.js` from the GitHub Release
+### Step 1 — Get `worker.js` from the GitHub Release
 
 1. Open this repository's **Releases** page on GitHub.
-2. Open the latest release and download the attached **`worker.js`** file.
-3. That single file is the complete, already-built application. You don't need anything else from the repository.
+2. Open the latest release and download the attached **`worker.js`** file to your computer.
+3. That single file is the complete, already-built application. You don't need anything else from the repository, and you don't open or edit this file — you will copy its contents in Step 3.
 
 ### Step 2 — Create the Worker
 
+This creates the empty program that Vexa Panel will live inside.
+
 1. Log in to the [Cloudflare Dashboard](https://dash.cloudflare.com/) and select your account.
 2. In the sidebar, go to **Compute (Workers) → Workers & Pages**.
-3. Select **Create**, then create a Worker from scratch (a "Hello World" starter is fine) rather than from a template.
-4. Give the Worker a name. Any name works — Vexa Panel does not require a specific one. This name becomes part of your URL: `https://<your-worker-name>.<your-subdomain>.workers.dev`.
-5. Create the Worker.
+3. Select **Create**, then choose to start from scratch (a "Hello World" starter is fine) rather than from a template.
+4. Give the Worker a name. **This name is yours to choose** — Vexa Panel does not care what it is. It becomes part of your address: `https://<your-worker-name>.<your-subdomain>.workers.dev`.
+5. Finish creating the Worker.
 
-### Step 3 — Paste in the application code
+### Step 3 — Paste the released `worker.js` into the Worker
 
-1. Open the Worker you just created and open its code editor (**Edit code**).
-2. Open the downloaded `worker.js` in any plain text editor (Notepad, TextEdit), select all, and copy.
-3. In the Cloudflare editor, select everything in the starter file and paste `worker.js` over it, replacing it entirely.
+1. Open the Worker you just created, then open its code editor (**Edit code**).
+2. On your computer, open the downloaded `worker.js` in any plain text editor (Notepad on Windows, TextEdit on macOS), select everything, and copy it.
+3. Back in the Cloudflare editor, select everything in the starter file and paste `worker.js` over it, so the starter code is completely replaced.
 4. Save and deploy from the editor.
 
-It will not work correctly yet — KV, the Durable Object binding, and the secrets are still missing. Steps 4 to 7 add them.
+The Worker now contains Vexa Panel's code, but it will not work yet: it has nowhere to store data and no login values. Steps 4 to 9 fix that.
 
-### Step 4 — Create and bind the KV namespace (`STORAGE`)
+### Step 4 — Create the KV Namespace (the storage itself)
 
-All Vexa Panel data lives in one Cloudflare KV namespace: Users, Nodes, dashboard statistics, the activity log, login rate-limit counters, and the subscription fallback cache.
+This step **creates** the storage. It does not yet connect it to your Worker — that is Step 5.
 
-1. Open your Worker's **Settings** tab, then **Bindings** (may be shown as **Variables and Bindings**).
-2. Select **Add**, then choose the **KV Namespace** binding type.
-3. Under **Variable name**, type exactly:
+**What this storage holds.** Vexa Panel keeps all of its saved data in one KV Namespace: your Users, your Nodes, the dashboard statistics, the recent-activity list, the login rate-limit counters, and the fallback cache of subscription sources. If this is missing, the panel has nowhere to put anything and shows a setup screen instead of the panel.
+
+1. In the Cloudflare Dashboard sidebar, go to **Storage & Databases → KV**. (On some Dashboard versions this is listed simply as **KV** under the storage area.)
+2. Select **Create** / **Create namespace**.
+3. Type a name for the namespace. **You choose this name freely** — for example:
+
+   ```
+   vexa-panel-storage
+   ```
+
+4. Confirm/create it.
+
+That's all for this step. The namespace now exists in your account, but your Worker still cannot see it.
+
+> ⚠️ **Do not confuse these two names:**
+> `vexa-panel-storage` is the **KV Namespace name** — a label you picked, used only so you can find it in Cloudflare's list.
+> `STORAGE` is the **binding name** — fixed by Vexa Panel, and the name the code uses to find the storage.
+> They are two different things, and both are needed. The next step is where `STORAGE` is entered.
+
+### Step 5 — Bind the KV Namespace to the Worker as `STORAGE`
+
+This step **binds** the namespace you created in Step 4 to your Worker.
+
+1. Go back to **Workers & Pages** and open your Worker.
+2. Open the **Settings** tab, then find **Bindings** (may be shown as **Variables and Bindings**).
+3. Select **Add**, then choose the binding type **KV Namespace**.
+4. In the **Variable name** field, type exactly:
 
    ```
    STORAGE
    ```
 
-   All uppercase. The Worker looks for `env.STORAGE` and nothing else.
-4. Under **KV namespace**, select an existing namespace, or create a new one right there. Its display name is only for you (for example `vexa-panel-storage`) and has no effect on the Worker.
-5. Save and deploy.
+   All uppercase, no spaces. The code looks for `env.STORAGE` and for nothing else — a different spelling means the Worker will not find the storage.
+5. In the **KV namespace** field, select the namespace you created in Step 4 (`vexa-panel-storage`, or whatever you named it).
+6. Save and deploy.
 
-The Worker's own setup page shows these same steps if you open the panel before the binding exists.
+If you open the panel before this binding exists, Vexa Panel shows its own "KV Namespace Required" page listing these same instructions.
 
-### Step 5 — The Durable Object binding (`INDEX_COORDINATOR` → `IndexCoordinator`) — the blocked step
+### Step 6 — Bind the `IndexCoordinator` Durable Object as `INDEX_COORDINATOR`
 
-1. Still under **Settings → Bindings**, select **Add**, then choose the **Durable Object** binding type.
-2. Under **Variable name**, type exactly:
+This is a **different resource from KV**, with its own binding, and it is the one step Cloudflare's Dashboard may not be able to complete. Read [the limitation section above](#️-one-cloudflare-limitation-before-you-start) if you skipped it.
+
+Again there are two names, and again they are not interchangeable:
+
+- `IndexCoordinator` is the **class name** — the component inside Vexa Panel's code.
+- `INDEX_COORDINATOR` is the **binding variable name** — how the code reaches that component.
+
+What it does: it makes sure that when two changes arrive at the same instant (two Users created together, a Node renamed while it is being deleted), one cannot silently overwrite the other. Creating, editing and deleting Users and Nodes, the one-time data migration, and the dashboard statistics all go through it.
+
+1. Still in your Worker's **Settings → Bindings**, select **Add**, then choose the binding type **Durable Object**.
+2. In the **Variable name** field, type exactly:
 
    ```
    INDEX_COORDINATOR
    ```
 
-3. Under **Durable Object namespace**, look for a namespace whose class is:
+3. In the **Durable Object namespace** field, look for a namespace whose class is:
 
    ```
    IndexCoordinator
    ```
 
-**If `IndexCoordinator` appears in that list**, select it, save, deploy, and continue to Step 6. (It appears only if that class has already been provisioned on this Cloudflare account — for example, by a previous Vexa Panel deployment.)
+#### If `IndexCoordinator` appears in that list
 
-**If `IndexCoordinator` does not appear in that list**, stop here. There is no Dashboard action that creates it: as described in [the limitation section above](#️-one-cloudflare-limitation-before-you-start), Cloudflare creates a new SQLite-backed Durable Object class only from a Worker upload carrying that class declaration in a Wrangler configuration file, and the Dashboard code editor does not send one. Pasting `worker.js` into the editor uploads the code — including the exported `IndexCoordinator` class — but does not declare the class lifecycle, so no namespace is provisioned by that upload. This repository's `wrangler.jsonc` already contains the correct declaration (`durable_objects.bindings` with name `INDEX_COORDINATOR` / class `IndexCoordinator`, plus the `new_sqlite_classes` migration), but applying it is a deploy-time operation, not a Dashboard one.
+Select it, save, and deploy. The binding is done — continue to Step 7.
 
-Without this binding, the panel's pages still load, but every authenticated API call and every write (creating a User or Node, editing, deleting) fails with an `internal_error` response.
+It appears only if that class has already been provisioned on this Cloudflare account, for example by an earlier Vexa Panel deployment on the same account.
 
-### Step 6 — Where the three secrets go
+#### If `IndexCoordinator` does not appear in that list
 
-Vexa Panel needs three values stored as Worker **Secrets** (encrypted), not as plain **Text** variables:
+Stop here — and note that this is not a mistake on your side. **There is no Dashboard action that creates it.**
 
-```
-JWT_SECRET
-ADMIN_SALT
-ADMIN_PASSWORD_HASH
-```
+Cloudflare creates a new SQLite-backed Durable Object class only from a Worker upload that carries the class declaration in a Wrangler configuration file, applied at deploy time. Pasting `worker.js` into the Dashboard editor uploads the code — the `IndexCoordinator` class is inside that file — but the editor sends no such class declaration, so Cloudflare provisions no namespace for it. This repository's `wrangler.jsonc` already contains the correct declaration (binding `INDEX_COORDINATOR`, class `IndexCoordinator`, and the `new_sqlite_classes` migration), but applying that declaration is a deploy-time operation the Dashboard does not perform.
 
-You do not invent these values — the running Worker generates them for you in Step 8. For now, just find the screen:
+So: with the current Vexa Panel architecture, a Worker created purely by uploading `worker.js` through the Dashboard cannot be fully provisioned on an account where this class does not already exist. This is a gap in what Cloudflare's Dashboard exposes today, not a limitation Vexa Panel chose, and it is stated here rather than hidden behind Dashboard clicks that do not exist.
 
-1. Open your Worker's **Settings → Variables and Secrets** (or **Bindings**, depending on the current layout).
-2. Note the **Add** button. Each entry has a type dropdown that defaults to **Text**; all three of these must be switched to **Secret** before saving.
+What happens if you continue without this binding: the pages still load and you can still log in, but the panel's data calls fail with an `internal_error` response, and nothing can be created or saved.
 
 ### Step 7 — Deploy
 
-Deploy the Worker again so that the bindings from Steps 4 and 5 are active on the running version. Your Worker's URL is shown at the top of its page in the Dashboard:
+Deploy the Worker again so the bindings from Steps 5 and 6 are live on the running version. Your Worker's address is shown at the top of its page in the Dashboard:
 
 ```
 https://<your-worker-name>.<your-subdomain>.workers.dev
 ```
 
-### Step 8 — Open the Worker URL and finish setup
+### Step 8 — Open the Worker URL and generate your login values
 
-1. Open that URL in your browser.
-2. Because no secrets are configured, you are redirected to the setup page at `/secret`.
-3. Choose an admin password (at least 8 characters) and submit.
-4. The page shows three generated values: `ADMIN_PASSWORD_HASH`, `ADMIN_SALT`, and `JWT_SECRET`. **Copy all three now** — the password you typed is never stored and cannot be recovered after you leave the page. There is a **Copy All Secrets** button.
-5. Go back to **Settings → Variables and Secrets** (Step 6). Add each of the three, using those exact names as the **Variable name**, the generated string as the **Value**, and type **Secret** for each.
-6. Save and deploy.
-7. Reload your Worker URL. You should now see the login screen instead of the setup page.
+You never invent Vexa Panel's secret values yourself. The running Worker generates them for you here, and you paste them back into Cloudflare in Step 9.
 
-### Step 9 — Log in and create your first User
+1. Open your Worker's address in a browser.
+2. Because no login values are configured yet, you are sent automatically to the setup page at `/secret`.
+3. Choose an admin password (at least 8 characters) and submit it. This is the password you will log in with.
+4. The page now shows three generated values:
 
-1. Log in with the admin password you chose in Step 8.
-2. You land on the **Dashboard** view.
-3. Go to **Users** and create a User (a display name is all that's required). Paste that User's own proxy links, subscription URLs, Xray JSON, or Clash YAML into their sources.
-4. Optionally go to **Nodes**, create a Node (one name + one source), then open the User and assign that Node to them from the Node picker.
+   ```
+   ADMIN_PASSWORD_HASH
+   ADMIN_SALT
+   JWT_SECRET
+   ```
 
-### Step 10 — Use the public subscription URL
+5. **Copy all three now**, using the **Copy All Secrets** button. The password you typed is never stored anywhere and cannot be recovered after you leave this page.
+6. Keep the page open, or paste the three values somewhere temporary, until Step 9 is done.
+
+### Step 9 — Save the three values as Worker Secrets
+
+These three must be saved as **Secrets** (encrypted by Cloudflare), not as plain **Text** variables. Cloudflare's form defaults to **Text**, so the type has to be changed for each one.
+
+What each value is:
+
+- **`JWT_SECRET`** — used to sign and check your login session, so the panel can tell it's still you.
+- **`ADMIN_SALT`** — a random value mixed into your password before it is hashed.
+- **`ADMIN_PASSWORD_HASH`** — the scrambled form of your admin password. Your actual password is never stored; what you type at login is scrambled the same way and compared against this.
+
+How to save them:
+
+1. In your Worker, go to **Settings → Variables and Secrets** (on some Dashboard versions this sits inside **Bindings**).
+2. Select **Add**.
+3. Set the type to **Secret** (not the default **Text**).
+4. For **Variable name**, type one of the three names exactly as shown above.
+5. For **Value**, paste the matching value copied in Step 8.
+6. Repeat for all three, so that `JWT_SECRET`, `ADMIN_SALT`, and `ADMIN_PASSWORD_HASH` are all present.
+7. Save.
+
+If any of the three is missing or misspelled, every page keeps redirecting to `/secret` instead of showing the login screen.
+
+### Step 10 — Deploy again and log in
+
+1. Deploy the Worker once more so the new Secrets are live.
+2. Reload your Worker's address in the browser. You should now see the **login screen** instead of the setup page.
+3. Log in with the admin password you chose in Step 8.
+4. You land on the **Dashboard** view. Setup is complete.
+
+### Step 11 — Create your first User (and optionally a Node)
+
+1. Go to the **Users** section and create a User. A display name is all that's required.
+2. Paste that User's own proxy links, subscription URLs, Xray JSON, or Clash YAML into their sources.
+3. If you want one source shared by several Users, go to **Nodes** instead and create a Node there (one name + one source).
+4. Open the User and assign that Node to them from the Node picker. Editing the Node later updates every User it is assigned to.
+
+### Step 12 — Use the public subscription URL
 
 Each User has one public subscription link:
 
@@ -186,11 +283,12 @@ Disabling a User in the panel makes their link stop serving nodes immediately.
 
 ## 🩹 Troubleshooting
 
-- **Every page shows "KV Namespace Required".** The `STORAGE` binding is missing or misspelled. Re-check Step 4: the **Variable name** must be exactly `STORAGE`, uppercase, and the Worker must be redeployed after saving.
+- **Every page shows "KV Namespace Required".** The `STORAGE` binding is missing or misspelled. Two different things can be wrong: the KV Namespace itself was never created (Step 4), or it exists but was never bound to the Worker (Step 5). In Step 5 the **Variable name** must be exactly `STORAGE`, uppercase, and the Worker must be redeployed after saving.
 - **`/api/*` requests return `{"error":"kv_not_configured"}`.** Same cause as above — the Worker is running without its KV binding.
-- **Every page redirects to `/secret`.** At least one of `JWT_SECRET`, `ADMIN_SALT`, `ADMIN_PASSWORD_HASH` is missing. All three must be present before the panel serves the login screen. Re-check Step 8, including that each was saved with type **Secret**.
-- **The panel loads, but saving anything returns `internal_error`.** The `INDEX_COORDINATOR` Durable Object binding is missing or points at the wrong class. Every write path and the one-time data migration call into `IndexCoordinator`. See Step 5.
-- **`IndexCoordinator` isn't offered in the Durable Object namespace list.** That class has never been provisioned on this account. This is the Cloudflare limitation described above, not a misconfiguration on your side.
+- **You created a KV Namespace but the panel still can't see it.** Creating is not binding. Go back to Step 5 and add the binding under the variable name `STORAGE`; the namespace's own name (`vexa-panel-storage` or whatever you chose) is not what the code looks for.
+- **Every page redirects to `/secret`.** At least one of `JWT_SECRET`, `ADMIN_SALT`, `ADMIN_PASSWORD_HASH` is missing. All three must be present before the panel serves the login screen. Re-check Step 9, including that each was saved with type **Secret** rather than the default **Text**.
+- **The panel loads and you can log in, but saving anything returns `internal_error`.** The `INDEX_COORDINATOR` Durable Object binding is missing or points at the wrong class. Every write path and the one-time data migration call into `IndexCoordinator`. See Step 6.
+- **`IndexCoordinator` isn't offered in the Durable Object namespace list.** That class has never been provisioned on this account. This is the Cloudflare limitation described above, not a misconfiguration on your side — there is no Dashboard button that creates it.
 - **Login says "too many attempts".** Login is rate-limited to 10 attempts per IP per 5 minutes. Wait and try again.
 - **A subscription link returns "Not found".** Either the User ID in the URL is wrong, or that User is currently disabled.
 - **A User's link is missing some proxies.** A remote subscription source may have failed to fetch; a cached copy up to 14 days old is served in that case. Use the panel's merge preview to see per-source fetch errors.
@@ -206,7 +304,7 @@ The admin password itself is never stored. Three related values are stored as Cl
 - **`ADMIN_SALT`** — the random salt used when hashing the admin password.
 - **`ADMIN_PASSWORD_HASH`** — the PBKDF2 hash (100,000 iterations, SHA-256) of your password combined with `ADMIN_SALT`. This is what a typed password is checked against.
 
-All three are generated at `/secret` on your deployed Worker, and can be regenerated there later. `/change-panel-password` rotates only `ADMIN_PASSWORD_HASH`, so existing sessions and subscription links keep working.
+All three are generated at `/secret` on your deployed Worker (Step 8 of the guide) and pasted back into Cloudflare as Worker Secrets (Step 9). They can be regenerated from the same page later. `/change-panel-password` rotates only `ADMIN_PASSWORD_HASH`, so existing sessions and subscription links keep working — you still have to paste the new value into Cloudflare for it to take effect.
 
 The admin password must be at least 8 characters; no other complexity rule is enforced, so choose a genuinely strong, unique password.
 
