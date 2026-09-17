@@ -14,6 +14,24 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Cloudflare Workers loads a single entry script, but the source is
+      # now split into ES modules under src/. Bundle them into one file
+      # (esbuild, no runtime deps needed) so the release artifact is still
+      # a single worker.js, matching what Cloudflare expects.
+      # --external:cloudflare:workers: src/index-coordinator.js imports the
+      # Durable Object base class from the "cloudflare:workers" virtual
+      # module, which only exists inside the Workers runtime -- esbuild has
+      # no file to resolve it to and fails without this flag. Marking it
+      # external leaves the import statement as-is in worker.js; Cloudflare
+      # supplies the real module at deploy time.
+      - name: Bundle src/ into worker.js
+        run: npx esbuild src/index.js --bundle --format=esm --external:cloudflare:workers --outfile=worker.js
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:

@@ -1,0 +1,34 @@
+// Cloudflare Workers configuration for Vexa Panel.
+//
+// Deployment note: the Worker's `name` is intentionally NOT set here.
+// It is deployment-specific and must be supplied by whoever deploys this
+// Worker (e.g. `wrangler deploy --name <your-worker-name>`, or via the
+// name configured in the Cloudflare dashboard's Git integration) — this
+// project does not choose that value.
+//
+// `main` points at `worker.js`, the single-file esbuild bundle produced
+// at release time from `src/index.js` (see
+// .github/workflows/release.yml). This file does not change that
+// bundling model — Cloudflare still deploys one bundled worker.js.
+{
+  "compatibility_date": "2026-09-16",
+  "main": "worker.js",
+
+  // Binding for the planned IndexCoordinator Durable Object (see
+  // docs/problem.md DK-2 / WR-1: cross-isolate coordination for
+  // idx:users / idx:nodes mutations). The class itself is not yet
+  // implemented in src/ — this only reserves the binding + migration so
+  // it can be added in a later task without a further config change.
+  "durable_objects": {
+    "bindings": [
+      { "name": "INDEX_COORDINATOR", "class_name": "IndexCoordinator" }
+    ]
+  },
+
+  // SQLite-backed storage (new_sqlite_classes) is Cloudflare's current
+  // recommended Durable Object storage backend for new classes,
+  // superseding the legacy key-value backend (new_classes).
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["IndexCoordinator"] }
+  ]
+}
