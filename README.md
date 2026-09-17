@@ -2,22 +2,19 @@
 
 > A self-hosted VPN subscription management panel that runs entirely on **Cloudflare Workers**. Vexa Panel manages Users and reusable Nodes, combines subscription sources, and generates unified subscription links for VLESS, VMess, Trojan, Shadowsocks, Hysteria2, and more.
 
-Vexa Panel is a Cloudflare Worker that acts as a **VPN subscription manager**: it takes raw proxy links, subscription URLs, Xray/V2Ray JSON configs, or Clash/Mihomo YAML lists, deduplicates the proxy nodes inside them, and serves clean, unified subscription links back out — in raw, sing-box, or Clash/Mihomo format. It runs on Cloudflare's edge network with no separate server to manage, using **Cloudflare KV** for storage and a **Durable Object** to coordinate safe concurrent writes.
-
-This README is written for two audiences: people who already run Cloudflare Workers and just want the reference, and people who have **never used Cloudflare, Node.js, or a terminal before** and want a complete, step-by-step deployment guide. If you're in the second group, skip straight to [Beginner's Guide: Deploying Vexa Panel From Scratch](#-beginners-guide-deploying-vexa-panel-from-scratch).
-
 ---
 
-## 🌟 What Vexa Panel Does
+## 🌟 What Vexa Panel Is
 
-- **Manage Users.** Each User is a named entity with its own list of subscription sources (`sources[]`) — raw proxy links, subscription URLs, Xray JSON, or Clash YAML. A User can be enabled or disabled from the panel.
-- **Manage reusable Nodes.** A Node is a single Name + Source pair that isn't tied to one User. Create it once, then assign it to as many Users as you like.
-- **Assign Nodes to Users.** Any User can reference any number of Nodes (`nodeIds[]`). Editing a Node's source updates every User it's assigned to, instantly.
-- **Combine sources.** Each User gets one subscription link that merges their own direct sources together with the sources of every Node assigned to them, then removes duplicate proxies.
-- **Generate subscription output.** The combined link can be read as a raw Base64 list, a sing-box JSON config, or a Clash/Mihomo YAML config — either by adding `?format=` to the URL or automatically, based on which VPN client is requesting it.
-- **Manage everything through a web interface.** Vexa Panel serves its own admin UI (Dashboard, Users, Nodes, and Log views) directly from the Worker — there's no separate app or server to install.
+Vexa Panel is a Cloudflare Worker that acts as a **VPN subscription manager**. It takes raw proxy links, subscription URLs, Xray/V2Ray JSON configs, or Clash/Mihomo YAML lists, removes duplicate proxies, and serves clean, unified subscription links back out — in raw, sing-box, or Clash/Mihomo format. It runs on Cloudflare's network, with no server of your own to manage.
 
-There is no separate "Profile" concept in the current version — sources live directly on the User, and Nodes are the only shared/reusable layer.
+### The User / Node model
+
+- **User.** A named entity with its own list of subscription sources (`sources[]`) — raw proxy links, subscription URLs, Xray JSON, or Clash YAML. Each User can be enabled or disabled, and each User has one public subscription link.
+- **Node.** A reusable Name + Source pair that is not tied to any single User. Create it once, then assign it to as many Users as you like. Editing a Node's source updates every User it is assigned to.
+- **Assignment.** A User references any number of Nodes through `nodeIds[]`. That User's subscription link merges their own sources with the sources of every enabled Node assigned to them, then removes duplicates.
+
+There is no separate "Profile" layer — sources live directly on the User, and Nodes are the only shared/reusable layer.
 
 ### Supported protocols and formats
 
@@ -27,62 +24,240 @@ There is no separate "Profile" concept in the current version — sources live d
 
 ### Other features
 
-- **Smart deduplication:** identical proxies (same host, credentials, transport, SNI, path, and security settings) are collapsed into one entry, even when they come from a mix of a User's own sources and their assigned Nodes.
-- **Fault-tolerant caching:** if a remote subscription URL is temporarily unreachable, Vexa Panel serves a cached copy (kept for up to 14 days) instead of dropping those proxies.
-- **Guided first-time setup:** if the required Cloudflare KV namespace isn't connected yet, the Worker shows a step-by-step setup page instead of a generic error.
+- **Smart deduplication:** identical proxies (same host, credentials, transport, SNI, path, and security settings) collapse into one entry, even when they come from a mix of a User's own sources and their assigned Nodes.
+- **Fault-tolerant caching:** if a remote subscription URL is temporarily unreachable, a cached copy (kept up to 14 days) is served instead of dropping those proxies.
+- **Guided first-time setup:** if the KV namespace isn't bound yet, the Worker shows a step-by-step setup page instead of a generic error.
 - **Single-admin authentication:** login is protected with a PBKDF2-hashed password and short-lived signed session tokens, with rate-limiting on login attempts.
+- **Built-in admin UI:** Dashboard, Users, Nodes, Log, and Settings views are served directly by the Worker.
+
+---
+
+## 🧰 What You Need
+
+- A [Cloudflare account](https://dash.cloudflare.com/sign-up).
+- Access to Cloudflare Workers, Workers KV, and Durable Objects on that account.
+- The `worker.js` file attached to this repository's latest GitHub Release.
+
+Nothing is installed on your computer, and nothing runs on your computer. Cloudflare hosts and executes the panel.
+
+---
+
+## ⚠️ One Cloudflare Limitation, Before You Start
+
+Vexa Panel needs a **Durable Object** class named `IndexCoordinator` (bound as `INDEX_COORDINATOR`) to keep data consistent when several changes happen at the same moment. It is required — creating, updating and deleting Users and Nodes, the one-time data migration, and dashboard statistics all call into it.
+
+Per current official Cloudflare documentation, a **new** Durable Object class is created only by a Worker upload that carries the class declaration from a Wrangler configuration file — the declarative [`exports` field](https://developers.cloudflare.com/durable-objects/reference/durable-objects-migrations/), or the legacy [`migrations` array](https://developers.cloudflare.com/durable-objects/reference/durable-object-class-migrations-legacy/) this repository uses — applied at deploy time. Cloudflare's documentation states that these bindings "must be configured at upload time", and describes no Dashboard form that creates a new SQLite-backed Durable Object class.
+
+What the Cloudflare Dashboard **can** do is bind a Durable Object namespace that **already exists** on the account: **Settings → Bindings → Add → Durable Object**, then select an existing namespace.
+
+**What this means for you:** every step below is fully doable in the Dashboard **except Step 5**. If the `IndexCoordinator` namespace does not already exist on your Cloudflare account, the Dashboard alone cannot create it, and deployment cannot be completed Dashboard-only. This is a gap in what Cloudflare currently exposes, not something Vexa Panel chooses. Step 5 explains exactly what to check and what to do if it isn't there.
+
+This limitation is described honestly here rather than papered over with Dashboard clicks that do not exist.
+
+---
+
+## 🌐 Deploy With the Cloudflare Dashboard
+
+Everything below happens in your web browser, at [dash.cloudflare.com](https://dash.cloudflare.com/).
+
+Cloudflare occasionally renames menu items. Where the exact label differs, the section names ("Bindings", "Variables and Secrets") are the ones to look for.
+
+### Step 1 — Download `worker.js` from the GitHub Release
+
+1. Open this repository's **Releases** page on GitHub.
+2. Open the latest release and download the attached **`worker.js`** file.
+3. That single file is the complete, already-built application. You don't need anything else from the repository.
+
+### Step 2 — Create the Worker
+
+1. Log in to the [Cloudflare Dashboard](https://dash.cloudflare.com/) and select your account.
+2. In the sidebar, go to **Compute (Workers) → Workers & Pages**.
+3. Select **Create**, then create a Worker from scratch (a "Hello World" starter is fine) rather than from a template.
+4. Give the Worker a name. Any name works — Vexa Panel does not require a specific one. This name becomes part of your URL: `https://<your-worker-name>.<your-subdomain>.workers.dev`.
+5. Create the Worker.
+
+### Step 3 — Paste in the application code
+
+1. Open the Worker you just created and open its code editor (**Edit code**).
+2. Open the downloaded `worker.js` in any plain text editor (Notepad, TextEdit), select all, and copy.
+3. In the Cloudflare editor, select everything in the starter file and paste `worker.js` over it, replacing it entirely.
+4. Save and deploy from the editor.
+
+It will not work correctly yet — KV, the Durable Object binding, and the secrets are still missing. Steps 4 to 7 add them.
+
+### Step 4 — Create and bind the KV namespace (`STORAGE`)
+
+All Vexa Panel data lives in one Cloudflare KV namespace: Users, Nodes, dashboard statistics, the activity log, login rate-limit counters, and the subscription fallback cache.
+
+1. Open your Worker's **Settings** tab, then **Bindings** (may be shown as **Variables and Bindings**).
+2. Select **Add**, then choose the **KV Namespace** binding type.
+3. Under **Variable name**, type exactly:
+
+   ```
+   STORAGE
+   ```
+
+   All uppercase. The Worker looks for `env.STORAGE` and nothing else.
+4. Under **KV namespace**, select an existing namespace, or create a new one right there. Its display name is only for you (for example `vexa-panel-storage`) and has no effect on the Worker.
+5. Save and deploy.
+
+The Worker's own setup page shows these same steps if you open the panel before the binding exists.
+
+### Step 5 — The Durable Object binding (`INDEX_COORDINATOR` → `IndexCoordinator`) — the blocked step
+
+1. Still under **Settings → Bindings**, select **Add**, then choose the **Durable Object** binding type.
+2. Under **Variable name**, type exactly:
+
+   ```
+   INDEX_COORDINATOR
+   ```
+
+3. Under **Durable Object namespace**, look for a namespace whose class is:
+
+   ```
+   IndexCoordinator
+   ```
+
+**If `IndexCoordinator` appears in that list**, select it, save, deploy, and continue to Step 6. (It appears only if that class has already been provisioned on this Cloudflare account — for example, by a previous Vexa Panel deployment.)
+
+**If `IndexCoordinator` does not appear in that list**, stop here. There is no Dashboard action that creates it: as described in [the limitation section above](#️-one-cloudflare-limitation-before-you-start), Cloudflare creates a new SQLite-backed Durable Object class only from a Worker upload carrying that class declaration in a Wrangler configuration file, and the Dashboard code editor does not send one. Pasting `worker.js` into the editor uploads the code — including the exported `IndexCoordinator` class — but does not declare the class lifecycle, so no namespace is provisioned by that upload. This repository's `wrangler.jsonc` already contains the correct declaration (`durable_objects.bindings` with name `INDEX_COORDINATOR` / class `IndexCoordinator`, plus the `new_sqlite_classes` migration), but applying it is a deploy-time operation, not a Dashboard one.
+
+Without this binding, the panel's pages still load, but every authenticated API call and every write (creating a User or Node, editing, deleting) fails with an `internal_error` response.
+
+### Step 6 — Where the three secrets go
+
+Vexa Panel needs three values stored as Worker **Secrets** (encrypted), not as plain **Text** variables:
+
+```
+JWT_SECRET
+ADMIN_SALT
+ADMIN_PASSWORD_HASH
+```
+
+You do not invent these values — the running Worker generates them for you in Step 8. For now, just find the screen:
+
+1. Open your Worker's **Settings → Variables and Secrets** (or **Bindings**, depending on the current layout).
+2. Note the **Add** button. Each entry has a type dropdown that defaults to **Text**; all three of these must be switched to **Secret** before saving.
+
+### Step 7 — Deploy
+
+Deploy the Worker again so that the bindings from Steps 4 and 5 are active on the running version. Your Worker's URL is shown at the top of its page in the Dashboard:
+
+```
+https://<your-worker-name>.<your-subdomain>.workers.dev
+```
+
+### Step 8 — Open the Worker URL and finish setup
+
+1. Open that URL in your browser.
+2. Because no secrets are configured, you are redirected to the setup page at `/secret`.
+3. Choose an admin password (at least 8 characters) and submit.
+4. The page shows three generated values: `ADMIN_PASSWORD_HASH`, `ADMIN_SALT`, and `JWT_SECRET`. **Copy all three now** — the password you typed is never stored and cannot be recovered after you leave the page. There is a **Copy All Secrets** button.
+5. Go back to **Settings → Variables and Secrets** (Step 6). Add each of the three, using those exact names as the **Variable name**, the generated string as the **Value**, and type **Secret** for each.
+6. Save and deploy.
+7. Reload your Worker URL. You should now see the login screen instead of the setup page.
+
+### Step 9 — Log in and create your first User
+
+1. Log in with the admin password you chose in Step 8.
+2. You land on the **Dashboard** view.
+3. Go to **Users** and create a User (a display name is all that's required). Paste that User's own proxy links, subscription URLs, Xray JSON, or Clash YAML into their sources.
+4. Optionally go to **Nodes**, create a Node (one name + one source), then open the User and assign that Node to them from the Node picker.
+
+### Step 10 — Use the public subscription URL
+
+Each User has one public subscription link:
+
+```
+https://<your-worker-name>.<your-subdomain>.workers.dev/sub/user/<the-users-id>
+```
+
+Open or copy it from the Users list in the panel. **This is the URL you paste into a VPN client app** (or scan as a QR code from the link's own page). It serves that User's own sources merged with their assigned Nodes, deduplicated, in the format the requesting client expects.
+
+Optional query parameters:
+
+- `?format=singbox` — return a sing-box JSON config.
+- `?format=clash` — return a Clash/Mihomo YAML config.
+- `?canonical=1` — normalize and re-serialize every node through canonical link generation.
+
+Disabling a User in the panel makes their link stop serving nodes immediately.
+
+---
+
+## 🩹 Troubleshooting
+
+- **Every page shows "KV Namespace Required".** The `STORAGE` binding is missing or misspelled. Re-check Step 4: the **Variable name** must be exactly `STORAGE`, uppercase, and the Worker must be redeployed after saving.
+- **`/api/*` requests return `{"error":"kv_not_configured"}`.** Same cause as above — the Worker is running without its KV binding.
+- **Every page redirects to `/secret`.** At least one of `JWT_SECRET`, `ADMIN_SALT`, `ADMIN_PASSWORD_HASH` is missing. All three must be present before the panel serves the login screen. Re-check Step 8, including that each was saved with type **Secret**.
+- **The panel loads, but saving anything returns `internal_error`.** The `INDEX_COORDINATOR` Durable Object binding is missing or points at the wrong class. Every write path and the one-time data migration call into `IndexCoordinator`. See Step 5.
+- **`IndexCoordinator` isn't offered in the Durable Object namespace list.** That class has never been provisioned on this account. This is the Cloudflare limitation described above, not a misconfiguration on your side.
+- **Login says "too many attempts".** Login is rate-limited to 10 attempts per IP per 5 minutes. Wait and try again.
+- **A subscription link returns "Not found".** Either the User ID in the URL is wrong, or that User is currently disabled.
+- **A User's link is missing some proxies.** A remote subscription source may have failed to fetch; a cached copy up to 14 days old is served in that case. Use the panel's merge preview to see per-source fetch errors.
+- **You lost the admin password.** Open `/secret` on your Worker and regenerate. Note that regenerating `JWT_SECRET`/`ADMIN_SALT` invalidates existing sessions once the new values are saved in Cloudflare.
+
+---
+
+## 🔐 Secrets / Admin Password
+
+The admin password itself is never stored. Three related values are stored as Cloudflare Worker **Secrets** (encrypted at rest, distinct from plain-text variables):
+
+- **`JWT_SECRET`** — signs and verifies the session tokens issued at login (sessions last 48 hours).
+- **`ADMIN_SALT`** — the random salt used when hashing the admin password.
+- **`ADMIN_PASSWORD_HASH`** — the PBKDF2 hash (100,000 iterations, SHA-256) of your password combined with `ADMIN_SALT`. This is what a typed password is checked against.
+
+All three are generated at `/secret` on your deployed Worker, and can be regenerated there later. `/change-panel-password` rotates only `ADMIN_PASSWORD_HASH`, so existing sessions and subscription links keep working.
+
+The admin password must be at least 8 characters; no other complexity rule is enforced, so choose a genuinely strong, unique password.
+
+---
+
+## 🔒 Security Notes
+
+- Never commit `JWT_SECRET`, `ADMIN_SALT`, or `ADMIN_PASSWORD_HASH` anywhere. They belong only in your Worker's Secrets.
+- The admin password is the only credential gating the entire panel — every User, every Node, every configured source.
+- Protect the Cloudflare account itself (strong password, two-factor authentication). Anyone with access to it can read or rotate your Worker's secrets.
+- A User's subscription URL (`/sub/user/:id`) is itself an access credential: anyone holding that link can fetch that User's combined proxy list without logging in, for as long as the User stays enabled. Treat it like a password, and disable the User if the link leaks.
 
 ---
 
 ## 🏗️ Architecture
 
-- **`src/index.js`** is the application's entry point — the single `fetch` handler Cloudflare Workers calls for every request.
-- The application logic is split into small ES modules under **`src/`** (routing, authentication, KV data access, the Node/User APIs, protocol parsers, and the admin UI), rather than living in one large file.
-- Because a Cloudflare Worker can only load a single script, a build step bundles everything under `src/` into one generated file, **`worker.js`**, at the repository root. `worker.js` is a build artifact — it is not meant to be edited by hand, and Cloudflare's own runtime is what ultimately deploys and executes it.
-- **Cloudflare Workers** is the runtime the application executes on — a Worker runs your code on Cloudflare's global network instead of a traditional server.
-- **Cloudflare KV**, a globally distributed key-value store, holds all persistent data: Users, Nodes, dashboard statistics, the recent-activity log, login rate-limit counters, and the subscription fallback cache.
-- A **Durable Object** (`IndexCoordinator`) is used internally to safely coordinate certain KV updates (for example, the Users and Nodes index lists) when multiple requests arrive at the same time, so a burst of concurrent changes can't silently lose an entry. You don't interact with it directly — it's part of how the Worker keeps its own data consistent.
+- **`src/index.js`** is the application entry point — the `fetch` handler Cloudflare Workers calls for every request. It also re-exports the `IndexCoordinator` Durable Object class.
+- Application logic is split into small ES modules under **`src/`** (routing, authentication, KV data access, the User/Node APIs, protocol parsers, and the admin UI).
+- A Cloudflare Worker loads a single script, so a build step bundles everything under `src/` into one generated file, **`worker.js`** — the file attached to each GitHub Release and the file you deploy. It is a build artifact and is not edited by hand.
+- **Cloudflare KV** (bound as `STORAGE`) holds all persistent data: Users, Nodes, dashboard statistics, the recent-activity log, login rate-limit counters, and the subscription fallback cache.
+- The **`IndexCoordinator` Durable Object** (bound as `INDEX_COORDINATOR`) serializes concurrent changes — the Users/Nodes index lists, per-User record writes, Node-name uniqueness, dashboard statistics, and the one-time data migration — so simultaneous requests cannot silently overwrite each other. You never interact with it directly.
 
 ---
 
 ## 📡 API Endpoints Summary
 
-### Public Routes
+### Public routes
 
-- `GET /` / `/index.html` / `/login` / `/panel` / `/Dashboard` / `/Users` / `/Nodes` / `/Log`: Serves the admin web interface (redirects to `/secret` if admin secrets aren't configured yet).
-- `GET /secret` or `/secrets`: Initial setup / secret regeneration page.
-- `GET /change-panel-password`: Dedicated page for rotating the admin password.
-- `GET /sub/user/:userId`: Public combined subscription link for a User — merges that User's own sources with any assigned Nodes' sources, deduplicated. Stops serving nodes immediately if the User is disabled.
-  - _Query Parameters:_
-    - `?canonical=1` (Optional) — Normalizes and re-serializes nodes through canonical link generation.
-    - `?format=singbox` (Optional) — Returns a ready-to-use sing-box JSON config instead of the raw list.
-    - `?format=clash` (Optional) — Returns a Clash/Mihomo YAML config instead of the raw list.
-    - If `?format=` is omitted, the format is auto-detected from the requesting client's User-Agent (falling back to raw Base64).
-- `GET /api/version`: Unauthenticated endpoint returning the currently deployed version string.
-- `POST /api/login`: Validates the admin password and returns a session token (valid for 48 hours). Always public — this is how a session token is obtained in the first place.
-- `POST /api/secret/generate`: Generates fresh `ADMIN_SALT`, `ADMIN_PASSWORD_HASH`, and `JWT_SECRET` values from a chosen password. Public and unauthenticated during initial setup (before any admin secrets are configured); once secrets already exist, requires a valid admin session, same as the Authenticated Routes below.
+- `GET /` / `/index.html` / `/login` / `/panel` / `/Dashboard` / `/Users` / `/Nodes` / `/Log`: the admin web interface (redirects to `/secret` if admin secrets aren't configured yet).
+- `GET /secret` or `/secrets`: initial setup / secret regeneration page.
+- `GET /change-panel-password`: page for rotating just the admin password.
+- `GET /sub/user/:userId`: public combined subscription link for a User. Query parameters: `?canonical=1`, `?format=singbox`, `?format=clash`; with no `?format=`, the format is auto-detected from the client's User-Agent (falling back to raw Base64).
+- `GET /api/version`: unauthenticated; returns the deployed version string.
+- `POST /api/login`: validates the admin password and returns a session token (48 hours).
+- `POST /api/secret/generate`: generates fresh `ADMIN_SALT`, `ADMIN_PASSWORD_HASH`, and `JWT_SECRET` from a chosen password. Public during initial setup; requires a valid session once secrets exist.
 
-### Authenticated Routes (require a valid session token)
+### Authenticated routes (valid session token required)
 
-- `POST /api/secret/change-password`: Rotates `ADMIN_PASSWORD_HASH` without invalidating other secrets.
-- `GET /api/stats`: Returns dashboard summary statistics.
-- `GET /api/users`: Lists all Users.
-- `POST /api/users`: Creates a new User (accepts `name`, `sources[]`, `nodeIds[]`).
-- `GET /api/users/:id`: Retrieves a single User's full record.
-- `PUT /api/users/:id`: Updates a User — name, `enabled`, `sources[]`, and/or `nodeIds[]`.
-- `DELETE /api/users/:id`: Removes a User.
-- `GET /api/nodes`: Lists all reusable Nodes.
-- `POST /api/nodes`: Creates a new Node (`name` + `source`; name must be unique).
-- `GET /api/nodes/:id`: Retrieves a single Node.
-- `PUT /api/nodes/:id`: Updates a Node's name, source, and/or `enabled` state.
-- `DELETE /api/nodes/:id`: Removes a Node from storage and from every User that referenced it.
-- `POST /api/merge-preview`: Previews deduplication counts, total nodes, and source-fetch error statuses for a given User.
+- `POST /api/secret/change-password`: rotates `ADMIN_PASSWORD_HASH` only.
+- `GET /api/stats`: dashboard summary statistics.
+- `GET /api/users` / `POST /api/users`: list Users / create a User (`name`, `sources[]`, `nodeIds[]`).
+- `GET|PUT|DELETE /api/users/:id`: read, update (name, `enabled`, `sources[]`, `nodeIds[]`), or delete a User.
+- `GET /api/nodes` / `POST /api/nodes`: list Nodes / create a Node (`name` + `source`; name must be unique).
+- `GET|PUT|DELETE /api/nodes/:id`: read, update (name, source, `enabled`), or delete a Node. Deleting also removes it from every User that referenced it.
+- `POST /api/merge-preview`: previews deduplication counts, total nodes, and per-source fetch errors for a User.
 
 ---
 
 ## 🗂️ Data Model
 
-Vexa Panel persists everything in one Cloudflare KV namespace (bound as `STORAGE`). The two core record types:
+All data lives in the one KV namespace bound as `STORAGE`.
 
 **User** (`user:{uuid}`)
 
@@ -90,9 +265,9 @@ Vexa Panel persists everything in one Cloudflare KV namespace (bound as `STORAGE
 | --- | --- |
 | `id` | UUID |
 | `name` | Display name |
-| `enabled` | Whether the User's combined subscription link is currently serving nodes |
-| `sources[]` | Subscription sources owned directly by this User (raw links, subscription URLs, Xray JSON, Clash YAML) |
-| `nodeIds[]` | Ordered list of reusable Node IDs assigned to this User |
+| `enabled` | Whether this User's subscription link currently serves nodes |
+| `sources[]` | Sources owned directly by this User (raw links, subscription URLs, Xray JSON, Clash YAML) |
+| `nodeIds[]` | Ordered list of Node IDs assigned to this User |
 | `createdAt` / `updatedAt` | Timestamps |
 
 **Node** (`node:{uuid}`)
@@ -100,240 +275,16 @@ Vexa Panel persists everything in one Cloudflare KV namespace (bound as `STORAGE
 | Field | Description |
 | --- | --- |
 | `id` | UUID |
-| `name` | Display name (must be unique across Nodes) |
+| `name` | Display name (unique across Nodes) |
 | `source` | A single classified source object (same shape as one entry of a User's `sources[]`) |
-| `enabled` | Whether this Node currently contributes nodes to any User that references it |
+| `enabled` | Whether this Node contributes nodes to the Users referencing it |
 | `createdAt` / `updatedAt` | Timestamps |
 
-A User's combined subscription link merges their own `sources[]` together with the `source` of every enabled Node listed in `nodeIds[]`, then removes duplicates — there is no separate Profile layer sitting between Users and their sources.
-
 ---
 
-## 🧰 What You Need Before You Start
+## ⚙️ Release Workflow
 
-- A [Cloudflare account](https://dash.cloudflare.com/sign-up) (the free plan is enough to run this project).
-- [Node.js](https://nodejs.org/) installed on your computer, so you can run `npm`/`npx` commands. If you've never installed Node.js, see the [beginner's guide](#-beginners-guide-deploying-vexa-panel-from-scratch) below — it walks you through it.
-- A copy of this repository's files on your computer (downloaded as a ZIP, or cloned with Git).
-
----
-
-## 🚀 Beginner's Guide: Deploying Vexa Panel From Scratch
-
-This section assumes you've never used a terminal, Node.js, or Cloudflare Workers before. Follow every step in order — don't skip ahead.
-
-### Part 1 — Install Node.js
-
-Node.js is a program that lets your computer run JavaScript tools outside a web browser. Vexa Panel's build tool (which packages the project for Cloudflare) needs it, and it also comes with `npm`/`npx`, the commands used to run that tool and to install Wrangler (Cloudflare's deployment tool) in the next part.
-
-1. Open your web browser and go to **[nodejs.org](https://nodejs.org/)**.
-2. Click the button for the **LTS** version (LTS means "Long-Term Support" — the more stable option, recommended for almost everyone).
-3. Once the installer file has downloaded, open it.
-   - **Windows:** double-click the downloaded `.msi` file, then click "Next" through the installer, accepting the default options.
-   - **macOS:** double-click the downloaded `.pkg` file and follow the installer.
-4. Confirm Node.js installed correctly:
-   - **Windows:** Press the **Windows key**, type `PowerShell`, and press Enter. This opens **PowerShell**, a command-line tool built into Windows where you type text commands instead of clicking buttons.
-   - **macOS:** Open **Terminal** (press `Cmd + Space`, type `Terminal`, press Enter).
-5. In the terminal window that opened, type the following and press Enter:
-   ```powershell
-   node --version
-   ```
-6. Confirm that you see a version number printed, such as `v22.x.x`. If you see an error like "node is not recognized," see [Troubleshooting](#-troubleshooting) below.
-7. Continue to Part 2.
-
-### Part 2 — Get the Project Files Open in a Terminal
-
-1. Download this repository's files to your computer (using the "Code → Download ZIP" button on GitHub, or by cloning it with Git if you're familiar with Git).
-2. If you downloaded a ZIP file, extract it to a folder you'll remember, for example `Documents\vexa-panel`.
-3. Open a terminal **inside that folder**:
-   - **Windows:** Open the extracted folder in File Explorer, click once in the address bar at the top (where the folder path is shown), type `powershell`, and press Enter. A PowerShell window opens already pointed at that folder.
-   - **macOS:** Open **Terminal**, type `cd ` (with a trailing space), drag the extracted folder from Finder into the Terminal window (this fills in its path automatically), then press Enter.
-4. Confirm you're in the right place by typing:
-   ```powershell
-   dir
-   ```
-   (on macOS/Linux, use `ls` instead). Confirm you see files like `wrangler.jsonc`, `README.md`, and a `src` folder listed.
-5. Keep this terminal window open — every command below is run from here.
-
-### Part 3 — Install Wrangler and Sign In to Cloudflare
-
-**Wrangler** is Cloudflare's official command-line tool for deploying Workers. You don't need to install it globally — running it with `npx` (which comes with Node.js) downloads and runs it automatically.
-
-1. In your terminal (still inside the project folder), run:
-   ```powershell
-   npx wrangler --version
-   ```
-2. Confirm you see a Wrangler version number printed. The first time you run this, `npx` may ask to install Wrangler — type `y` and press Enter if prompted.
-3. Sign in to your Cloudflare account by running:
-   ```powershell
-   npx wrangler login
-   ```
-4. This opens a browser window asking you to log in to Cloudflare and authorize Wrangler. Log in (or sign up if you don't have an account yet) and click **Allow**.
-5. Return to your terminal. Confirm you see a message saying you're successfully logged in.
-6. Continue to Part 4.
-
-### Part 4 — Create the Required KV Namespace
-
-Vexa Panel stores all of its data (Users, Nodes, settings) in a **Cloudflare KV namespace** — a simple key-value database Cloudflare provides. This repository does **not** create this namespace for you automatically; you create it once, and then connect it to the Worker.
-
-1. In your terminal, run:
-   ```powershell
-   npx wrangler kv namespace create STORAGE
-   ```
-2. Wrangler will print a result that includes an `id` value, for example:
-   ```
-   { binding = "STORAGE", id = "abcd1234...".
-   ```
-3. Copy that `id` value — you'll need it in the next step.
-4. Open the file `wrangler.jsonc` in this project (any plain text editor works, including Notepad).
-5. Add a `kv_namespaces` entry using the `id` you copied, so the file includes a block like this (the rest of the existing file should stay as it is):
-   ```jsonc
-   "kv_namespaces": [
-     { "binding": "STORAGE", "id": "PASTE_YOUR_ID_HERE" }
-   ]
-   ```
-6. Save the file. This tells your deployed Worker to use the namespace you just created whenever it accesses `env.STORAGE` in the code.
-
-### Part 5 — About the Durable Object (No Action Needed)
-
-Vexa Panel uses one Cloudflare **Durable Object** (a small piece of always-consistent server-side state) called `IndexCoordinator`, to avoid data-loss bugs when multiple changes happen at the same moment. This is already fully configured in `wrangler.jsonc` — the binding, the class name, and the required SQLite-backed storage migration are all present in the repository. You do not need to create anything in the Cloudflare dashboard for this; it's provisioned automatically the first time you deploy.
-
-### Part 6 — Build and Deploy the Worker
-
-Cloudflare Workers can only load a single script, so the modular `src/` source needs to be bundled into one file (`worker.js`) before deploying.
-
-1. In your terminal, run:
-   ```powershell
-   npx esbuild src/index.js --bundle --format=esm --external:cloudflare:workers --outfile=worker.js
-   ```
-2. Confirm this finishes without printing any error text, and that a new file named `worker.js` now exists in the project folder.
-3. Now deploy the bundled Worker to Cloudflare by running:
-   ```powershell
-   npx wrangler deploy
-   ```
-4. The first time you deploy, Wrangler may ask you to pick which Cloudflare account to use (if you have more than one) and may ask for a name for the Worker — this project intentionally doesn't hard-code one, so you choose it here.
-5. Confirm the command finishes with a success message and prints a URL that looks like `https://your-worker-name.your-subdomain.workers.dev`. That URL is your deployed panel.
-6. Keep this URL — you'll open it in Part 8.
-
-> **Finding your Account ID (only if asked):** If a command asks for your Account ID and doesn't show it automatically, run `npx wrangler whoami` — it prints your account email and Account ID together, or open the [Cloudflare dashboard](https://dash.cloudflare.com/) and check the Account Home page, where the Account ID is listed on the right-hand side.
-
-### Part 7 — Configure the Admin Password and Secrets
-
-Vexa Panel is protected by a single admin password. Before you can log in, three values need to be set as Cloudflare Worker **Secrets** (encrypted values, different from plain configuration variables): `JWT_SECRET`, `ADMIN_SALT`, and `ADMIN_PASSWORD_HASH`. You don't need to invent these values yourself — the deployed Worker generates them for you from a password you choose.
-
-1. Open the URL from Part 6 in your web browser.
-2. Since no secrets exist yet, you'll be redirected automatically to a setup page.
-3. Choose an admin password (the page requires at least 8 characters) and submit the form.
-4. The page displays three generated values: `ADMIN_PASSWORD_HASH`, `ADMIN_SALT`, and `JWT_SECRET`. **Copy all three now** — the plain password you typed is never stored anywhere and can't be recovered once you leave this page.
-5. Set each of the three values as a Secret on your Worker. The currently recommended way is the Wrangler command, run once per value, back in your terminal:
-   ```powershell
-   npx wrangler secret put JWT_SECRET
-   npx wrangler secret put ADMIN_SALT
-   npx wrangler secret put ADMIN_PASSWORD_HASH
-   ```
-   Each command will prompt you to paste in the corresponding value from step 4 and press Enter.
-   - Alternatively, you can set them from the Cloudflare dashboard instead: go to **Workers & Pages → (your Worker) → Settings → Variables and Secrets → Add**, choose type **Secret**, and enter the variable name and value for each of the three.
-6. Refresh your Worker's URL in the browser. You should now see the login screen instead of the setup page.
-7. **Do not commit any of these three values to Git**, and don't share them — see [Security Notes](#-security-notes) below.
-
-### Part 8 — First Login and First Use
-
-1. Open your Worker's URL in a browser (from Part 6).
-2. You'll see the panel's login screen. Enter the admin password you chose in Part 7.
-3. After logging in, you'll land on the **Dashboard** view.
-4. Go to the **Users** section and create your first User (just a display name).
-5. If this User has their own proxy link, subscription URL, Xray JSON, or Clash YAML, paste it into the User's sources when creating or editing them.
-6. If you'd rather set up a proxy source once and reuse it across several Users, go to the **Nodes** section instead and create a Node there (a name plus one source).
-7. Open the User you created, and assign the Node to them from the User editor's Node picker.
-8. Back in the Users list, open or copy that User's generated subscription link (`/sub/user/:id`) — this is the single URL you give to a VPN client app.
-9. Paste that link into a compatible VPN client (or scan the QR code shown on the link's page). The client should see a combined, deduplicated list of every proxy from that User's own sources and their assigned Nodes.
-
----
-
-## 🖥️ Manual Deployment (Reference, for Returning Users)
-
-If you've already deployed once and just want the commands:
-
-```bash
-# 1. Bundle the modular src/ source into the single-file worker.js Cloudflare expects
-npx esbuild src/index.js --bundle --format=esm --external:cloudflare:workers --outfile=worker.js
-
-# 2. Deploy the bundled Worker
-npx wrangler deploy
-```
-
-The `--external:cloudflare:workers` flag tells esbuild not to try to bundle the `cloudflare:workers` module (used by the `IndexCoordinator` Durable Object) — that module only exists inside Cloudflare's own runtime and is supplied automatically at deploy time.
-
-Before your first deploy, make sure:
-- A KV namespace exists and is bound as `STORAGE` in `wrangler.jsonc` (see Part 4 above) — the repository does not create this for you.
-- `JWT_SECRET`, `ADMIN_SALT`, and `ADMIN_PASSWORD_HASH` are set as Worker Secrets (see Part 7 above).
-
-The Durable Object binding and its SQLite storage migration are already defined in `wrangler.jsonc` and require no manual setup.
-
-## ⚙️ GitHub Actions / Release Workflow
-
-This repository includes a GitHub Actions workflow at `.github/workflows/release.yml`. It is a **build/release workflow, not a deploy workflow** — it does not deploy anything to Cloudflare.
-
-- **Trigger:** runs automatically whenever a Git tag matching `v*` (for example `v4.0.0`) is pushed to the repository.
-- **What it does:** checks out the repository, sets up Node.js 20, and runs the same `esbuild` bundle command shown above (with the same `--external:cloudflare:workers` flag) to produce `worker.js` from the current `src/` source.
-- **What it creates:** a GitHub Release for that tag, with the generated `worker.js` file attached as a downloadable release asset, using the built-in `GITHUB_TOKEN` — no Cloudflare credentials are used or required by this workflow.
-- **Deploying that artifact:** downloading the `worker.js` attached to a GitHub Release and deploying it to Cloudflare (for example with `npx wrangler deploy`) is a separate, manual step this workflow does not perform.
-
-If you want the project deployed to Cloudflare automatically on every push, that would require adding a separate deploy step (for example, one using a Cloudflare API token) — this is not currently part of the repository.
-
----
-
-## 🔐 Secrets / Admin Password
-
-- The admin password itself is never stored. Instead, three related values are stored as Cloudflare Worker **Secrets** (encrypted at rest, distinct from plain-text `vars`):
-  - **`JWT_SECRET`** — a random value used to sign and verify session tokens issued at login.
-  - **`ADMIN_SALT`** — a random salt used when hashing the admin password.
-  - **`ADMIN_PASSWORD_HASH`** — the PBKDF2 hash (100,000 iterations, SHA-256) of your admin password combined with `ADMIN_SALT`. This is what your typed password is checked against at login — the plain password itself is never saved anywhere.
-- All three values are generated for you by visiting `/secret` on your deployed Worker (see Part 7 above), or regenerated later from the same page. `/change-panel-password` lets you rotate just `ADMIN_PASSWORD_HASH` without touching the other two, so existing sessions and subscription links keep working.
-- Configure them either with `npx wrangler secret put <NAME>` (recommended, shown in Part 7), or from **Cloudflare dashboard → Workers & Pages → (your Worker) → Settings → Variables and Secrets**, using type **Secret** rather than the default **Text** type.
-- **Never commit these values, or a `.dev.vars`/`.env` file containing them, to Git.** They are not part of this repository and should never appear in it.
-- The admin password must be at least 8 characters; there is no other enforced complexity rule, so choose a genuinely strong, unique password.
-
----
-
-## 🗄️ KV and Durable Objects (What You Need to Know)
-
-- **Cloudflare KV** is where all of Vexa Panel's data lives: Users, Nodes, dashboard stats, the activity log, login rate-limit counters, and the subscription fallback cache. You must create one KV namespace and bind it as `STORAGE` in `wrangler.jsonc` before the Worker can do anything beyond showing its own setup guide (see Part 4).
-- **The `IndexCoordinator` Durable Object** exists to prevent a rare kind of bug where two changes happening at almost the same instant could overwrite each other in the Users/Nodes index. It requires no separate resource creation on your part — `wrangler.jsonc` already declares its binding (`INDEX_COORDINATOR`) and the SQLite-backed storage migration it needs, and Cloudflare provisions it automatically the first time you deploy.
-- You do not need to understand Durable Objects in depth to deploy or use this project — this is the extent of what running it requires.
-
----
-
-## 🩹 Troubleshooting
-
-- **"`wrangler` is not recognized" / "`npx` is not recognized":** Node.js isn't installed, or your terminal was opened before installing it. Install Node.js from [nodejs.org](https://nodejs.org/) (see Part 1), then close and reopen your terminal.
-- **"`node` is not recognized" after installing Node.js:** Close every open terminal window completely and open a new one — Windows only picks up the updated PATH in new windows. If it still fails, restart your computer.
-- **Cloudflare authentication failed / `wrangler login` doesn't open a browser:** Run `npx wrangler login` again; make sure your default browser isn't blocked from opening. If you're on a remote/headless machine with no browser, authenticate with an API token instead (`CLOUDFLARE_API_TOKEN` environment variable) rather than `wrangler login`.
-- **Account ID missing or wrong:** Run `npx wrangler whoami` to see the account(s) your login has access to and their Account IDs. If you have multiple Cloudflare accounts, `wrangler` may ask you to pick one during `wrangler deploy`.
-- **KV binding/namespace missing:** If you deploy without adding a `kv_namespaces` entry to `wrangler.jsonc` (Part 4), the Worker will still deploy and run, but every page will show the built-in "KV Namespace Required" setup guide instead of the panel, since `kvBound(env)` checks for the `STORAGE` binding on every request.
-- **Durable Object deployment error:** This usually means the `durable_objects` binding or `migrations` block in `wrangler.jsonc` was edited or removed. Compare your file against the version in this repository — both blocks need to stay intact and reference the `IndexCoordinator` class exported from `src/index.js`.
-- **A required secret is missing:** If `JWT_SECRET`, `ADMIN_SALT`, or `ADMIN_PASSWORD_HASH` isn't set, the panel redirects every page to `/secret` until all three are configured (Part 7). Re-run the three `wrangler secret put` commands if you're unsure whether they were saved.
-- **Deployment succeeds, but the panel can't be accessed:** Double-check the URL Wrangler printed after `wrangler deploy` — it's specific to your Worker's name and Cloudflare subdomain. If the page loads but shows an error instead of the setup guide or login screen, confirm the KV namespace ID in `wrangler.jsonc` matches the one from `npx wrangler kv namespace create STORAGE`.
-- **The bundle command fails with an error mentioning `cloudflare:workers`:** Make sure you're using the exact command shown in this README, including `--external:cloudflare:workers` — without that flag, esbuild cannot resolve the Durable Object import in `src/index-coordinator.js`.
-
----
-
-## 🔒 Security Notes
-
-- Never commit `JWT_SECRET`, `ADMIN_SALT`, `ADMIN_PASSWORD_HASH`, or any file containing them (such as `.dev.vars` or `.env`) to Git.
-- Choose a strong, unique admin password — it is the only credential that gates access to the entire panel (Users, Nodes, and every subscription source configured in it).
-- Protect the Cloudflare account itself (use a strong Cloudflare account password and, ideally, two-factor authentication) — anyone with access to your Cloudflare account can read or rotate your Worker's secrets directly from the dashboard.
-- Don't share your admin password. Anyone who has it can log in to the panel and see or change every User's and Node's data.
-- A User's subscription URL (`/sub/user/:id`) itself functions as an access credential: anyone who has that link can fetch that User's combined, deduplicated proxy list without logging in, for as long as that User stays enabled. Treat subscription links with the same care as a password, and disable or don't recreate a User if their link is exposed.
-
----
-
-## 🛠️ Development
-
-- **Requirements:** [Node.js](https://nodejs.org/) (for `npm`/`npx`) and Wrangler, run via `npx wrangler` — no global install is required.
-- **Building:** run `npx esbuild src/index.js --bundle --format=esm --external:cloudflare:workers --outfile=worker.js` to produce `worker.js` from the current `src/` source (see [Manual Deployment](#️-manual-deployment-reference-for-returning-users) above). This is the same command used by the GitHub Actions release workflow.
-- **Local development:** this repository does not currently document or configure a `wrangler dev` local-development setup; the supported workflow is to build with esbuild and deploy with `wrangler deploy` as described above.
-- **Deploying changes:** after editing files under `src/`, re-run the build command above and then `npx wrangler deploy` to publish the updated Worker.
-- **Automated tests:** this repository does not currently include an automated test suite. Verification during development is done by manual review and manual testing against a deployed Worker.
+`.github/workflows/release.yml` runs when a Git tag matching `v*` is pushed. It builds `worker.js` from the current `src/` source and attaches it to a GitHub Release as a downloadable asset. It is a build/release workflow only — it does not deploy anything to Cloudflare and uses no Cloudflare credentials. Downloading that `worker.js` is Step 1 of the deployment above.
 
 ---
 
@@ -491,11 +442,9 @@ feat: add TUIC link support (tuic://)
 
 ## 📚 Official Cloudflare Documentation
 
-- [Get started with Workers (CLI)](https://developers.cloudflare.com/workers/get-started/guide/)
-- [Wrangler overview and commands](https://developers.cloudflare.com/workers/wrangler/)
-- [Wrangler configuration reference](https://developers.cloudflare.com/workers/wrangler/configuration/)
-- [Environment variables and secrets](https://developers.cloudflare.com/workers/configuration/secrets/)
-- [Workers KV — Getting started](https://developers.cloudflare.com/kv/get-started/)
-- [Workers KV — Wrangler `kv` commands](https://developers.cloudflare.com/kv/reference/kv-commands/)
-- [Durable Objects — migrations](https://developers.cloudflare.com/durable-objects/reference/durable-objects-migrations/)
+- [Workers KV — overview](https://developers.cloudflare.com/kv/)
+- [Workers — environment variables and secrets](https://developers.cloudflare.com/workers/configuration/secrets/)
+- [Workers — bindings (env)](https://developers.cloudflare.com/workers/runtime-apis/bindings/)
+- [Durable Objects — class exports](https://developers.cloudflare.com/durable-objects/reference/durable-objects-migrations/)
+- [Durable Objects — class migrations (legacy)](https://developers.cloudflare.com/durable-objects/reference/durable-object-class-migrations-legacy/)
 - [Durable Objects — accessing storage (SQLite backend)](https://developers.cloudflare.com/durable-objects/best-practices/access-durable-objects-storage/)
