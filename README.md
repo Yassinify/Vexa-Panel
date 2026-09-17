@@ -1,4 +1,4 @@
-# Vexa Panel — VPN Subscription Manager for Cloudflare Workers
+# Vexa Panel — VPN Subscription Manager for Cloudflare Workers - V4
 
 > A self-hosted VPN subscription management panel that runs entirely on **Cloudflare Workers**. Vexa Panel manages Users and reusable Nodes, combines subscription sources, and generates unified subscription links for VLESS, VMess, Trojan, Shadowsocks, Hysteria2, and more.
 
