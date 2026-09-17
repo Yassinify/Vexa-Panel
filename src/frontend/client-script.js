@@ -176,7 +176,7 @@ function sortIndicator(sort, key) {
 // LOGIN
 // ---------------------------------------------------------------------
 function renderLoginView() {
-  return \\`
+  return \`
     <div class="login-wrap">
       <div class="card login-card">
         <img class="logo-glow" src="/favicon.svg" alt="VEXA logo">
@@ -187,10 +187,10 @@ function renderLoginView() {
           <input type="password" id="loginPassword" placeholder="Enter admin password" />
         </div>
         <button class="btn-primary" style="width:100%;" onclick="doLogin()">Sign In</button>
-        <div class="error-text" id="loginError">\\${state.errorMsg || ""}</div>
+        <div class="error-text" id="loginError">\${state.errorMsg || ""}</div>
       </div>
     </div>
-  \\`;
+  \`;
 }
 
 async function doLogin() {
@@ -285,7 +285,7 @@ function renderSidebar() {
     { key: "nodes", label: "Nodes", icon: icon("link") },
     { key: "log", label: "Log", icon: icon("log") }
   ];
-  return \\`
+  return \`
     <div class="sidebar" id="sidebar">
       <div class="sidebar-brand">
         <img class="avatar" src="/favicon.svg" alt="VEXA logo">
@@ -294,18 +294,18 @@ function renderSidebar() {
           <div style="font-size:clamp(9px, .3vw + 8px, 10px);color:var(--text-muted);">Admin Panel</div>
         </div>
       </div>
-      \\${items.map(it => \\`
-        <div class="sidebar-link \\${state.view === it.key ? "active" : ""}"
-             onclick="navigate('\\${it.key}')">
-          <span class="nav-icon">\\${it.icon}</span><span>\\${it.label}</span>
+      \${items.map(it => \`
+        <div class="sidebar-link \${state.view === it.key ? "active" : ""}"
+             onclick="navigate('\${it.key}')">
+          <span class="nav-icon">\${it.icon}</span><span>\${it.label}</span>
         </div>
-      \\`).join("")}
+      \`).join("")}
       <div class="sidebar-footer">
-        <button class="btn-secondary" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;" onclick="openSettings()"><span class="nav-icon">\\${icon("settings")}</span>Settings</button>
-        <button class="btn-secondary" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;" onclick="logout()"><span class="nav-icon">\\${icon("logout")}</span>Log out</button>
+        <button class="btn-secondary" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;" onclick="openSettings()"><span class="nav-icon">\${icon("settings")}</span>Settings</button>
+        <button class="btn-secondary" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;" onclick="logout()"><span class="nav-icon">\${icon("logout")}</span>Log out</button>
       </div>
     </div>
-  \\`;
+  \`;
 }
 
 function openSettings() {
@@ -324,25 +324,25 @@ function shellTitle() {
 
 function renderShell(innerHtml) {
   const [title, sub] = shellTitle();
-  return \\`
+  return \`
     <div class="app-shell">
-      \\${renderSidebar()}
+      \${renderSidebar()}
       <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebar()"></div>
       <div class="main">
         <div class="topbar">
           <div style="display:flex;align-items:center;gap:var(--space-3);">
-            <button class="menu-toggle-btn" id="menuToggleBtn" aria-label="Toggle menu" aria-expanded="false" onclick="toggleSidebar()"><span class="menu-icon">\\${icon("menu")}</span></button>
+            <button class="menu-toggle-btn" id="menuToggleBtn" aria-label="Toggle menu" aria-expanded="false" onclick="toggleSidebar()"><span class="menu-icon">\${icon("menu")}</span></button>
             <div>
-              <h1>\\${title}</h1>
-              <div class="topbar-sub">\\${sub}</div>
+              <h1>\${title}</h1>
+              <div class="topbar-sub">\${sub}</div>
             </div>
           </div>
         </div>
-        <div class="container">\\${innerHtml}</div>
+        <div class="container">\${innerHtml}</div>
       </div>
-      \\${renderModal()}
+      \${renderModal()}
     </div>
-  \\`;
+  \`;
 }
 
 // ---------------------------------------------------------------------
@@ -350,14 +350,14 @@ function renderShell(innerHtml) {
 // ---------------------------------------------------------------------
 function renderDashboardView() {
   if (state.loading || !state.stats) {
-    return renderShell(\\`
+    return renderShell(\`
       <div class="stat-grid">
-        \\${[1,2,3,4].map(() => \\`
+        \${[1,2,3,4].map(() => \`
           <div class="card stat-card">
             <div class="skel" style="width:65%;height:11px;margin-bottom:10px;"></div>
             <div class="skel" style="width:38%;height:26px;"></div>
           </div>
-        \\`).join("")}
+        \`).join("")}
       </div>
       <div class="card" style="margin-bottom:16px;">
         <div class="status-row">
@@ -366,7 +366,7 @@ function renderDashboardView() {
           <div class="skel" style="width:150px;height:12px;margin-left:auto;"></div>
         </div>
       </div>
-    \\`);
+    \`);
   }
   const s = state.stats;
   const cards = [
@@ -374,23 +374,23 @@ function renderDashboardView() {
     { label: "Subscription Sources", num: s.totalSubSources },
     { label: "Raw / Static Sources", num: s.totalRawSources }
   ];
-  return renderShell(\\`
+  return renderShell(\`
     <div class="stat-grid">
-      \\${cards.map(c => \\`
+      \${cards.map(c => \`
         <div class="card stat-card">
-          <div class="stat-card-label">\\${c.label}</div>
-          <div class="stat-card-num">\\${c.num}</div>
+          <div class="stat-card-label">\${c.label}</div>
+          <div class="stat-card-num">\${c.num}</div>
         </div>
-      \\`).join("")}
+      \`).join("")}
     </div>
     <div class="card" style="margin-bottom:16px;">
       <div class="status-row">
         <span class="status-dot"></span>
         <span>System operational</span>
-        <span class="timestamp" style="margin-left:auto;">VEXA — checked \\${timeAgo(Date.now())}</span>
+        <span class="timestamp" style="margin-left:auto;">VEXA — checked \${timeAgo(Date.now())}</span>
       </div>
     </div>
-  \\`);
+  \`);
 }
 
 // ---------------------------------------------------------------------
@@ -398,33 +398,33 @@ function renderDashboardView() {
 // ---------------------------------------------------------------------
 function renderLogView() {
   if (state.loading) {
-    return renderShell(\\`
+    return renderShell(\`
       <div class="card">
         <div class="activity-list">
-          \\${[1,2,3,4,5].map(() => \\`
+          \${[1,2,3,4,5].map(() => \`
             <div class="activity-row">
               <div class="skel" style="width:55%;height:13px;"></div>
               <div class="skel" style="width:48px;height:12px;flex-shrink:0;"></div>
             </div>
-          \\`).join("")}
+          \`).join("")}
         </div>
       </div>
-    \\`);
+    \`);
   }
   const activityHtml = state.activity.length
-    ? state.activity.map(a => \\`
+    ? state.activity.map(a => \`
         <div class="activity-row">
-          <span>\\${escapeHtml(a.message)}</span>
-          <span class="activity-time">\\${timeAgo(a.ts)}</span>
+          <span>\${escapeHtml(a.message)}</span>
+          <span class="activity-time">\${timeAgo(a.ts)}</span>
         </div>
-      \\`).join("")
+      \`).join("")
     : '<div class="empty-state">No activity yet.</div>';
 
-  return renderShell(\\`
+  return renderShell(\`
     <div class="card">
-      <div class="activity-list">\\${activityHtml}</div>
+      <div class="activity-list">\${activityHtml}</div>
     </div>
-  \\`);
+  \`);
 }
 
 // ---------------------------------------------------------------------
@@ -441,7 +441,7 @@ function setUserSort(key) {
 
 function renderUsersView() {
   if (state.loading) {
-    return renderShell(\\`
+    return renderShell(\`
       <div class="toolbar">
         <div class="toolbar-left"><div class="skel search-input" style="height:34px;"></div></div>
         <div class="skel" style="width:112px;height:34px;border-radius:4px;"></div>
@@ -451,20 +451,20 @@ function renderUsersView() {
         <table class="data-table">
           <thead><tr><th>Name</th><th>Sources</th><th>Active</th><th>Updated</th><th></th></tr></thead>
           <tbody>
-            \\${[1,2,3,4,5].map(() => \\`
+            \${[1,2,3,4,5].map(() => \`
               <tr>
                 <td><div class="skel" style="width:130px;height:13px;"></div></td>
                 <td><div class="skel" style="width:76px;height:19px;border-radius:4px;"></div></td>
                 <td><div class="skel" style="width:36px;height:20px;border-radius:10px;"></div></td>
                 <td><div class="skel" style="width:64px;height:12px;"></div></td>
-                <td><div class="skel-row-actions">\\${[1,2,3,4].map(() => '<div class="skel" style="width:22px;height:22px;border-radius:50%;"></div>').join("")}</div></td>
+                <td><div class="skel-row-actions">\${[1,2,3,4].map(() => '<div class="skel" style="width:22px;height:22px;border-radius:50%;"></div>').join("")}</div></td>
               </tr>
-            \\`).join("")}
+            \`).join("")}
           </tbody>
         </table>
         </div>
       </div>
-    \\`);
+    \`);
   }
 
   const filtered = state.users.filter(u =>
@@ -472,62 +472,62 @@ function renderUsersView() {
   );
   const sorted = sortRows(filtered, state.userSort);
 
-  const rows = sorted.map(u => \\`
+  const rows = sorted.map(u => \`
     <tr class="row-hover">
-      <td data-label="Name"><span class="row-name" onclick="openUser('\\${u.id}')">\\${escapeHtml(u.name)}</span>\\${u._pending && u._pendingKind !== "toggle" ? ' <span class="spinner" title="Saving…"></span>' : ''}</td>
+      <td data-label="Name"><span class="row-name" onclick="openUser('\${u.id}')">\${escapeHtml(u.name)}</span>\${u._pending && u._pendingKind !== "toggle" ? ' <span class="spinner" title="Saving…"></span>' : ''}</td>
       <td data-label="Sources">
         <div class="badge-row">
-          <span class="badge">\\${u.subCount} subs</span>
-          <span class="badge green">\\${u.rawCount} raw</span>
+          <span class="badge">\${u.subCount} subs</span>
+          <span class="badge green">\${u.rawCount} raw</span>
         </div>
       </td>
       <td data-label="Active">
-        <button class="switch \\${u.enabled ? "on" : ""} \\${u._pending && u._pendingKind === "toggle" ? "pending" : ""}" role="switch" aria-checked="\\${u.enabled ? "true" : "false"}"
-                title="\\${u.enabled ? "Active — click to disable" : "Disabled — click to enable"}"
-                onclick="toggleUserEnabled('\\${u.id}')"><span class="switch-knob"></span>\\${u._pending && u._pendingKind === "toggle" ? '<span class="spinner switch-spinner"></span>' : ''}</button>
+        <button class="switch \${u.enabled ? "on" : ""} \${u._pending && u._pendingKind === "toggle" ? "pending" : ""}" role="switch" aria-checked="\${u.enabled ? "true" : "false"}"
+                title="\${u.enabled ? "Active — click to disable" : "Disabled — click to enable"}"
+                onclick="toggleUserEnabled('\${u.id}')"><span class="switch-knob"></span>\${u._pending && u._pendingKind === "toggle" ? '<span class="spinner switch-spinner"></span>' : ''}</button>
       </td>
-      <td class="timestamp" data-label="Updated">\\${timeAgo(u.updatedAt)}</td>
+      <td class="timestamp" data-label="Updated">\${timeAgo(u.updatedAt)}</td>
       <td data-label="">
         <div class="row-actions">
-          <button class="btn-icon icon-link" title="Get subscription link" onclick="openSubFormatPicker('\\${u.id}', '\\${escapeHtml(u.name).replace(/'/g, "&#39;")}')">\\${icon("link")}</button>
-          <button class="btn-icon icon-merge" title="Merge / QR" onclick="openMerge('\\${u.id}')">\\${icon("merge")}</button>
-          <button class="btn-icon icon-open" title="Edit sources" onclick="openUser('\\${u.id}')">\\${icon("open")}</button>
-          <button class="btn-icon icon-delete" title="Delete" onclick="askDeleteUser('\\${u.id}', '\\${escapeHtml(u.name).replace(/'/g, "&#39;")}')">\\${icon("delete")}</button>
+          <button class="btn-icon icon-link" title="Get subscription link" onclick="openSubFormatPicker('\${u.id}', '\${escapeHtml(u.name).replace(/'/g, "&#39;")}')">\${icon("link")}</button>
+          <button class="btn-icon icon-merge" title="Merge / QR" onclick="openMerge('\${u.id}')">\${icon("merge")}</button>
+          <button class="btn-icon icon-open" title="Edit sources" onclick="openUser('\${u.id}')">\${icon("open")}</button>
+          <button class="btn-icon icon-delete" title="Delete" onclick="askDeleteUser('\${u.id}', '\${escapeHtml(u.name).replace(/'/g, "&#39;")}')">\${icon("delete")}</button>
         </div>
       </td>
     </tr>
-  \\`).join("");
+  \`).join("");
 
-  return renderShell(\\`
+  return renderShell(\`
     <div class="toolbar">
       <div class="toolbar-left">
-        <input class="search-input" placeholder="Search users…" value="\\${escapeHtml(state.userSearch)}"
+        <input class="search-input" placeholder="Search users…" value="\${escapeHtml(state.userSearch)}"
                oninput="state.userSearch=this.value; render();" />
       </div>
       <button class="btn-primary desktop-only-action" onclick="openUserEditor()">+ New User</button>
     </div>
-    <button class="mobile-fab" onclick="openUserEditor()" aria-label="New User" title="New User">\\${icon("plus")}</button>
+    <button class="mobile-fab" onclick="openUserEditor()" aria-label="New User" title="New User">\${icon("plus")}</button>
     <div class="card">
-      \\${sorted.length === 0
+      \${sorted.length === 0
         ? '<div class="empty-state"><div class="empty-state-icon">' + icon("users") + '</div>No users yet. Create one to get started.</div>'
-        : \\`
+        : \`
           <div class="table-wrap">
           <table class="data-table">
             <thead>
               <tr>
-                <th onclick="setUserSort('name')">Name\\${sortIndicator(state.userSort, "name")}</th>
+                <th onclick="setUserSort('name')">Name\${sortIndicator(state.userSort, "name")}</th>
                 <th>Sources</th>
                 <th>Active</th>
-                <th onclick="setUserSort('updatedAt')">Updated\\${sortIndicator(state.userSort, "updatedAt")}</th>
+                <th onclick="setUserSort('updatedAt')">Updated\${sortIndicator(state.userSort, "updatedAt")}</th>
                 <th></th>
               </tr>
             </thead>
-            <tbody>\\${rows}</tbody>
+            <tbody>\${rows}</tbody>
           </table>
           </div>
-        \\`}
+        \`}
     </div>
-  \\`);
+  \`);
 }
 
 async function openUserEditor() {
@@ -630,7 +630,7 @@ async function saveUser() {
 function askDeleteUser(id, name) {
   state.confirmDialog = {
     title: "Delete user?",
-    message: \\`This permanently deletes "\\${name}" and all its subscription sources. This cannot be undone.\\`,
+    message: \`This permanently deletes "\${name}" and all its subscription sources. This cannot be undone.\`,
     danger: true,
     confirmLabel: "Delete",
     onConfirm: () => performDeleteUser(id)
@@ -990,15 +990,15 @@ function renderModal() {
   if (state.modal === "subFormat") {
     const t = state.subFormatTarget;
     const fullUrl = buildSubUrl(t.id);
-    return \\`
+    return \`
       <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
         <div class="card modal-card small">
-          <div class="modal-title">Subscription — \\${escapeHtml(t.name)}</div>
+          <div class="modal-title">Subscription — \${escapeHtml(t.name)}</div>
           <div class="helper-text" style="margin-bottom:10px;">One link works with any supported client — the format is detected automatically.</div>
           <div class="qr-box" id="subFormatQrBox"></div>
           <label class="field-label">Subscription Link</label>
           <div class="link-row">
-            <input id="subFormatLinkInput" readonly value="\\${fullUrl}" />
+            <input id="subFormatLinkInput" readonly value="\${fullUrl}" />
             <button class="btn-primary" onclick="copySubFormatLink()">Copy</button>
           </div>
           <div class="modal-footer">
@@ -1006,31 +1006,31 @@ function renderModal() {
           </div>
         </div>
       </div>
-    \\`;
+    \`;
   }
 
   if (state.modal === "userEditor") {
     const u = state.editingUser;
     const isEdit = u && u.id;
-    return \\`
+    return \`
       <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
         <div class="card modal-card">
-          <div class="modal-title">\\${isEdit ? "Edit User" : "New User"}</div>
+          <div class="modal-title">\${isEdit ? "Edit User" : "New User"}</div>
           <div class="field-group">
             <label class="field-label">Name</label>
-            <input id="userNameInput" value="\\${isEdit ? escapeHtml(u.name) : ""}" placeholder="e.g. Alice" />
+            <input id="userNameInput" value="\${isEdit ? escapeHtml(u.name) : ""}" placeholder="e.g. Alice" />
           </div>
           \${renderNodePicker()}
           <div class="field-group">
             <label class="field-label">Sources</label>
             <div class="helper-text" style="margin-bottom:8px;">Paste subscription URLs, individual vless/vmess/ss/trojan links, or an Xray/V2Ray JSON outbound — each source gets its own row (JSON entries can span multiple lines within a row).</div>
             <div class="source-repeater">
-              \\${state.editingUserSources.map((val, i) => \\`
+              \${state.editingUserSources.map((val, i) => \`
                 <div class="source-row">
-                  <textarea class="source-row-input" rows="2" placeholder="https://example.com/sub-link" oninput="updateSourceRow(\\${i}, this.value)">\\${escapeHtml(val)}</textarea>
-                  <button type="button" class="btn-icon icon-delete" title="Remove source" onclick="removeSourceRow(\\${i})">\\${icon("delete")}</button>
+                  <textarea class="source-row-input" rows="2" placeholder="https://example.com/sub-link" oninput="updateSourceRow(\${i}, this.value)">\${escapeHtml(val)}</textarea>
+                  <button type="button" class="btn-icon icon-delete" title="Remove source" onclick="removeSourceRow(\${i})">\${icon("delete")}</button>
                 </div>
-              \\`).join("")}
+              \`).join("")}
             </div>
             <button type="button" class="btn-secondary" onclick="addSourceRow()">+ Add Source</button>
           </div>
@@ -1040,7 +1040,7 @@ function renderModal() {
           </div>
         </div>
       </div>
-    \\`;
+    \`;
   }
 
   if (state.modal === "nodeEditor") {
@@ -1072,7 +1072,7 @@ function renderModal() {
   if (state.modal === "merge") {
     const r = state.mergeResult;
     if (r.loading) {
-      return \\`
+      return \`
         <div class="modal-overlay">
           <div class="card modal-card">
             <div class="modal-title">Merge Result</div>
@@ -1085,34 +1085,34 @@ function renderModal() {
             <div class="skel" style="width:100%;height:36px;"></div>
           </div>
         </div>
-      \\`;
+      \`;
     }
     const fullUrl = location.origin + r.subUrl;
-    return \\`
+    return \`
       <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
         <div class="card modal-card">
           <div class="modal-title">Merge Result</div>
           <div class="stat-row">
-            <div class="stat-box"><div class="stat-num">\\${r.totalNodes}</div><div class="stat-label">Total Nodes</div></div>
-            <div class="stat-box"><div class="stat-num">\\${r.duplicatesRemoved}</div><div class="stat-label">Duplicates Removed</div></div>
+            <div class="stat-box"><div class="stat-num">\${r.totalNodes}</div><div class="stat-label">Total Nodes</div></div>
+            <div class="stat-box"><div class="stat-num">\${r.duplicatesRemoved}</div><div class="stat-label">Duplicates Removed</div></div>
           </div>
           <div class="qr-box" id="qrContainer"></div>
           <label class="field-label">Subscription Link</label>
           <div class="link-row">
-            <input id="subLinkInput" readonly value="\\${fullUrl}" />
+            <input id="subLinkInput" readonly value="\${fullUrl}" />
             <button class="btn-primary" onclick="copyLink()">Copy</button>
           </div>
-          \\${renderSourceIssues(r.sourceErrors)}
+          \${renderSourceIssues(r.sourceErrors)}
           <div class="modal-footer">
             <button class="btn-secondary" onclick="closeModal()">Close</button>
           </div>
         </div>
       </div>
-    \\`;
+    \`;
   }
 
   if (state.modal === "settings") {
-    return \\`
+    return \`
       <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
         <div class="card modal-card small">
           <div class="modal-title">Settings</div>
@@ -1132,23 +1132,23 @@ function renderModal() {
           </div>
         </div>
       </div>
-    \\`;
+    \`;
   }
 
   if (state.modal === "confirm") {
     const c = state.confirmDialog;
-    return \\`
+    return \`
       <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
         <div class="card modal-card small">
-          <div class="modal-title">\\${escapeHtml(c.title)}</div>
-          <div class="helper-text" style="font-size:13px;color:var(--text-primary);">\\${escapeHtml(c.message)}</div>
+          <div class="modal-title">\${escapeHtml(c.title)}</div>
+          <div class="helper-text" style="font-size:13px;color:var(--text-primary);">\${escapeHtml(c.message)}</div>
           <div class="modal-footer">
             <button class="btn-secondary" onclick="closeModal()">Cancel</button>
-            <button class="btn-secondary \\${c.danger ? "btn-danger" : ""}" id="confirmActionBtn">\\${escapeHtml(c.confirmLabel || "Confirm")}</button>
+            <button class="btn-secondary \${c.danger ? "btn-danger" : ""}" id="confirmActionBtn">\${escapeHtml(c.confirmLabel || "Confirm")}</button>
           </div>
         </div>
       </div>
-    \\`;
+    \`;
   }
 
   return "";
@@ -1181,7 +1181,7 @@ function render() {
 
 // ---------------------------------------------------------------------
 // MATERIAL RIPPLE — a single delegated listener (attached once, not
-// per-render) spawns a `.ripple-ink` span at the pointer-down point on
+// per-render) spawns a \`.ripple-ink\` span at the pointer-down point on
 // any ripple-eligible element, sized to cover it, then removes itself
 // after the CSS animation finishes. Table rows are intentionally excluded:
 // <tr> doesn't reliably support position/overflow for this across browsers.
@@ -1231,4 +1231,4 @@ function attachRippleEffect() {
   render();
 })();
 
-\`;
+`;
