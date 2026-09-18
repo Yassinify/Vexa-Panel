@@ -1,7 +1,3 @@
-// =====================================================================
-// VEXA — PUBLIC /sub/user/:id ROUTE
-// =====================================================================
-
 import { mergeUserNodes } from "./merge.js";
 import { buildFormattedSubResponse } from "./output-formats.js";
 import { htmlResponse } from "./http.js";

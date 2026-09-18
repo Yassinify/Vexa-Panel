@@ -1,14 +1,3 @@
-// =====================================================================
-// VEXA — CLASH / MIHOMO / STASH YAML SUBSCRIPTION SUPPORT
-// Many self-hosted and public subscription servers serve a Clash-format
-// YAML config (a top-level "proxies:" list) instead of a URI list or Xray
-// JSON. There's no YAML dependency available in a single-file Worker, so
-// this is a minimal, dependency-free parser for exactly the subset real
-// Clash/Mihomo proxy lists use: a block or flow sequence of maps, each with
-// at most one level of nesting (ws-opts/reality-opts/grpc-opts/headers).
-// It is NOT a general YAML parser and should not be used as one.
-// =====================================================================
-
 import { generateNodeUri } from "./uri-codec.js";
 
 function stripYamlComment(line) {

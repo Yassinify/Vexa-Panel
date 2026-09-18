@@ -1,11 +1,3 @@
-// =====================================================================
-// VEXA — SING-BOX / CLASH OUTPUT — converts our parsed node objects (see
-// parseNodeUri) into sing-box outbound objects / Clash proxy maps.
-// Only the protocols listed below can be structurally converted; anything
-// else (SSR, WireGuard, TUIC, naive+, plain socks, etc.) is skipped rather
-// than guessed at, since a wrong config is worse than a missing node.
-// =====================================================================
-
 import { parseNodeUri, generateNodeUri } from "./uri-codec.js";
 
 function uniqueName(base, used) {

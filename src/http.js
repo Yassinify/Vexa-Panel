@@ -1,10 +1,3 @@
-// =====================================================================
-// VEXA — HTTP helpers (CORS, JSON/HTML responses, request body parsing)
-// =====================================================================
-
-// ---------------------------------------------------------------------
-// CORS
-// ---------------------------------------------------------------------
 export function withCors(request, response, env) {
   const origin = request.headers.get("Origin");
   const selfOrigin = new URL(request.url).origin;

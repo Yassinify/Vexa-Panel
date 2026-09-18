@@ -1,7 +1,3 @@
-// =====================================================================
-// VEXA — ENTRY POINT: Cloudflare Worker fetch handler
-// =====================================================================
-
 import { json } from "./http.js";
 import { route } from "./router.js";
 

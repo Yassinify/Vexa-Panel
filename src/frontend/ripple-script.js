@@ -1,20 +1,3 @@
-// =====================================================================
-// VEXA — Shared ripple-interaction script. Extracted verbatim from the
-// SPA's client-script.js so both the SPA and the standalone pages
-// (src/pages/d1-setup.js, src/pages/change-password-page.js) can inject
-// the exact same behavior via one inline <script>, instead of the effect
-// only existing inside client-script.js's own IIFE. Plain classic script
-// (no `import`), same as CLIENT_SCRIPT/QR_LIB — injected as a template
-// string wherever it's needed.
-//
-// Respects prefers-reduced-motion via CSS alone: .ripple-ink's animation
-// is defined in styles.js under `@keyframes ripple-anim`, and the global
-// `@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }`
-// rule already disables it there — no JS-side check needed, and none is
-// added here, so this file only ever has to agree with the CSS, not
-// duplicate its logic.
-// =====================================================================
-
 export const RIPPLE_SCRIPT = `
 // Material ink-ripple: a JS-spawned span expands from the pointer-down
 // point and fades out, giving click feedback the way Material components

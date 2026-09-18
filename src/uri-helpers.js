@@ -1,7 +1,3 @@
-// =====================================================================
-// VEXA — Shared string/base64 helpers for node URI parsing
-// =====================================================================
-
 export function splitOnce(str, sep) {
   const idx = str.indexOf(sep);
   if (idx === -1) return [str, ""];

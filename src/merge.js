@@ -1,7 +1,3 @@
-// =====================================================================
-// VEXA — Subscription fetching + node fingerprinting for dedup/merge
-// =====================================================================
-
 import { splitOnce, robustAtob } from "./uri-helpers.js";
 import { parseXrayJsonSource } from "./xray-json.js";
 import { parseClashYamlSource } from "./clash-yaml.js";

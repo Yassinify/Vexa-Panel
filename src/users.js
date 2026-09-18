@@ -1,29 +1,3 @@
-// =====================================================================
-// VEXA — Users CRUD + dashboard stats (D1-backed, see docs/problem.md DK-16)
-// =====================================================================
-//
-// Primary storage for Users moved from KV to D1 as part of DK-16 (see
-// docs/problem.md and src/d1.js's DATA MODEL comment for the schema and
-// migration). This removes the coordination this file used to need from
-// IndexCoordinator (src/index-coordinator.js):
-//   - idx:users id-list mutation (addUserId/removeUserId, DK-2) is gone —
-//     `users` is a real D1 table; `listUsers()`/`getStats()` etc. query it
-//     directly instead of walking a separately-maintained id-list array.
-//   - The per-user record lock (withUserLock, DK-3) existed only to
-//     serialize this file's read-modify-write of a user:{uuid} record
-//     against deleteNode()'s old cascade cleanup loop over every User.
-//     That cascade is now `ON DELETE CASCADE` on user_nodes.node_id
-//     (src/d1.js) — a single atomic DELETE FROM nodes statement, not an
-//     application-level loop — so there is no longer a concurrent writer
-//     of a User's Node relationships for this file's own read-modify-write
-//     to race against.
-//   - stripDeletedNodeIds() (DK-12's opportunistic cleanup of stale
-//     nodeIds[] entries left by an interrupted cascade) is removed
-//     entirely, not just left unchanged: user_nodes rows are guaranteed by
-//     the ON DELETE CASCADE foreign key (src/d1.js) to never reference a
-//     Node that no longer exists, so there is nothing left to clean up.
-// ---------------------------------------------------------------------
-
 import { json, safeJson } from "./http.js";
 import { VEXA_VERSION } from "./constants.js";
 import {

@@ -1,7 +1,3 @@
-// =====================================================================
-// VEXA — API router: dispatches /api/* requests to their handlers
-// =====================================================================
-
 import { json } from "./http.js";
 import { ensureD1Migrated } from "./d1.js";
 import {

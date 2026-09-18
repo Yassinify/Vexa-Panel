@@ -1,10 +1,3 @@
-// =====================================================================
-// VEXA — Vendored QR encoder (byte-mode, versions 1-40, real Reed-Solomon
-// ECC + mask scoring). Based on the public-domain algorithm by Project
-// Nayuki (structure re-implemented compactly). Injected into the app
-// shell as an inline <script> — see pages/app-shell.js.
-// =====================================================================
-
 export const QR_LIB = `
 // Minimal but CORRECT QR Code generator, byte-mode only, versions 1-40, all ECC levels.
 // Based on the public-domain algorithm by Project Nayuki (structure re-implemented compactly).

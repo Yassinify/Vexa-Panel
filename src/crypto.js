@@ -1,7 +1,3 @@
-// =====================================================================
-// VEXA — Crypto: PBKDF2 password hashing/verification
-// =====================================================================
-
 const PBKDF2_ITERATIONS = 100000;
 
 export function hexToBytes(hex) {

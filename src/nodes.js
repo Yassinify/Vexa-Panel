@@ -1,29 +1,3 @@
-// =====================================================================
-// VEXA — Nodes CRUD (D1-backed, see docs/problem.md DK-16)
-// =====================================================================
-//
-// Primary storage for Nodes moved from KV to D1 as part of DK-16 (see
-// docs/problem.md and src/d1.js's DATA MODEL comment for the schema and
-// migration). This removes the coordination this file used to need from
-// IndexCoordinator (src/index-coordinator.js):
-//   - idx:nodes id-list mutation (addNodeId/removeNodeId, DK-2) is gone —
-//     `nodes` is a real D1 table; listNodes() queries it directly instead
-//     of walking a separately-maintained id-list array.
-//   - The per-name lock (withNodeNameLock, DK-15) existed only to
-//     serialize the duplicate-name check against the Node record write.
-//     That race is now closed at the database level by the `nodes.name
-//     UNIQUE` constraint (src/d1.js): createNode()/updateNode()'s rename
-//     path just attempt the write and translate a UNIQUE-constraint
-//     failure into the existing 409 duplicate_name response.
-//   - The per-user record lock (withUserLock) around deleteNode()'s old
-//     per-user nodeIds[] cascade loop is gone — that cascade is now
-//     `ON DELETE CASCADE` on user_nodes.node_id (src/d1.js), a single
-//     atomic DELETE FROM nodes statement, not an application-level loop.
-//
-// `source` is a single classified source object, identical in shape to one
-// entry of a User's sources[] (see normalizeSources() in users.js) — this
-// lets merge.js feed it through the exact same per-type handling.
-
 import { json, safeJson } from "./http.js";
 import {
   recordActivity,

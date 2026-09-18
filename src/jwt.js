@@ -1,7 +1,3 @@
-// =====================================================================
-// VEXA — JWT (manual HMAC-SHA256, no dependencies)
-// =====================================================================
-
 import { json } from "./http.js";
 import { resolveAuthConfig } from "./d1.js";
 

@@ -1,12 +1,3 @@
-// =====================================================================
-// VEXA — PARSE / GENERATE: structured round-trip for VLESS/VMess/Trojan/
-// Shadowsocks/ShadowsocksR/Hysteria/Hysteria2/TUIC/WireGuard/SOCKS/NaiveProxy.
-// parseNodeUri(uri) -> { protocol, ...fields } | null
-// generateNodeUri(node) -> canonical uri string
-// Used for canonical re-export (cleans up junk params, normalizes casing)
-// and as the foundation for JSON/Xray-format import/export.
-// =====================================================================
-
 import { splitOnce, robustAtob } from "./uri-helpers.js";
 import { validateNodeUri } from "./uri-validate.js";
 

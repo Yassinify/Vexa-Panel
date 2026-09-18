@@ -1,73 +1,8 @@
-// =====================================================================
-// VEXA — D1 data-model helpers, schema bootstrap, KV→D1 migration (DK-16)
-// =====================================================================
-//
-// Per docs/problem.md's corrected DK-16 scope: D1 is now Vexa's ONLY
-// storage. Primary Users/Nodes/relationship, dashboard stats/activity,
-// the subscription fallback cache, and login rate limiting all live here.
-// A fresh deployment needs exactly one D1 binding (env.DB) and NO KV
-// binding at all — ensureD1Migrated() below only ever touches env.STORAGE
-// when it is actually present (an upgrade from a pre-D1 deployment that
-// still has legacy KV data), isolated behind a single `if (env.STORAGE)`
-// guard at the top of that function, and does not depend on src/kv.js's
-// ensureMigrated() having run. See docs/problem.md's DK-16 entry for the
-// full reasoning.
-//
-// DATA MODEL (D1, binding env.DB — see wrangler.jsonc's d1_databases):
-//   users              -> id, name, enabled, sources (JSON array, see
-//                         users.js's normalizeSources()), created_at,
-//                         updated_at
-//   nodes              -> id, name (UNIQUE), source (JSON object),
-//                         enabled, created_at, updated_at
-//   user_nodes         -> (user_id, node_id, position) — normalizes the
-//                         old user.nodeIds[] JSON array into a real
-//                         many-to-many relation; ON DELETE CASCADE on both
-//                         foreign keys means deleting a User or a Node
-//                         cleans up this table by itself, with no
-//                         application-level cascade loop.
-//   stats              -> single fixed row (id = 1), the dashboard summary
-//   activity           -> append-only, capped at ACTIVITY_CAP most-recent
-//                         rows
-//   subscription_cache -> replaces KV's subcache:{sha256} — one row per
-//                         cache key, with an expires_at column instead of
-//                         KV's native expirationTtl (see SUB_CACHE_TTL_MS
-//                         below)
-//   login_rate_limit   -> replaces KV's ratelimit:login:{ip} — one row per
-//                         IP, with an atomic "UPDATE ... WHERE" increment
-//                         (see checkLoginRateLimit() below) so concurrent
-//                         attempts from the same IP cannot lose a count
-//   migration_flags    -> replaces KV's meta:migrated_v3/meta:migrated_d1
-//                         one-time-migration flags — a single fixed row
-//                         (id = 1) with one column per flag
-//   auth_config        -> DK-18: single fixed row (id = 1) holding the
-//                         D1-backed admin_salt/admin_password_hash/
-//                         jwt_secret, used only when a deployment does not
-//                         have all three of ADMIN_SALT/ADMIN_PASSWORD_HASH/
-//                         JWT_SECRET configured as Cloudflare Secrets (see
-//                         resolveAuthConfig() below and src/secrets.js's
-//                         precedence logic).
-//
-// This file is intentionally "thin": schema bootstrap, direct SQL
-// wrappers, and the one-time migration. Validation, activity-message
-// wording, and locking decisions tied to a specific business operation
-// stay in users.js/nodes.js/merge.js/secrets.js, exactly the same
-// layering src/kv.js already had relative to those files.
 
 export function d1Bound(env) {
   return Boolean(env.DB);
 }
 
-// ---------------------------------------------------------------------
-// SCHEMA BOOTSTRAP
-// Every statement is idempotent (IF NOT EXISTS / OR IGNORE), so re-running
-// this is always safe. ensureD1Ready() below memoizes the result per
-// Worker isolate so a busy isolate pays this cost once, not once per
-// request — the same "not on every request" reasoning src/kv.js's
-// ensureMigrated() already applies via its meta:migrated_v3 flag, just
-// scoped to isolate lifetime instead of a persisted flag, since schema
-// creation (unlike data migration) has no cross-isolate race to avoid:
-// two isolates racing the same CREATE TABLE IF NOT EXISTS is harmless.
-// ---------------------------------------------------------------------
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,

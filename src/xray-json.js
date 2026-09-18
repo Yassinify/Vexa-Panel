@@ -1,16 +1,3 @@
-// =====================================================================
-// VEXA — JSON / V2Ray / XRAY OUTBOUND SUPPORT
-// Converts a single Xray/V2Ray-style outbound object (or a full config.json
-// containing an "outbounds" array) to/from the same internal node shape used
-// by parseNodeUri/generateNodeUri, so JSON sources interoperate with URI
-// sources transparently (same fingerprinting, same canonical export).
-// Reference shapes (Xray-core, current as of writing):
-//   VLESS/VMess: settings.vnext[0].{address,port,users[0]}
-//   Trojan/SS:   settings.servers[0].{address,port,password,method}
-//   streamSettings.{network,security,tlsSettings,realitySettings,wsSettings,
-//                    grpcSettings,tcpSettings,xhttpSettings}
-// =====================================================================
-
 import { splitOnce } from "./uri-helpers.js";
 
 function extractTransportFields(streamSettings) {

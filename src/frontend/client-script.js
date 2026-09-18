@@ -1,9 +1,3 @@
-// =====================================================================
-// VEXA — Client-side SPA logic (hand-rolled, no framework). Injected into
-// the app shell as an inline <script> — see pages/app-shell.js. Runs as a
-// plain classic script (not an ES module), so it cannot use `import`.
-// =====================================================================
-
 import { RIPPLE_SCRIPT } from "./ripple-script.js";
 
 export const CLIENT_SCRIPT = `

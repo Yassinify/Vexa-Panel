@@ -1,7 +1,3 @@
-// =====================================================================
-// VEXA — ROUTER: top-level request dispatch
-// =====================================================================
-
 import { VEXA_VERSION } from "./constants.js";
 import { withCors, json, htmlResponse, svgResponse } from "./http.js";
 import { FAVICON_SVG } from "./favicon-assets.js";

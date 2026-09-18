@@ -1,7 +1,3 @@
-// =====================================================================
-// VEXA — Panel CSS (dark theme only, layout, components, responsive)
-// =====================================================================
-
 export const STYLES = `
 :root {
   /* 4px/8px spacing scale (Carbon-style 2x grid) — layout paddings, gaps,

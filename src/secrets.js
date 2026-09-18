@@ -1,7 +1,3 @@
-// =====================================================================
-// VEXA — Secret generation, password rotation, login
-// =====================================================================
-
 import { json, safeJson } from "./http.js";
 import { deriveKey, timingSafeEqual, randomHex } from "./crypto.js";
 import { signJwt } from "./jwt.js";

@@ -1,32 +1,8 @@
-// Cloudflare Workers configuration for Vexa Panel.
-//
-// Deployment note: the Worker's `name` is intentionally NOT set here.
-// It is deployment-specific and must be supplied by whoever deploys this
-// Worker (e.g. `wrangler deploy --name <your-worker-name>`, or via the
-// name configured in the Cloudflare dashboard's Git integration) — this
-// project does not choose that value.
-//
-// `main` points at `worker.js`, the single-file esbuild bundle produced
-// at release time from `src/index.js` (see
-// .github/workflows/release.yml). This file does not change that
-// bundling model — Cloudflare still deploys one bundled worker.js.
 {
   "compatibility_date": "2026-09-16",
   "main": "worker.js",
 
-  // D1 binding for DK-16's primary-storage migration (Users, Nodes, their
-  // relationship, stats, activity — see docs/problem.md). `subcache:*` and
-  // `ratelimit:login:*` are also D1-backed (the `subscription_cache` and
-  // `login_rate_limit` tables in `src/d1.js`), each with its own
-  // expires_at/window_start column standing in for KV's native TTL, since
-  // D1 has no expirationTtl equivalent. `database_id` below is a
-  // placeholder — the real id is produced only when someone actually
-  // provisions a D1 database for their own account (Dashboard → Storage &
-  // Databases → D1, or
-  // `wrangler d1 create <name>`) and must be pasted in before this Worker
-  // is deployed; a fabricated id would silently point at a database that
-  // does not exist. `binding` is named `DB` to match `src/d1.js`'s
-  // `env.DB` usage — verify this name stays in sync if either side changes.
+
   "d1_databases": [
     {
       "binding": "DB",

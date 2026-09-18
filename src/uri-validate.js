@@ -1,9 +1,3 @@
-// =====================================================================
-// VEXA — VALIDATION: shape-check a raw node URI before it's accepted onto
-// a user, so malformed entries don't silently reach exported
-// subscriptions and break end-client parsers.
-// =====================================================================
-
 import { splitOnce, robustAtob } from "./uri-helpers.js";
 
 export function validateNodeUri(uri) {

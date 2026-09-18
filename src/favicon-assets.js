@@ -1,15 +1,3 @@
-// =====================================================================
-// VEXA — Favicon asset: single SVG favicon, served directly (no .ico/.png
-// set — see src/router.js for the /favicon.svg route).
-// =====================================================================
-
-// The "V" below is a pre-traced outline of the Leckerli One glyph
-// (extracted from LeckerliOne-Regular.ttf via fontTools), not live text in
-// a web font. This SVG is used as <link rel="icon"> and <img src=...>;
-// browsers block external resource fetches (including @import'd fonts)
-// inside those contexts, so a text-based "V" styled with a Google Font
-// would silently fall back to a generic font instead. Baking in the traced
-// shape removes that dependency entirely.
 export const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="100%" height="100%">
   <!-- Background: Rounded Rectangle -->
   <rect width="200" height="200" rx="40" ry="40" fill="#0B0B0E" />
