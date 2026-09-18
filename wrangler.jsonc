@@ -14,21 +14,24 @@
   "compatibility_date": "2026-09-16",
   "main": "worker.js",
 
-  // Binding for the planned IndexCoordinator Durable Object (see
-  // docs/problem.md DK-2 / WR-1: cross-isolate coordination for
-  // idx:users / idx:nodes mutations). The class itself is not yet
-  // implemented in src/ — this only reserves the binding + migration so
-  // it can be added in a later task without a further config change.
-  "durable_objects": {
-    "bindings": [
-      { "name": "INDEX_COORDINATOR", "class_name": "IndexCoordinator" }
-    ]
-  },
-
-  // SQLite-backed storage (new_sqlite_classes) is Cloudflare's current
-  // recommended Durable Object storage backend for new classes,
-  // superseding the legacy key-value backend (new_classes).
-  "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["IndexCoordinator"] }
+  // D1 binding for DK-16's primary-storage migration (Users, Nodes, their
+  // relationship, stats, activity — see docs/problem.md). `subcache:*` and
+  // `ratelimit:login:*` are also D1-backed (the `subscription_cache` and
+  // `login_rate_limit` tables in `src/d1.js`), each with its own
+  // expires_at/window_start column standing in for KV's native TTL, since
+  // D1 has no expirationTtl equivalent. `database_id` below is a
+  // placeholder — the real id is produced only when someone actually
+  // provisions a D1 database for their own account (Dashboard → Storage &
+  // Databases → D1, or
+  // `wrangler d1 create <name>`) and must be pasted in before this Worker
+  // is deployed; a fabricated id would silently point at a database that
+  // does not exist. `binding` is named `DB` to match `src/d1.js`'s
+  // `env.DB` usage — verify this name stays in sync if either side changes.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vexa-panel-db",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+    }
   ]
 }

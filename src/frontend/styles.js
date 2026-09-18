@@ -15,31 +15,54 @@ export const STYLES = `
   --space-6: 32px;
 }
 :root {
-  --bg-page: #141414;
-  --bg-surface: #1d1e1f;
-  --bg-surface-raised: #262727;
-  --bg-surface-raised: color-mix(in srgb, var(--accent) 5%, #262727);
-  --border: rgba(255,255,255,0.12);
-  --accent: #409eff;
-  --accent-light: #66b1ff;
-  --accent-strong: #3375b9;
-  --accent-soft: rgba(64,158,255,0.16);
-  --good: #67c23a;
-  --good-soft: rgba(103,194,58,0.14);
-  --bad: #f56c6c;
-  --bad-light: #f78989;
-  --bad-soft: rgba(245,108,108,0.14);
-  --text-primary: #e5eaf3;
-  --text-muted: #a3a6ad;
-  --sidebar-bg: #1f2d3d;
-  --sidebar-text: #97a8be;
-  --sidebar-active-bg: #304156;
+  /* --- Design system: near-black + deep-red accent (see docs/how-program-work.md
+     Change Log for the redesign this replaces). Every component below reads
+     these tokens rather than a hardcoded color, so the palette below is the
+     single source of truth for the whole panel's visual language. Red is
+     reserved for primary actions, active/selected state, and error state —
+     deliberately NOT used as a general decorative color, per the "avoid
+     excessive red" constraint this palette was built against. */
+  --bg-page: #0b0b0e;
+  --bg-surface: #111317;
+  --bg-surface-raised: #17191e;
+  --bg-surface-raised: color-mix(in srgb, var(--accent) 3%, #17191e);
+  --border: rgba(255,255,255,0.08);
+  --accent: #e11d48;
+  --accent-hover: #be123c;
+  --accent-active: #9f1239;
+  --accent-light: #fb6f86;
+  --accent-strong: #9f1239;
+  --accent-soft: rgba(225,29,72,0.14);
+  --good: #10b981;
+  --good-soft: rgba(16,185,129,0.14);
+  --warn: #f59e0b;
+  --warn-soft: rgba(245,158,11,0.14);
+  --bad: #ef4444;
+  --bad-light: #f87171;
+  --bad-soft: rgba(239,68,68,0.14);
+  --disabled: #4b5563;
+  --text-primary: #f8fafc;
+  --text-secondary: #a9afbc;
+  --text-muted: #9ca3af;
+  --sidebar-bg: #0d0e11;
+  --sidebar-text: #9ca3af;
+  --sidebar-active-bg: rgba(225,29,72,0.12);
   --sidebar-active-text: #ffffff;
   --font-stack: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --mono-stack: 'SF Mono', Consolas, monospace;
-  /* Material elevation shadows. Shadows read poorly on dark backgrounds,
-     so this leans mostly on the surface-tint above plus a faint
-     highlight edge rather than a heavy drop shadow. */
+  /* Radius hierarchy: sm for tight inline chips, md for the controls a user
+     directly operates (buttons/inputs/menu items), lg for cards/panels, xl
+     for full-screen containers like modals and the mobile bottom sheet.
+     Badges/switches intentionally stay pill-shaped (999px) as the one
+     deliberate exception for status/toggle controls, not part of this scale. */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  /* Elevation shadows stay neutral/restrained (not colored) so they read as
+     depth rather than decoration; the one deliberate exception is the small
+     red-tinted glow added to .btn-primary:hover below, kept to that single
+     spot per the "restrained glow where appropriate" constraint. */
   --shadow-1: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px 1px rgba(0,0,0,.3);
   --shadow-2: 0 1px 2px rgba(0,0,0,.5), 0 3px 8px 1px rgba(0,0,0,.4);
 }
@@ -59,25 +82,28 @@ body {
 .table-wrap::-webkit-scrollbar-thumb, .modal-card::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 a { color: inherit; }
 .card {
-  background: var(--bg-surface); border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-1);
 }
 .btn-primary {
-  background: var(--accent); border: 1px solid var(--accent); color: #fff; padding: 8px 15px; border-radius: 4px;
-  font-weight: 500; cursor: pointer; font-size: 13px; line-height: 1.4; transition: background .1s, border-color .1s, box-shadow .15s ease;
+  background: var(--accent); border: 1px solid var(--accent); color: #fff; padding: 10px 20px; border-radius: var(--radius-md);
+  font-weight: 600; cursor: pointer; font-size: 13px; line-height: 1.4; transition: background .1s, border-color .1s, box-shadow .15s ease;
   box-shadow: var(--shadow-1); position: relative; overflow: hidden;
 }
-.btn-primary:hover { background: var(--accent-light); border-color: var(--accent-light); box-shadow: var(--shadow-2); }
-.btn-primary:active { background: var(--accent-strong); border-color: var(--accent-strong); }
+/* The one deliberate colored glow in this system (see the --shadow-1/2
+   comment above) — a restrained red-tinted lift on the primary action's
+   hover, not applied to any other component. */
+.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); box-shadow: var(--shadow-2), 0 0 0 1px rgba(225,29,72,.25), 0 4px 16px rgba(225,29,72,.28); }
+.btn-primary:active { background: var(--accent-active); border-color: var(--accent-active); box-shadow: var(--shadow-1); }
 .btn-secondary {
   background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-primary);
-  padding: 8px 15px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500; line-height: 1.4;
+  padding: 9px 16px; border-radius: var(--radius-md); cursor: pointer; font-size: 13px; font-weight: 500; line-height: 1.4;
   transition: background .1s, border-color .1s, color .1s;
   position: relative; overflow: hidden;
 }
-.btn-secondary:hover { color: var(--accent); border-color: var(--accent-light); background: var(--accent-soft); }
-.btn-secondary:active { color: var(--accent-strong); border-color: var(--accent-strong); }
-.btn-danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+.btn-secondary:hover { color: var(--accent-light); border-color: var(--accent-hover); background: var(--accent-soft); }
+.btn-secondary:active { color: var(--accent-active); border-color: var(--accent-active); }
+.btn-danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
 .btn-danger:hover { background: var(--bad-light); border-color: var(--bad-light); color: #fff; }
 .btn-danger:active { background: var(--bad); border-color: var(--bad); }
 .btn-icon {
@@ -86,7 +112,7 @@ a { color: inherit; }
      (better tap target), settles to a compact desktop size by ~1024px,
      then holds flat on larger screens instead of shrinking further. */
   font-size: clamp(13px, calc(16px - 0.35vw), 16px);
-  width: clamp(26px, calc(40px - 1.2vw), 40px); height: clamp(26px, calc(40px - 1.2vw), 40px);
+  width: clamp(32px, calc(40px - 1.2vw), 40px); height: clamp(32px, calc(40px - 1.2vw), 40px);
   border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
   transition: background .15s ease, color .15s ease, transform .15s cubic-bezier(.34,1.56,.64,1);
   position: relative; overflow: hidden;
@@ -105,6 +131,12 @@ a { color: inherit; }
 .nav-icon .ui-icon { width: 17px; height: 17px; }
 .menu-icon .ui-icon { width: clamp(18px, 4.4vw, 22px); height: clamp(18px, 4.4vw, 22px); }
 .empty-state-icon .ui-icon { width: clamp(26px, 7vw, 32px); height: clamp(26px, 7vw, 32px); margin: 0 auto; }
+/* Dedicated wrapper for table sort indicator icons — separate from .nav-icon,
+   which is scoped to .sidebar-link and shouldn't be reused elsewhere. */
+.sort-icon {
+  display: inline-flex;
+  vertical-align: middle;
+}
 /* Purpose-colored icon accents — each action gets its own hue so the row
    actions read at a glance instead of sitting in flat neutral gray. Resting
    state is the full hue (vibrant, not washed out); hover/focus deepens it
@@ -127,8 +159,8 @@ a { color: inherit; }
 .btn-icon.icon-delete:hover { background: var(--bad-soft); color: var(--bad); transform: translateY(-2px) scale(1.08) rotate(-6deg); }
 input, textarea, select {
   width: 100%; background: var(--bg-surface); border: 1px solid var(--border);
-  color: var(--text-primary); padding: 8px 11px; border-radius: 4px; font-size: 13px; font-family: inherit;
-  transition: border-color .1s;
+  color: var(--text-primary); padding: 10px 12px; border-radius: var(--radius-md); font-size: 13px; font-family: inherit;
+  transition: border-color .1s, box-shadow .1s;
 }
 input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 /* Consistent keyboard-focus ring across every interactive element, so
@@ -138,11 +170,22 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
 button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
+/* Disabled state: consistent across every button/input variant so a
+   disabled control is unambiguous at a glance (Doherty Threshold — no
+   guessing whether a click is pending or blocked) rather than relying on
+   the browser's inconsistent default disabled look. */
+button:disabled, .btn-primary:disabled, .btn-secondary:disabled, .btn-danger:disabled {
+  background: var(--bg-surface-raised); border-color: var(--border); color: var(--disabled);
+  cursor: not-allowed; box-shadow: none; transform: none;
+}
+input:disabled, textarea:disabled, select:disabled {
+  background: var(--bg-surface-raised); color: var(--disabled); cursor: not-allowed; border-color: var(--border);
+}
 .login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
 .login-card { width: 100%; max-width: 380px; padding: 36px 32px; text-align: center; }
-.logo-glow { margin-bottom: 8px; width: clamp(48px, 14vw, 64px); height: clamp(48px, 14vw, 64px); border-radius: 14px; }
+.logo-glow { margin-bottom: 8px; width: clamp(48px, 14vw, 64px); height: clamp(48px, 14vw, 64px); border-radius: var(--radius-lg); }
 .brand { font-weight: 700; font-size: clamp(17px, 1.6vw + 13px, 20px); letter-spacing: -.01em; margin-bottom: 4px; }
-.brand-sub { color: var(--text-muted); font-size: 13px; margin-bottom: 24px; }
+.brand-sub { color: var(--text-secondary); font-size: 13px; margin-bottom: 24px; }
 
 /* --- App shell: sidebar + topbar, 3x-ui style --- */
 .app-shell { display: flex; min-height: 100vh; }
@@ -152,19 +195,22 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 .sidebar-brand { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-2) var(--space-5); }
 .sidebar-brand .avatar {
-  width: 30px; height: 30px; border-radius: 8px; background: var(--accent);
+  width: 30px; height: 30px; border-radius: var(--radius-md); background: var(--accent);
   display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; color: #fff;
   object-fit: cover;
 }
 .sidebar-brand .brand { color: var(--accent-light); }
+/* Active/hover state stays a subtle red-tinted fill (not a solid red block)
+   plus a left accent bar, per the "avoid excessive red" constraint — Von
+   Restorff distinction without turning navigation into a red banner. */
 .sidebar-link {
-  display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: 8px; margin-bottom: 2px;
+  display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); margin-bottom: 2px;
   color: var(--sidebar-text); cursor: pointer; font-size: 13px; font-weight: 500; text-decoration: none;
-  transition: background .15s ease, color .15s ease, transform .15s ease;
-  position: relative; overflow: hidden;
+  transition: background .15s ease, color .15s ease, transform .15s ease, border-color .15s ease;
+  position: relative; overflow: hidden; border-left: 3px solid transparent;
 }
-.sidebar-link:hover { background: var(--sidebar-active-bg); color: var(--sidebar-active-text); transform: translateX(2px); }
-.sidebar-link.active { background: var(--sidebar-active-bg); color: var(--accent); }
+.sidebar-link:hover { background: var(--bg-surface-raised); color: var(--sidebar-active-text); transform: translateX(2px); }
+.sidebar-link.active { background: var(--sidebar-active-bg); color: var(--sidebar-active-text); border-left-color: var(--accent); }
 .sidebar-link .nav-icon { display: inline-flex; transition: transform .2s cubic-bezier(.34,1.56,.64,1), color .15s ease; }
 .sidebar-link.active .nav-icon { color: var(--accent); transform: scale(1.15); }
 .sidebar-link:hover .nav-icon { transform: scale(1.15) rotate(-4deg); }
@@ -177,7 +223,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .menu-toggle-btn {
   display: none; align-items: center; justify-content: center;
   background: var(--bg-page); border: 1px solid var(--border); color: var(--text-primary);
-  width: clamp(38px, 9vw, 44px); height: clamp(38px, 9vw, 44px); border-radius: 8px;
+  width: clamp(38px, 9vw, 44px); height: clamp(38px, 9vw, 44px); border-radius: var(--radius-md);
   font-size: clamp(16px, 4vw, 20px); line-height: 1; cursor: pointer; flex-shrink: 0;
   transition: background .15s ease, color .15s ease, border-color .15s ease, transform .2s ease;
 }
@@ -195,11 +241,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   border-bottom: 1px solid var(--border); background: var(--bg-surface); gap: var(--space-3);
 }
 .topbar h1 {
-  font-size: clamp(14px, 1vw + 11px, 16px); margin: 0; font-weight: 600;
+  font-size: clamp(16px, 1.4vw + 12px, 20px); margin: 0; font-weight: 700; letter-spacing: -.01em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46vw;
 }
 .topbar-sub {
-  color: var(--text-muted); font-size: clamp(11px, .5vw + 10px, 12px); margin-top: 2px;
+  color: var(--text-secondary); font-size: clamp(11px, .5vw + 10px, 12px); margin-top: 2px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46vw;
 }
 .container { max-width: 1180px; margin: 0 auto; padding: 24px 28px 60px; }
@@ -208,7 +254,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-4); margin-bottom: var(--space-5); }
 .stat-card { padding: 18px 20px; }
 .stat-card-label { font-size: clamp(11px, .5vw + 10px, 12px); color: var(--text-muted); margin-bottom: 8px; }
-.stat-card-num { font-size: clamp(20px, 2.2vw + 13px, 26px); font-weight: 700; }
+.stat-card-num { font-size: clamp(20px, 2.4vw + 13px, 28px); font-weight: 700; letter-spacing: -.01em; }
 .section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin: 0 0 12px; }
 .activity-list { padding: 4px 0; }
 .activity-row { display: flex; justify-content: space-between; gap: 12px; padding: 10px 20px; border-bottom: 1px solid var(--border); font-size: 13px; }
@@ -303,8 +349,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   to { transform: scale(1); opacity: 0; }
 }
 .format-menu { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-2); }
-.format-menu-item { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 12px 14px; font-size: 13px; font-weight: 600; color: var(--text-primary); background: var(--bg-surface-raised); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; transition: background .15s ease, border-color .15s ease, box-shadow .15s ease; box-shadow: var(--shadow-1); position: relative; overflow: hidden; }
-.format-menu-item:hover { background: var(--sidebar-active-bg); border-color: var(--accent); box-shadow: var(--shadow-2); }
+.format-menu-item { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 12px 14px; font-size: 13px; font-weight: 600; color: var(--text-primary); background: var(--bg-surface-raised); border: 1px solid var(--border); border-radius: var(--radius-md); cursor: pointer; transition: background .15s ease, border-color .15s ease, box-shadow .15s ease; box-shadow: var(--shadow-1); position: relative; overflow: hidden; }
+.format-menu-item:hover { background: var(--accent-soft); border-color: var(--accent); box-shadow: var(--shadow-2); }
 .format-menu-arrow { color: var(--text-muted); font-size: clamp(14px, 3.4vw, 16px); }
 .badge.green { background: var(--good-soft); color: var(--good); }
 .timestamp { color: var(--text-muted); font-size: 12px; }
@@ -352,10 +398,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .source-row .btn-icon { flex-shrink: 0; margin-top: 2px; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .stat-row { display: flex; gap: var(--space-3); margin-bottom: var(--space-4); flex-wrap: wrap; }
-.stat-box { flex: 1; min-width: 100px; text-align: center; padding: var(--space-4); background: var(--bg-page); border-radius: 10px; border: 1px solid var(--border); box-shadow: var(--shadow-1); }
+.stat-box { flex: 1; min-width: 100px; text-align: center; padding: var(--space-4); background: var(--bg-page); border-radius: var(--radius-md); border: 1px solid var(--border); box-shadow: var(--shadow-1); }
 .stat-num { font-size: clamp(18px, 1.6vw + 12px, 22px); font-weight: 700; }
 .stat-label { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
-.qr-box { background: #fff; border-radius: 12px; padding: var(--space-4); display: flex; align-items: center; justify-content: center; margin: var(--space-4) 0; }
+.qr-box { background: #fff; border-radius: var(--radius-lg); padding: var(--space-4); display: flex; align-items: center; justify-content: center; margin: var(--space-4) 0; }
 .qr-box svg { width: clamp(140px, 45vw, 180px); height: clamp(140px, 45vw, 180px); }
 .link-row { display: flex; gap: 8px; align-items: center; }
 .link-row input { font-family: var(--mono-stack); font-size: 12px; }
@@ -363,7 +409,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .toast {
   position: fixed; bottom: 24px; right: 24px; max-width: min(340px, calc(100vw - 48px));
   background: var(--bg-surface-raised); border: 1px solid var(--good-soft); color: var(--good);
-  padding: 10px 20px; border-radius: 10px; font-size: clamp(12px, 2.2vw, 13px); z-index: 100; box-shadow: var(--shadow-2);
+  padding: 10px 20px; border-radius: var(--radius-md); font-size: clamp(12px, 2.2vw, 13px); z-index: 100; box-shadow: var(--shadow-2);
   animation: toast-in .2s cubic-bezier(.2,.8,.3,1) both;
 }
 .toast.error { border-color: var(--bad-soft); color: var(--bad); }
@@ -377,6 +423,28 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .version-badge:hover { color: var(--text-primary); border-color: var(--accent, var(--border)); }
 .error-text { color: var(--bad); font-size: 13px; margin-top: 10px; min-height: 16px; }
 .helper-text { color: var(--text-muted); font-size: 12px; margin-top: 6px; }
+/* --- Setup steps list (D1 setup guide) — reuses existing surface/spacing/
+   radius tokens to give an ordered how-to list the same card-like visual
+   language as the rest of the app, instead of a bare browser <ol>. Each
+   step is its own small raised surface with a numbered accent marker;
+   no new colors/fonts/shadows/radii are introduced, only existing tokens
+   already used elsewhere (--bg-surface-raised, --border, --radius-md,
+   --accent-soft, --accent, the --space-* scale). Intentionally lighter
+   than a full .card (no box-shadow) so the setup page stays visually
+   simple, per its own minimal/prerequisite purpose. */
+.setup-steps { list-style: none; margin: 0 0 var(--space-5); padding: 0; display: flex; flex-direction: column; gap: var(--space-2); counter-reset: setup-step; }
+.setup-steps li {
+  counter-increment: setup-step;
+  display: flex; align-items: flex-start; gap: var(--space-3);
+  background: var(--bg-surface-raised); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4); line-height: 1.55;
+}
+.setup-steps li::before {
+  content: counter(setup-step);
+  flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 12px;
+  display: flex; align-items: center; justify-content: center; margin-top: 1px;
+}
 /* --- Responsive tiers ---
    Icons (.btn-icon, .switch, .spinner, .menu-toggle-btn,
    .logo-glow, .empty-state-icon, .format-menu-arrow, .qr-box svg) size
@@ -428,7 +496,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .data-table, .data-table tbody, .data-table tr, .data-table td { display: block; width: 100%; }
   .data-table thead { display: none; }
   .data-table tr {
-    border: 1px solid var(--border); border-radius: 12px; margin-bottom: var(--space-3);
+    border: 1px solid var(--border); border-radius: var(--radius-lg); margin-bottom: var(--space-3);
     padding: var(--space-3) var(--space-4); background: var(--bg-surface-raised);
   }
   .data-table tr:last-child { margin-bottom: 0; }
@@ -444,7 +512,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .data-table td[data-label="Name"] { padding-top: 0; }
   .data-table td[data-label="Name"] .row-name { max-width: 62vw; }
   .row-actions { gap: 2px; }
-  .card { border-radius: 14px; }
+  .card { border-radius: var(--radius-lg); }
   /* Belt-and-suspenders: nothing on the page should ever be able to force
      the viewport to scroll sideways on a phone, no matter what content or
      third-party string ends up inside a cell, badge, or modal. */
@@ -457,7 +525,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .login-card { padding: var(--space-5) var(--space-4); }
   .stat-row { flex-direction: column; }
   .modal-overlay { padding: 0; align-items: flex-end; }
-  .modal-card { max-height: 92vh; border-radius: 16px 16px 0 0; padding: 14px 18px 20px; position: relative; }
+  .modal-card { max-height: 92vh; border-radius: var(--radius-xl) var(--radius-xl) 0 0; padding: 14px 18px 20px; position: relative; }
   .modal-card::before {
     content: ""; position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
     width: 36px; height: 4px; border-radius: 999px; background: var(--border);
@@ -468,9 +536,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
      thumb-reach action instead of two small buttons squeezed to one corner. */
   .modal-footer { flex-direction: column-reverse; gap: var(--space-2); }
   .modal-footer button { width: 100%; padding: 12px 15px; }
-  .card { border-radius: 12px; }
-  .data-table tr { border-radius: 10px; padding: var(--space-3); }
-  .stat-box { border-radius: 8px; }
+  .card { border-radius: var(--radius-md); }
+  .data-table tr { border-radius: var(--radius-md); padding: var(--space-3); }
+  .stat-box { border-radius: var(--radius-sm); }
   .badge, .switch { border-radius: 999px; }
   /* Names and badges keep their single-line ellipsis truncation down to the
      smallest phones instead of ever breaking to a second line. */

@@ -1,72 +1,81 @@
 // =====================================================================
-// VEXA — Users CRUD + dashboard stats
+// VEXA — Users CRUD + dashboard stats (D1-backed, see docs/problem.md DK-16)
 // =====================================================================
+//
+// Primary storage for Users moved from KV to D1 as part of DK-16 (see
+// docs/problem.md and src/d1.js's DATA MODEL comment for the schema and
+// migration). This removes the coordination this file used to need from
+// IndexCoordinator (src/index-coordinator.js):
+//   - idx:users id-list mutation (addUserId/removeUserId, DK-2) is gone —
+//     `users` is a real D1 table; `listUsers()`/`getStats()` etc. query it
+//     directly instead of walking a separately-maintained id-list array.
+//   - The per-user record lock (withUserLock, DK-3) existed only to
+//     serialize this file's read-modify-write of a user:{uuid} record
+//     against deleteNode()'s old cascade cleanup loop over every User.
+//     That cascade is now `ON DELETE CASCADE` on user_nodes.node_id
+//     (src/d1.js) — a single atomic DELETE FROM nodes statement, not an
+//     application-level loop — so there is no longer a concurrent writer
+//     of a User's Node relationships for this file's own read-modify-write
+//     to race against.
+//   - stripDeletedNodeIds() (DK-12's opportunistic cleanup of stale
+//     nodeIds[] entries left by an interrupted cascade) is removed
+//     entirely, not just left unchanged: user_nodes rows are guaranteed by
+//     the ON DELETE CASCADE foreign key (src/d1.js) to never reference a
+//     Node that no longer exists, so there is nothing left to clean up.
+// ---------------------------------------------------------------------
 
 import { json, safeJson } from "./http.js";
 import { VEXA_VERSION } from "./constants.js";
 import {
-  kvGetJson,
-  kvPutJson,
+  getStatsRow,
+  getRecentActivity,
   adjustStats,
   recordActivity,
-} from "./kv.js";
-import { addUserId, removeUserId, withUserLock } from "./index-coordinator.js";
+  getUserRowById,
+  listUserRows,
+  insertUserRow,
+  insertUserWithNodes,
+  updateUserRow,
+  updateUserWithNodes,
+  deleteUserRow,
+  getNodeRowById,
+  getUserNodeIds,
+  setUserNodeIds,
+  rowToUser,
+} from "./d1.js";
 import { validateNodeUri } from "./uri-validate.js";
 import { parseXrayJsonSource } from "./xray-json.js";
 import { parseClashYamlSource } from "./clash-yaml.js";
 
-// ---------------------------------------------------------------------
-// idx:users SERIALIZATION (docs/problem.md DK-2)
-// Cloudflare KV has no compare-and-swap/locking primitive, so a bare
-// read -> mutate array in memory -> write of idx:users can lose an entry
-// if two requests' get/put calls interleave. createUser/deleteUser below
-// now delegate the entire idx:users
-// get -> parse -> mutate -> put cycle to the IndexCoordinator Durable
-// Object (src/index-coordinator.js) via addUserId()/removeUserId(), which
-// serializes it across Worker isolates, not just within one. The previous
-// same-isolate-only idxUsersLock/withIdxUsersLock Promise-chain lock is
-// removed: each call site below no longer performs its own local
-// read-modify-write of idx:users at all, so there is nothing left for a
-// local lock to guard.
-// ---------------------------------------------------------------------
-
 export async function getStats(env) {
-  const stats = await kvGetJson(env, "meta:stats", {
-    totalUsers: 0,
-    totalSubSources: 0,
-    totalRawSources: 0,
-  });
-  const activity = await kvGetJson(env, "meta:activity", []);
+  const stats = await getStatsRow(env);
+  const activity = await getRecentActivity(env);
   return json({
-    stats,
+    stats: {
+      totalUsers: stats.totalUsers,
+      totalSubSources: stats.totalSubSources,
+      totalRawSources: stats.totalRawSources,
+    },
     activity,
     version: VEXA_VERSION,
   });
 }
 
 export async function listUsers(env) {
-  const userIds = await kvGetJson(env, "idx:users", []);
-  const users = await Promise.all(
-    userIds.map(async (id) => {
-      // kvGetJson() returns null for both a missing record and a malformed
-      // one (it swallows JSON.parse failures internally) — either way this
-      // id is dropped below via .filter(Boolean), so one corrupted user
-      // record can't reject the whole Promise.all (see docs/problem.md DK-1).
-      const user = await kvGetJson(env, `user:${id}`, null);
-      if (!user) return null;
-      const sources = user.sources || [];
-      return {
-        id: user.id,
-        name: user.name,
-        enabled: user.enabled !== false,
-        subCount: sources.filter((s) => s.type === "subscription").length,
-        rawCount: sources.filter((s) => s.type !== "subscription").length,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-      };
-    }),
-  );
-  return json({ users: users.filter(Boolean) });
+  const rows = await listUserRows(env);
+  const users = rows.map((row) => {
+    const sources = JSON.parse(row.sources || "[]");
+    return {
+      id: row.id,
+      name: row.name,
+      enabled: row.enabled !== 0,
+      subCount: sources.filter((s) => s.type === "subscription").length,
+      rawCount: sources.filter((s) => s.type !== "subscription").length,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  });
+  return json({ users });
 }
 
 export async function createUser(request, env) {
@@ -86,8 +95,17 @@ export async function createUser(request, env) {
     createdAt: now,
     updatedAt: now,
   };
-  await kvPutJson(env, `user:${user.id}`, user);
-  await addUserId(env, user.id);
+  // DK-20: the User row and its initial user_nodes relationships must
+  // commit or fail together — insertUserWithNodes() (src/d1.js) runs
+  // both in one env.DB.batch() transaction, closing the gap where
+  // insertUserRow() could persist while a separate, conditional
+  // setUserNodeIds() call afterward failed or never ran. Called
+  // unconditionally (nodeIds may be empty; resolveValidNodeIds() above
+  // has already validated/deduplicated it exactly as before), since an
+  // empty nodeIds array simply produces a batch containing only the User
+  // INSERT — no special-casing needed here, unlike updateUser()'s
+  // with/without-nodeIds branches.
+  await insertUserWithNodes(env, user, nodeIds);
   await adjustStats(env, {
     totalUsers: 1,
     totalSubSources: sources.filter((s) => s.type === "subscription").length,
@@ -98,171 +116,142 @@ export async function createUser(request, env) {
 }
 
 export async function getUser(id, env) {
-  // kvGetJson() folds "missing" and "malformed JSON" into the same null
-  // result, so a corrupted record reports not_found instead of throwing a
-  // SyntaxError (see docs/problem.md DK-1).
-  const user = await kvGetJson(env, `user:${id}`, null);
-  if (!user) return json({ error: "not_found" }, 404);
-  user.enabled = user.enabled !== false;
+  const row = await getUserRowById(env, id);
+  if (!row) return json({ error: "not_found" }, 404);
+  const nodeIds = await getUserNodeIds(env, id);
+  const user = rowToUser(row, nodeIds);
   return json({ user });
 }
 
 export async function updateUser(id, request, env) {
   const body = await safeJson(request);
+  const row = await getUserRowById(env, id);
+  if (!row) return json({ error: "not_found" }, 404);
+
+  const current = rowToUser(row, null);
   let toggled = false;
   let renamed = false;
   let invalid = [];
   let sourcesChanged = false;
-  let oldName;
-  let beforeSub = 0;
-  let beforeRaw = 0;
-  let user;
+  const oldName = current.name;
+  const beforeSources = current.sources || [];
+  const beforeSub = beforeSources.filter(
+    (s) => s.type === "subscription",
+  ).length;
+  const beforeRaw = beforeSources.filter(
+    (s) => s.type !== "subscription",
+  ).length;
 
-  // Read -> mutate -> write of this user:{uuid} record is serialized
-  // against deleteNode()'s cascade cleanup via the same per-user lock, so
-  // a stale write here cannot restore a nodeIds[] entry the cascade
-  // already removed (docs/problem.md DK-3).
-  await withUserLock(env, id, async () => {
-    // See getUser() above — malformed JSON is treated the same as a missing
-    // record instead of throwing (docs/problem.md DK-1).
-    const current = await kvGetJson(env, `user:${id}`, null);
-    if (!current) return;
-    oldName = current.name;
-    const beforeSources = current.sources || [];
-    beforeSub = beforeSources.filter(
-      (s) => s.type === "subscription",
-    ).length;
-    beforeRaw = beforeSources.filter(
-      (s) => s.type !== "subscription",
-    ).length;
-    if (
-      body &&
-      typeof body.name === "string" &&
-      body.name.trim() &&
-      body.name.trim() !== current.name
-    ) {
-      current.name = body.name.trim();
-      renamed = true;
-    }
-    if (
-      body &&
-      typeof body.enabled === "boolean" &&
-      body.enabled !== (current.enabled !== false)
-    ) {
-      current.enabled = body.enabled;
-      toggled = true;
-    }
-    if (body && body.sources) {
-      const result = normalizeSources(body.sources);
-      current.sources = result.sources;
-      invalid = result.invalid;
-      sourcesChanged = true;
-    }
-    if (body && Array.isArray(body.nodeIds)) {
-      current.nodeIds = await resolveValidNodeIds(env, body.nodeIds);
-    } else if (Array.isArray(current.nodeIds) && current.nodeIds.length > 0) {
-      // DK-12 opportunistic cleanup -- see stripDeletedNodeIds() above.
-      // Only runs when this request didn't already replace nodeIds[]
-      // wholesale via resolveValidNodeIds() just above.
-      current.nodeIds = await stripDeletedNodeIds(env, current.nodeIds);
-    }
-    current.updatedAt = Date.now();
-    await kvPutJson(env, `user:${id}`, current);
-    user = current;
-  });
+  if (
+    body &&
+    typeof body.name === "string" &&
+    body.name.trim() &&
+    body.name.trim() !== current.name
+  ) {
+    current.name = body.name.trim();
+    renamed = true;
+  }
+  if (
+    body &&
+    typeof body.enabled === "boolean" &&
+    body.enabled !== (current.enabled !== false)
+  ) {
+    current.enabled = body.enabled;
+    toggled = true;
+  }
+  if (body && body.sources) {
+    const result = normalizeSources(body.sources);
+    current.sources = result.sources;
+    invalid = result.invalid;
+    sourcesChanged = true;
+  }
+  current.updatedAt = Date.now();
 
-  if (!user) return json({ error: "not_found" }, 404);
+  // DK-19: when this request supplies a new nodeIds[], the User row
+  // update and the user_nodes relationship replacement must commit or
+  // fail together — updateUserWithNodes() (src/d1.js) runs both in one
+  // env.DB.batch() transaction, closing the gap where updateUserRow()
+  // could persist while a separate setUserNodeIds() call afterward
+  // failed. Validation/deduplication (resolveValidNodeIds()) still runs
+  // first, exactly as before, so only the already-validated id list ever
+  // reaches the atomic write. When this request does NOT supply
+  // nodeIds[], there is nothing to batch it with, so the User row is
+  // still written with the plain updateUserRow() call and the existing
+  // assignment is left untouched (no query, no write) — unlike the old
+  // KV implementation, there's no stale-reference cleanup to
+  // opportunistically run here: the ON DELETE CASCADE foreign key
+  // (src/d1.js) already guarantees user_nodes never holds a reference to
+  // a deleted Node.
+  if (body && Array.isArray(body.nodeIds)) {
+    current.nodeIds = await resolveValidNodeIds(env, body.nodeIds);
+    await updateUserWithNodes(env, current, current.nodeIds);
+  } else {
+    await updateUserRow(env, current);
+    current.nodeIds = await getUserNodeIds(env, id);
+  }
 
   if (sourcesChanged) {
-    const afterSub = user.sources.filter(
+    const afterSub = current.sources.filter(
       (s) => s.type === "subscription",
     ).length;
-    const afterRaw = user.sources.filter(
+    const afterRaw = current.sources.filter(
       (s) => s.type !== "subscription",
     ).length;
     await adjustStats(env, {
       totalSubSources: afterSub - beforeSub,
       totalRawSources: afterRaw - beforeRaw,
     });
-    await recordActivity(env, `Updated sources for user "${user.name}"`);
+    await recordActivity(env, `Updated sources for user "${current.name}"`);
   }
   if (toggled)
     await recordActivity(
       env,
-      `${user.enabled ? "Enabled" : "Disabled"} user "${user.name}"`,
+      `${current.enabled ? "Enabled" : "Disabled"} user "${current.name}"`,
     );
   if (renamed)
-    await recordActivity(env, `Renamed user "${oldName}" to "${user.name}"`);
-  user.enabled = user.enabled !== false;
-  return json({ user, invalidSources: invalid });
+    await recordActivity(
+      env,
+      `Renamed user "${oldName}" to "${current.name}"`,
+    );
+  current.enabled = current.enabled !== false;
+  return json({ user: current, invalidSources: invalid });
 }
 
 export async function deleteUser(id, env) {
-  // See getUser() above — malformed JSON is treated the same as a missing
-  // record instead of throwing (docs/problem.md DK-1).
-  const user = await kvGetJson(env, `user:${id}`, null);
-  if (!user) return json({ error: "not_found" }, 404);
-  const sources = user.sources || [];
+  const row = await getUserRowById(env, id);
+  if (!row) return json({ error: "not_found" }, 404);
+  const sources = JSON.parse(row.sources || "[]");
   const subCount = sources.filter((s) => s.type === "subscription").length;
   const rawCount = sources.filter((s) => s.type !== "subscription").length;
 
-  // DK-11: index cleanup runs before the primary-record delete, so an
-  // interruption between the two leaves an orphaned-but-harmless
-  // user:{uuid} record with no idx:users reference (invisible to
-  // listUsers(), which only discovers records via the index) instead of
-  // a ghost id persisting forever in idx:users.
-  await removeUserId(env, id);
-  await env.STORAGE.delete(`user:${id}`);
+  // ON DELETE CASCADE on user_nodes.user_id (src/d1.js) removes this
+  // User's relationship rows as part of the same statement — no separate
+  // index/cascade cleanup call needed (replaces the old removeUserId() +
+  // DK-11 ordering concern entirely).
+  await deleteUserRow(env, id);
   await adjustStats(env, {
     totalUsers: -1,
     totalSubSources: -subCount,
     totalRawSources: -rawCount,
   });
-  await recordActivity(env, `Deleted user "${user.name}"`);
+  await recordActivity(env, `Deleted user "${row.name}"`);
   return json({ success: true });
 }
 
 // ---------------------------------------------------------------------
-// NODE ASSIGNMENT (validated against idx:nodes here to avoid a circular
-// import with nodes.js, which already imports normalizeSources from this
-// file)
+// NODE ASSIGNMENT
 // ---------------------------------------------------------------------
 async function resolveValidNodeIds(env, nodeIds) {
   if (!Array.isArray(nodeIds)) return [];
-  const knownIds = new Set(await kvGetJson(env, "idx:nodes", []));
   const seen = new Set();
   const result = [];
   for (const id of nodeIds) {
-    if (!knownIds.has(id) || seen.has(id)) continue;
-    const node = await kvGetJson(env, `node:${id}`, null);
-    if (node && node.enabled !== false) {
+    if (seen.has(id)) continue;
+    const node = await getNodeRowById(env, id);
+    if (node && node.enabled !== 0) {
       seen.add(id);
       result.push(id);
     }
-  }
-  return result;
-}
-
-// docs/problem.md DK-12: deleteNode()'s cascade cleanup of nodeIds[] loops
-// sequentially over every User and can be left partially complete if the
-// Worker is interrupted mid-loop, leaving some Users referencing an
-// already-deleted node:{uuid}. updateUser() already performs one
-// unconditional read (under withUserLock, serialized against that same
-// cascade per docs/problem.md DK-3) -> mutate -> write of the full User
-// record on every call, regardless of which fields actually changed, so
-// piggybacking a stale-id check here adds no new KV write and no new lock
-// acquisition -- only the extra node:{uuid} reads below.
-// Deliberately NOT reused as resolveValidNodeIds() above: that helper also
-// drops disabled-but-still-existing nodes, which is correct only when the
-// admin explicitly resubmits nodeIds[] (the panel UI only sends back
-// enabled ones). Here nodeIds[] was NOT part of this request, so a node
-// the admin merely disabled must stay assigned -- only ids whose
-// node:{uuid} record is entirely gone (genuinely deleted) are dropped.
-async function stripDeletedNodeIds(env, nodeIds) {
-  const result = [];
-  for (const id of nodeIds) {
-    const node = await kvGetJson(env, `node:${id}`, null);
-    if (node) result.push(id);
   }
   return result;
 }

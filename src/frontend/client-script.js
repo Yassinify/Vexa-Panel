@@ -4,12 +4,21 @@
 // plain classic script (not an ES module), so it cannot use `import`.
 // =====================================================================
 
+import { RIPPLE_SCRIPT } from "./ripple-script.js";
+
 export const CLIENT_SCRIPT = `
 const state = {
   token: localStorage.getItem("vexa_token") || null,
   view: "login",
   loading: false,
   errorMsg: "",
+
+  // Whether admin authentication has been initialized yet (D1 auth_config
+  // row exists, or a complete Cloudflare Secret triplet is bound) — null
+  // until the first /api/version check resolves it. The login view uses
+  // this to decide between the normal "Sign In" form and the first-run
+  // "choose a password" form; there is no separate /secret page anymore.
+  authInitialized: null,
 
   users: [],
   userSearch: "",
@@ -133,6 +142,8 @@ const ICONS = {
   settings: '<path stroke-linecap="round" stroke-linejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 0 1 1.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.559.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.894.149c-.424.07-.764.383-.929.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 0 1-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.398.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 0 1-.12-1.45l.527-.737c.25-.35.272-.806.108-1.204-.165-.397-.506-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.108-1.204l-.526-.738a1.125 1.125 0 0 1 .12-1.45l.773-.773a1.125 1.125 0 0 1 1.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />',
   logout: '<path stroke-linecap="round" stroke-linejoin="round" d="M5.636 5.636a9 9 0 1 0 12.728 0M12 3v9" />',
   log: '<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />',
+  sortAsc: '<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18" />',
+  sortDesc: '<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 13.5 12 21m0 0-7.5-7.5M12 21V3" />',
 };
 function icon(name, extraClass) {
   const paths = ICONS[name] || "";
@@ -169,24 +180,45 @@ function sortRows(rows, sort) {
 
 function sortIndicator(sort, key) {
   if (sort.key !== key) return "";
-  return sort.dir === "asc" ? " ↑" : " ↓";
+  // Dedicated .sort-icon wrapper (inline-flex sizing) — not .nav-icon,
+  // which is scoped to .sidebar-link.
+  return '<span class="sort-icon">' + (sort.dir === "asc" ? icon("sortAsc") : icon("sortDesc")) + '</span>';
 }
 
 // ---------------------------------------------------------------------
 // LOGIN
 // ---------------------------------------------------------------------
+// state.authInitialized === false means no admin authentication exists
+// yet anywhere (no D1 auth_config row, no complete Secret triplet) — the
+// first-run "choose a password" form is shown in place of the normal
+// login form, right on this same page. There is no separate /secret
+// setup route; first-run and normal login are two states of one page.
 function renderLoginView() {
+  const firstRun = state.authInitialized === false;
   return \`
     <div class="login-wrap">
       <div class="card login-card">
         <img class="logo-glow" src="/favicon.svg" alt="VEXA logo">
         <div class="brand">VEXA</div>
-        <div class="brand-sub">Secure subscription manager</div>
-        <div class="field-group" style="text-align:left;">
-          <label class="field-label">Password</label>
-          <input type="password" id="loginPassword" placeholder="Enter admin password" />
-        </div>
-        <button class="btn-primary" style="width:100%;" onclick="doLogin()">Sign In</button>
+        <div class="brand-sub">\${firstRun ? "Choose an admin password to finish setup" : "Secure subscription manager"}</div>
+        \${firstRun ? \`
+          <div class="field-group" style="text-align:left;">
+            <label class="field-label">Password</label>
+            <input type="password" id="loginPassword" placeholder="Choose a password" />
+          </div>
+          <div class="field-group" style="text-align:left;">
+            <label class="field-label">Confirm Password</label>
+            <input type="password" id="loginPasswordConfirm" placeholder="Confirm password" />
+          </div>
+          <div class="helper-text" style="text-align:left;margin-bottom:6px;">This is the password you'll log in with. The plaintext password is never stored — only a hash of it is kept.</div>
+          <button class="btn-primary" style="width:100%;" onclick="doCreateAccount()">Create Account</button>
+        \` : \`
+          <div class="field-group" style="text-align:left;">
+            <label class="field-label">Password</label>
+            <input type="password" id="loginPassword" placeholder="Enter admin password" />
+          </div>
+          <button class="btn-primary" style="width:100%;" onclick="doLogin()">Sign In</button>
+        \`}
         <div class="error-text" id="loginError">\${state.errorMsg || ""}</div>
       </div>
     </div>
@@ -215,6 +247,62 @@ async function doLogin() {
     state.view = "dashboard";
     history.pushState(null, "", VIEW_PATHS.dashboard);
     await bootAuthenticated();
+  } catch (e) {
+    state.errorMsg = "Connection error.";
+    render();
+  }
+}
+
+// First-run account creation: validates the two password fields client-
+// side, then calls the existing D1-backed initialization endpoint
+// (POST /api/secret/generate -> handleInitializeD1Auth, unauthenticated
+// only while auth isn't configured yet). The server generates and
+// persists admin_salt/admin_password_hash/jwt_secret into D1 itself and
+// never returns any of them here. Per the intended first-run UX, this
+// does not log the new admin in directly — it returns to the normal
+// login form so the admin enters the password they just chose, exactly
+// once, before reaching the panel.
+async function doCreateAccount() {
+  const password = document.getElementById("loginPassword").value;
+  const confirm = document.getElementById("loginPasswordConfirm").value;
+  state.errorMsg = "";
+  if (!password) {
+    state.errorMsg = "Choose a password.";
+    render();
+    return;
+  }
+  if (password !== confirm) {
+    state.errorMsg = "Passwords do not match.";
+    render();
+    return;
+  }
+  try {
+    const res = await fetch("/api/secret/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      state.errorMsg = data && data.error === "already_configured"
+        ? "Setup already completed — please sign in."
+        : "Could not complete setup. Try again.";
+      // Re-check in case another request already finished first-run setup
+      // concurrently (see initAuthConfigIfAbsent()'s race-safety in
+      // src/d1.js) — either way, the normal login form is now correct.
+      if (data && data.error === "already_configured") state.authInitialized = true;
+      render();
+      return;
+    }
+    // Setup complete. Log out once (there is no session to hold yet
+    // anyway) and return to the normal login form per the intended
+    // first-run flow: Create Account -> logged out -> Login -> Logged in.
+    state.authInitialized = true;
+    state.errorMsg = "";
+    state.token = null;
+    localStorage.removeItem("vexa_token");
+    render();
+    showToast("Account created — sign in with your new password.");
   } catch (e) {
     state.errorMsg = "Connection error.";
     render();
@@ -893,7 +981,7 @@ function renderNodePicker() {
       \${selected.length ? \`
         <div class="badge-row" style="margin-bottom:8px;flex-wrap:wrap;">
           \${selected.map(n => \`
-            <span class="badge">\${escapeHtml(n.name)} <button type="button" class="btn-icon" style="color:#eab308;width:16px;height:16px;" title="Remove" onclick="removeNodeFromUser('\${n.id}')">\${icon("delete")}</button></span>
+            <span class="badge">\${escapeHtml(n.name)} <button type="button" class="btn-icon icon-delete" style="width:16px;height:16px;" title="Remove" onclick="removeNodeFromUser('\${n.id}')">\${icon("delete")}</button></span>
           \`).join("")}
         </div>
       \` : ""}
@@ -1117,15 +1205,8 @@ function renderModal() {
         <div class="card modal-card small">
           <div class="modal-title">Settings</div>
           <button class="btn-primary" style="width:100%;" onclick="location.href='/change-panel-password'">Change Panel Password</button>
-          <div class="helper-text" style="margin-bottom:16px;">
-            Rotates only ADMIN_PASSWORD_HASH — update just that one value in
-            <strong>Variables and Secrets</strong> (type <strong>Secret</strong>). Sessions and links keep working.
-          </div>
-          <button class="btn-danger btn-secondary" style="width:100%;" onclick="location.href='/secret?action=destroy'">Regenerate All Secrets</button>
           <div class="helper-text">
-            Step-by-step walkthrough to replace ADMIN_SALT, ADMIN_PASSWORD_HASH, and JWT_SECRET
-            all at once. Every existing session, login token, and subscription link stops
-            working until the new values are saved in Cloudflare.
+            Rotates your admin password. Sessions and subscription links keep working.
           </div>
           <div class="modal-footer">
             <button class="btn-secondary" onclick="closeModal()">Close</button>
@@ -1161,8 +1242,12 @@ function render() {
   const app = document.getElementById("app");
   if (state.view === "login") {
     app.innerHTML = renderLoginView();
+    const submit = state.authInitialized === false ? doCreateAccount : doLogin;
     document.getElementById("loginPassword")?.addEventListener("keydown", e => {
-      if (e.key === "Enter") doLogin();
+      if (e.key === "Enter") submit();
+    });
+    document.getElementById("loginPasswordConfirm")?.addEventListener("keydown", e => {
+      if (e.key === "Enter") submit();
     });
     return;
   }
@@ -1180,37 +1265,17 @@ function render() {
 }
 
 // ---------------------------------------------------------------------
-// MATERIAL RIPPLE — a single delegated listener (attached once, not
-// per-render) spawns a \`.ripple-ink\` span at the pointer-down point on
-// any ripple-eligible element, sized to cover it, then removes itself
-// after the CSS animation finishes. Table rows are intentionally excluded:
-// <tr> doesn't reliably support position/overflow for this across browsers.
+// MATERIAL RIPPLE — shared with the standalone pages (src/pages/
+// d1-setup.js, src/pages/change-password-page.js) via RIPPLE_SCRIPT
+// (src/frontend/ripple-script.js), so the SPA and those pages run the
+// exact same implementation instead of each keeping their own copy. See
+// that file for the full behavior comment (selector, light/dark ink,
+// pointerdown-only, reduced-motion handling via CSS).
 // ---------------------------------------------------------------------
-const RIPPLE_SELECTOR = ".btn-primary, .btn-secondary, .btn-danger, .btn-icon, .mobile-fab, .sidebar-link, .format-menu-item, .switch";
-const RIPPLE_LIGHT_SELECTOR = ".btn-primary, .btn-danger, .mobile-fab, .switch.on";
-function attachRippleEffect() {
-  document.addEventListener("pointerdown", e => {
-    if (e.button === 1 || e.button === 2) return;
-    const target = e.target.closest(RIPPLE_SELECTOR);
-    if (!target || target.disabled) return;
-    const rect = target.getBoundingClientRect();
-    const size = Math.max(rect.width, rect.height) * 2;
-    const ripple = document.createElement("span");
-    ripple.className = "ripple-ink";
-    ripple.style.width = ripple.style.height = size + "px";
-    ripple.style.left = (e.clientX - rect.left - size / 2) + "px";
-    ripple.style.top = (e.clientY - rect.top - size / 2) + "px";
-    ripple.style.background = target.matches(RIPPLE_LIGHT_SELECTOR) ? "rgba(255,255,255,.45)" : "rgba(0,0,0,.15)";
-    target.appendChild(ripple);
-    const remove = () => ripple.remove();
-    ripple.addEventListener("animationend", remove);
-    setTimeout(remove, 700); // fallback if animationend never fires
-  });
-}
+${RIPPLE_SCRIPT}
 
 (async function init() {
   document.addEventListener("keydown", e => { if (e.key === "Escape") closeSidebar(); });
-  attachRippleEffect();
 
   if (state.token) {
     try {
@@ -1227,6 +1292,24 @@ function attachRippleEffect() {
   } else {
     state.view = "login";
     if (location.pathname !== "/login") history.replaceState(null, "", "/login");
+  }
+
+  // No valid session at this point (either no token was stored, or the
+  // token was rejected above). Before showing the login form, check
+  // whether authentication has even been initialized yet — this is what
+  // decides between the normal "Sign In" form and the first-run "choose a
+  // password" form (see renderLoginView()). /api/version is public and
+  // unauthenticated, so this call works even on a completely fresh
+  // deployment with no admin account yet.
+  try {
+    const res = await fetch("/api/version");
+    const data = await res.json();
+    state.authInitialized = typeof data.authInitialized === "boolean" ? data.authInitialized : true;
+  } catch (e) {
+    // Connection error: fall back to the normal login form rather than
+    // guessing first-run — doLogin()'s own error handling already covers
+    // a subsequent connection failure on submit.
+    state.authInitialized = true;
   }
   render();
 })();

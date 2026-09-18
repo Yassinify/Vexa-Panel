@@ -6,7 +6,7 @@ import { mergeUserNodes } from "./merge.js";
 import { buildFormattedSubResponse } from "./output-formats.js";
 import { htmlResponse } from "./http.js";
 import { renderUserSubPage } from "./pages/sub-page.js";
-import { kvGetJson } from "./kv.js";
+import { getUserRowById, getUserNodeIds, rowToUser } from "./d1.js";
 
 // Distinguishes a browser opening the link directly from a VPN client app
 // fetching it as a subscription source, so one URL can serve both: a
@@ -26,13 +26,16 @@ export async function handlePublicUserSub(id, request, env, url) {
     return new Response("Not found", { status: 404 });
   }
 
-  const user = await kvGetJson(env, `user:${id}`, null);
-  if (!user) return new Response("Not found", { status: 404 });
+  const row = await getUserRowById(env, id);
+  if (!row) return new Response("Not found", { status: 404 });
 
   // A disabled user's link stops serving nodes immediately.
-  if (user.enabled === false) {
+  if (row.enabled === 0) {
     return new Response("Not found", { status: 404 });
   }
+
+  const nodeIds = await getUserNodeIds(env, id);
+  const user = rowToUser(row, nodeIds);
 
   const mergeResult = await mergeUserNodes(user, env);
 

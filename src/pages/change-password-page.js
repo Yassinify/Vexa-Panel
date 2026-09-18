@@ -2,10 +2,12 @@
 // VEXA — /change-panel-password PAGE: standalone deep link reached from
 // the panel's Settings menu. Skips straight to the change-password form if
 // a still-valid session token is already in localStorage; otherwise asks
-// for the current password first, same as the /secret regen gate.
+// for the current password first (same password-gate pattern the old
+// /secret page used, now standalone here since /secret no longer exists).
 // =====================================================================
 
 import { STYLES } from "../frontend/styles.js";
+import { RIPPLE_SCRIPT } from "../frontend/ripple-script.js";
 
 export function renderChangePanelPasswordPage() {
   return `<!DOCTYPE html>
@@ -19,11 +21,11 @@ export function renderChangePanelPasswordPage() {
 </head>
 <body data-theme="dark">
 <div class="login-wrap">
-  <div class="glass-card login-card" style="max-width:520px;text-align:left;">
+  <div class="card login-card" style="max-width:520px;text-align:left;">
     <div style="text-align:center;">
-      <div class="logo-glow">🔑</div>
+      <img class="logo-glow" src="/favicon.svg" alt="VEXA logo">
       <div class="brand">Change Panel Password</div>
-      <div class="brand-sub">Rotates only ADMIN_PASSWORD_HASH — sessions and links keep working</div>
+      <div class="brand-sub">Sessions and subscription links keep working</div>
     </div>
     <div id="changePwBody"></div>
     <button class="btn-secondary" style="width:100%;margin-top:14px;" onclick="location.href='/panel'">Back to Panel</button>
@@ -36,7 +38,7 @@ function fieldsHtml(values) {
   return Object.entries(values).map(([k, v]) => \`
     <div class="field-group">
       <label class="field-label">\${k}</label>
-      <input readonly value="\${v}" onclick="this.select()" style="font-family:monospace;font-size:12px;" />
+      <input readonly value="\${v}" onclick="this.select()" style="font-family:var(--mono-stack);font-size:12px;" />
     </div>
   \`).join("");
 }
@@ -89,17 +91,13 @@ function renderForm() {
   document.getElementById("changePwBody").innerHTML = \`
     <div class="field-group">
       <label class="field-label">New Admin Password</label>
-      <input type="password" id="newPw" placeholder="At least 8 characters" />
+      <input type="password" id="newPw" placeholder="New password" />
     </div>
     <button class="btn-primary" style="width:100%;" id="submitBtn">Change Password</button>
     <div class="error-text" id="formError"></div>
   \`;
   const submit = async () => {
     const password = document.getElementById("newPw").value;
-    if (password.length < 8) {
-      document.getElementById("formError").textContent = "Password must be at least 8 characters.";
-      return;
-    }
     document.getElementById("changePwBody").innerHTML = '<div class="skel" style="width:100%;height:36px;margin-top:6px;"></div>';
     const res = await fetch("/api/secret/change-password", {
       method: "POST",
@@ -115,24 +113,42 @@ function renderForm() {
       document.getElementById("formError").textContent = "Could not change password. Try again.";
       return;
     }
-    const data = await res.json();
+    let data = null;
+    try { data = await res.json(); } catch (e) { data = null; }
+
+    if (data && data.values) {
+      // Secret-backed: unchanged legacy manual-copy flow.
+      document.getElementById("changePwBody").innerHTML = \`
+        <div class="helper-text" style="margin:16px 0;">
+          Copy this value now — the plaintext password is not stored anywhere and cannot be
+          recovered after you leave this page. ADMIN_SALT and JWT_SECRET are unchanged, so
+          existing sessions stay valid.
+        </div>
+        \${fieldsHtml(data.values)}
+        <button class="btn-primary" style="width:100%;margin-top:6px;" id="copyAllBtn">Copy Value</button>
+        <div class="helper-text" style="margin-top:14px;">
+          In <strong>Cloudflare Dashboard → Workers → Settings → Variables and Secrets</strong>,
+          update <strong>ADMIN_PASSWORD_HASH</strong> with this value. Set its type to
+          <strong>Secret</strong> (not the default Text), then save and redeploy.
+        </div>
+      \`;
+      document.getElementById("copyAllBtn").onclick = () => {
+        navigator.clipboard.writeText(copyAllText(data.values));
+        showToast("Copied — paste into Cloudflare now.");
+      };
+      return;
+    }
+
+    // D1-backed: the new hash was already persisted server-side (salt and
+    // JWT secret untouched, so existing sessions stay valid).
     document.getElementById("changePwBody").innerHTML = \`
       <div class="helper-text" style="margin:16px 0;">
-        Copy this value now — the plaintext password is not stored anywhere and cannot be
-        recovered after you leave this page. ADMIN_SALT and JWT_SECRET are unchanged, so
-        existing sessions stay valid.
+        Password updated. ADMIN_SALT and JWT_SECRET are unchanged, so existing sessions stay valid.
       </div>
-      \${fieldsHtml(data.values)}
-      <button class="btn-primary" style="width:100%;margin-top:6px;" id="copyAllBtn">Copy Value</button>
-      <div class="helper-text" style="margin-top:14px;">
-        In <strong>Cloudflare Dashboard → Workers → Settings → Variables and Secrets</strong>,
-        update <strong>ADMIN_PASSWORD_HASH</strong> with this value. Set its type to
-        <strong>Secret</strong> (not the default Text), then save and redeploy.
-      </div>
+      <button class="btn-secondary" style="width:100%;" id="donePwBtn">Done</button>
     \`;
-    document.getElementById("copyAllBtn").onclick = () => {
-      navigator.clipboard.writeText(copyAllText(data.values));
-      showToast("Copied — paste into Cloudflare now.");
+    document.getElementById("donePwBtn").onclick = () => {
+      location.href = "/panel";
     };
   };
   document.getElementById("submitBtn").onclick = submit;
@@ -144,6 +160,7 @@ if (sessionToken) {
   renderGate();
 }
 </script>
+<script>${RIPPLE_SCRIPT}</script>
 </body>
 </html>`;
 }

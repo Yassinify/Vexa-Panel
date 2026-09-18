@@ -7,7 +7,16 @@ import { parseXrayJsonSource } from "./xray-json.js";
 import { parseClashYamlSource } from "./clash-yaml.js";
 import { generateNodeUri } from "./uri-codec.js";
 import { json, safeJson } from "./http.js";
-import { SUB_CACHE_TTL_SECONDS, subCacheKeyFor, kvGetJson } from "./kv.js";
+import {
+  subCacheKeyFor,
+  putSubscriptionCache,
+  getSubscriptionCache,
+  getNodeRowById,
+  rowToNode,
+  getUserRowById,
+  getUserNodeIds,
+  rowToUser,
+} from "./d1.js";
 
 function tryBase64Decode(str) {
   try {
@@ -254,8 +263,9 @@ export function fingerprintNode(uri) {
 
 // ---------------------------------------------------------------------
 // MERGE: combine every source on a user (raw links, subscription URLs,
-// JSON, YAML) into one deduped node list, with a KV fallback cache so a
-// temporarily-unreachable subscription doesn't blank out a client's config.
+// JSON, YAML) into one deduped node list, with a D1-backed fallback cache
+// so a temporarily-unreachable subscription doesn't blank out a client's
+// config.
 // ---------------------------------------------------------------------
 // Resolves a User's Node references (ordered) to their current, enabled
 // Node Source objects. Missing or disabled Nodes are skipped silently —
@@ -266,7 +276,8 @@ async function resolveNodeSources(user, env) {
   if (nodeIds.length === 0) return [];
   const resolved = [];
   for (const id of nodeIds) {
-    const node = await kvGetJson(env, `node:${id}`, null);
+    const row = await getNodeRowById(env, id);
+    const node = rowToNode(row);
     if (node && node.enabled !== false && node.source) {
       resolved.push(node.source);
     }
@@ -290,33 +301,23 @@ export async function mergeUserNodes(user, env) {
         allNodes.push(...nodes);
         // Remember this successful fetch so a later outage of this same
         // source can fall back to it instead of silently dropping nodes.
+        // putSubscriptionCache() already swallows its own write failures
+        // (src/d1.js), so a cache-write failure still can't fail the merge.
         if (cacheKey) {
-          try {
-            await env.STORAGE.put(
-              cacheKey,
-              JSON.stringify({ nodes, fetchedAt: Date.now() }),
-              {
-                expirationTtl: SUB_CACHE_TTL_SECONDS,
-              },
-            );
-          } catch {
-            /* cache write failure shouldn't fail the merge itself */
-          }
+          await putSubscriptionCache(env, cacheKey, nodes);
         }
       } catch (e) {
         let usedCache = false;
         let cacheAgeMs = null;
         if (cacheKey) {
-          try {
-            const cachedRaw = await env.STORAGE.get(cacheKey);
-            if (cachedRaw) {
-              const cached = JSON.parse(cachedRaw);
-              allNodes.push(...cached.nodes);
-              usedCache = true;
-              cacheAgeMs = Date.now() - cached.fetchedAt;
-            }
-          } catch {
-            /* cache read/parse failure: fall through to reporting the error below */
+          // getSubscriptionCache() returns null on a miss, an expired entry,
+          // or a read failure (src/d1.js) -- same "no fallback available"
+          // outcome as the old KV get()+JSON.parse() try/catch had.
+          const cached = await getSubscriptionCache(env, cacheKey);
+          if (cached) {
+            allNodes.push(...cached.nodes);
+            usedCache = true;
+            cacheAgeMs = Date.now() - cached.fetchedAt;
           }
         }
         errors.push({
@@ -368,8 +369,10 @@ export async function mergePreviewHandler(request, env) {
   if (!body || !body.userId)
     return json({ error: "user_id_required" }, 400);
 
-  const user = await kvGetJson(env, `user:${body.userId}`, null);
-  if (!user) return json({ error: "not_found" }, 404);
+  const row = await getUserRowById(env, body.userId);
+  if (!row) return json({ error: "not_found" }, 404);
+  const nodeIds = await getUserNodeIds(env, body.userId);
+  const user = rowToUser(row, nodeIds);
 
   const result = await mergeUserNodes(user, env);
 

@@ -3,7 +3,7 @@
 // =====================================================================
 
 import { json } from "./http.js";
-import { ensureMigrated } from "./kv.js";
+import { ensureD1Migrated } from "./d1.js";
 import {
   getStats,
   listUsers,
@@ -22,7 +22,13 @@ import {
 } from "./nodes.js";
 
 export async function handleApi(pathname, method, request, env, authPayload) {
-  await ensureMigrated(env);
+  // ensureD1Migrated() (src/d1.js) is self-contained per the corrected
+  // DK-16 scope: it does not depend on src/kv.js's ensureMigrated() having
+  // run, and internally handles legacy KV data (if any) behind its own
+  // env.STORAGE guard. Runs before any handler below touches D1, so no
+  // D1-backed read here can observe un-migrated data. Reached only after
+  // requireAuth() has already validated the caller (src/router.js).
+  await ensureD1Migrated(env);
 
   if (pathname === "/api/stats" && method === "GET") return getStats(env);
 

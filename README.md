@@ -1,4 +1,4 @@
-# Vexa Panel — VPN Subscription Manager for Cloudflare Workers - V4
+# Vexa Panel — VPN Subscription Manager for Cloudflare Workers
 
 > A self-hosted VPN subscription management panel that runs entirely on **Cloudflare Workers**. Vexa Panel manages Users and reusable Nodes, combines subscription sources, and generates unified subscription links for VLESS, VMess, Trojan, Shadowsocks, Hysteria2, and more.
 
@@ -26,7 +26,7 @@ There is no separate "Profile" layer — sources live directly on the User, and 
 
 - **Smart deduplication:** identical proxies (same host, credentials, transport, SNI, path, and security settings) collapse into one entry, even when they come from a mix of a User's own sources and their assigned Nodes.
 - **Fault-tolerant caching:** if a remote subscription URL is temporarily unreachable, a cached copy (kept up to 14 days) is served instead of dropping those proxies.
-- **Guided first-time setup:** if the KV namespace isn't bound yet, the Worker shows a step-by-step setup page instead of a generic error.
+- **Guided first-time setup:** if the D1 database isn't bound yet, the Worker shows a step-by-step setup page instead of a generic error.
 - **Single-admin authentication:** login is protected with a PBKDF2-hashed password and short-lived signed session tokens, with rate-limiting on login attempts.
 - **Built-in admin UI:** Dashboard, Users, Nodes, Log, and Settings views are served directly by the Worker.
 
@@ -35,62 +35,46 @@ There is no separate "Profile" layer — sources live directly on the User, and 
 ## 🧰 What You Need
 
 - A [Cloudflare account](https://dash.cloudflare.com/sign-up).
-- Access to Cloudflare Workers, Workers KV, and Durable Objects on that account.
+- Access to Cloudflare Workers and D1 on that account.
 - The `worker.js` file attached to this repository's latest GitHub Release.
 
 Nothing is installed on your computer, and nothing runs on your computer. Cloudflare hosts and executes the panel. The only tool you need is a web browser.
 
 ---
 
-## 🧭 First, Five Cloudflare Words
+## 🧭 First, Three Cloudflare Words
 
-If you have never used Cloudflare Workers, these five words are all you need to follow the guide. Nothing here assumes you know them already.
+If you have never used Cloudflare Workers, these three words are all you need to follow the guide. Nothing here assumes you know them already.
 
 - **Worker** — a small program Cloudflare runs for you on its own servers. Vexa Panel *is* a Worker. You create an empty one and paste Vexa Panel's code into it.
-- **KV Namespace** — a storage box Cloudflare provides, where a program can save data and read it back later. Vexa Panel keeps all of its data in one of these.
-- **Durable Object** — a special Cloudflare component used for coordination: it makes sure two changes arriving at the same moment cannot overwrite each other. Vexa Panel uses exactly one, called `IndexCoordinator`.
-- **Binding** — the connection between your Worker and a resource, given a **variable name**. A Worker cannot touch a KV Namespace or a Durable Object until it has been bound, under the exact variable name the program looks for.
-- **Secret** — a value saved with your Worker and encrypted by Cloudflare. Cloudflare also offers plain **Text** variables, which are *not* encrypted. Vexa Panel's three login values must be saved as **Secret**, not Text.
+- **D1 Database** — a small SQL database Cloudflare provides, where a program can save data and read it back later. Vexa Panel keeps all of its data (Users, Nodes, dashboard stats, activity log, login rate limiting, and its own authentication configuration) in one of these.
+- **Binding** — the connection between your Worker and a resource, given a **variable name**. A Worker cannot touch a D1 database until it has been bound, under the exact variable name the program looks for.
 
 ### "Create" vs "Bind" — the one distinction that trips people up
 
-> **Create** means making the Cloudflare resource itself exist (for example, a KV Namespace).
+> **Create** means making the Cloudflare resource itself exist (for example, a D1 database).
 > **Bind** means connecting that already-existing resource to your Worker, under the variable name Vexa Panel expects.
 
 They are two separate actions, done on two different screens, and **creating comes first**. A resource that exists but is not bound is invisible to the Worker. A binding that points at nothing cannot be saved.
 
-This also means each resource ends up with **two names**:
+This also means the resource ends up with **two names**:
 
 | | You choose it? | Where it is used | Example |
 | --- | --- | --- | --- |
-| **Resource name** | Yes, anything you like | Only in Cloudflare's own lists, so you can recognize it | `vexa-panel-storage` |
-| **Binding variable name** | No — fixed by Vexa Panel | Inside the code, to find the resource | `STORAGE` |
+| **Resource name** | Yes, anything you like | Only in Cloudflare's own lists, so you can recognize it | `vexa-panel-db` |
+| **Binding variable name** | No — fixed by Vexa Panel | Inside the code, to find the resource | `DB` |
 
 The guide below always says which of the two it is asking for.
 
 ---
 
-## ⚠️ One Cloudflare Limitation, Before You Start
-
-Vexa Panel needs a **Durable Object** class named `IndexCoordinator` (bound as `INDEX_COORDINATOR`) to keep data consistent when several changes happen at the same moment. It is required — creating, updating and deleting Users and Nodes, the one-time data migration, and dashboard statistics all call into it.
-
-Per current official Cloudflare documentation, a **new** Durable Object class is created only by a Worker upload that carries the class declaration from a Wrangler configuration file — the declarative [`exports` field](https://developers.cloudflare.com/durable-objects/reference/durable-objects-migrations/), or the legacy [`migrations` array](https://developers.cloudflare.com/durable-objects/reference/durable-object-class-migrations-legacy/) this repository uses — applied at deploy time. Cloudflare's documentation states that these bindings "must be configured at upload time", and describes no Dashboard form that creates a new SQLite-backed Durable Object class.
-
-What the Cloudflare Dashboard **can** do is bind a Durable Object namespace that **already exists** on the account: **Settings → Bindings → Add → Durable Object**, then select an existing namespace.
-
-**What this means for you:** every step below is fully doable in the Dashboard **except Step 6**. If the `IndexCoordinator` namespace does not already exist on your Cloudflare account, the Dashboard alone cannot create it, and deployment cannot be completed Dashboard-only. This is a gap in what Cloudflare currently exposes, not something Vexa Panel chooses. Step 6 explains exactly what to check and what to do if it isn't there.
-
-This limitation is described honestly here rather than papered over with Dashboard clicks that do not exist.
-
----
-
 ## 🌐 Deploy With the Cloudflare Dashboard
 
-Everything below happens in your web browser, at [dash.cloudflare.com](https://dash.cloudflare.com/). Do the steps in order — each one depends on the one before it.
+Everything below happens in your web browser, at [dash.cloudflare.com](https://dash.cloudflare.com/). Do the steps in order — each one depends on the one before it. No CLI, Node.js, npm, or Wrangler command is needed for any of it.
 
-The order is: **get the file → create the Worker → paste the code → create storage → bind storage → bind the Durable Object → deploy → generate your login values → save them as Secrets → deploy again → create a User → use the subscription link.**
+The order is: **get the file → create the Worker → paste the code → create the D1 database → bind it as `DB` → deploy → complete initial setup → log in → create a User → use the subscription link.**
 
-Cloudflare occasionally renames menu items. Where the exact label differs, the section names ("Bindings", "Variables and Secrets") are the ones to look for.
+Cloudflare occasionally renames menu items. Where the exact label differs, the section names ("Bindings", "D1 SQL Database") are the ones to look for.
 
 ### Step 1 — Get `worker.js` from the GitHub Release
 
@@ -115,153 +99,78 @@ This creates the empty program that Vexa Panel will live inside.
 3. Back in the Cloudflare editor, select everything in the starter file and paste `worker.js` over it, so the starter code is completely replaced.
 4. Save and deploy from the editor.
 
-The Worker now contains Vexa Panel's code, but it will not work yet: it has nowhere to store data and no login values. Steps 4 to 9 fix that.
+The Worker now contains Vexa Panel's code, but it will not work yet: it has nowhere to store data. Steps 4 to 6 fix that.
 
-### Step 4 — Create the KV Namespace (the storage itself)
+### Step 4 — Create the D1 Database (the storage itself)
 
 This step **creates** the storage. It does not yet connect it to your Worker — that is Step 5.
 
-**What this storage holds.** Vexa Panel keeps all of its saved data in one KV Namespace: your Users, your Nodes, the dashboard statistics, the recent-activity list, the login rate-limit counters, and the fallback cache of subscription sources. If this is missing, the panel has nowhere to put anything and shows a setup screen instead of the panel.
+**What this storage holds.** Vexa Panel keeps all of its saved data in one D1 database: your Users, your Nodes, the dashboard statistics, the recent-activity list, the login rate-limit counters, the fallback cache of subscription sources, and — unless you configure Cloudflare Secrets instead (see [Secrets / Admin Password](#-secrets--admin-password) below) — the admin authentication values themselves. If this is missing, the panel has nowhere to put anything and shows a setup screen instead of the panel.
 
-1. In the Cloudflare Dashboard sidebar, go to **Storage & Databases → KV**. (On some Dashboard versions this is listed simply as **KV** under the storage area.)
-2. Select **Create** / **Create namespace**.
-3. Type a name for the namespace. **You choose this name freely** — for example:
+1. In the Cloudflare Dashboard sidebar, go to **Storage & Databases → D1 SQL Database**.
+2. Select **Create**.
+3. Type a name for the database. **You choose this name freely** — for example:
 
    ```
-   vexa-panel-storage
+   vexa-panel-db
    ```
 
 4. Confirm/create it.
 
-That's all for this step. The namespace now exists in your account, but your Worker still cannot see it.
+That's all for this step. The database now exists in your account, but your Worker still cannot see it.
 
 > ⚠️ **Do not confuse these two names:**
-> `vexa-panel-storage` is the **KV Namespace name** — a label you picked, used only so you can find it in Cloudflare's list.
-> `STORAGE` is the **binding name** — fixed by Vexa Panel, and the name the code uses to find the storage.
-> They are two different things, and both are needed. The next step is where `STORAGE` is entered.
+> `vexa-panel-db` is the **database name** — a label you picked, used only so you can find it in Cloudflare's list.
+> `DB` is the **binding name** — fixed by Vexa Panel, and the name the code uses to find the database.
+> They are two different things, and both are needed. The next step is where `DB` is entered.
 
-### Step 5 — Bind the KV Namespace to the Worker as `STORAGE`
+### Step 5 — Bind the D1 Database to the Worker as `DB`
 
-This step **binds** the namespace you created in Step 4 to your Worker.
+This step **binds** the database you created in Step 4 to your Worker.
 
 1. Go back to **Workers & Pages** and open your Worker.
 2. Open the **Settings** tab, then find **Bindings** (may be shown as **Variables and Bindings**).
-3. Select **Add**, then choose the binding type **KV Namespace**.
+3. Select **Add**, then choose the binding type **D1 database**.
 4. In the **Variable name** field, type exactly:
 
    ```
-   STORAGE
+   DB
    ```
 
-   All uppercase, no spaces. The code looks for `env.STORAGE` and for nothing else — a different spelling means the Worker will not find the storage.
-5. In the **KV namespace** field, select the namespace you created in Step 4 (`vexa-panel-storage`, or whatever you named it).
+   All uppercase, no spaces. The code looks for `env.DB` and for nothing else — a different spelling means the Worker will not find the database.
+5. In the **D1 database** field, select the database you created in Step 4 (`vexa-panel-db`, or whatever you named it).
 6. Save and deploy.
 
-If you open the panel before this binding exists, Vexa Panel shows its own "KV Namespace Required" page listing these same instructions.
+If you open the panel before this binding exists, Vexa Panel shows its own "D1 Database Required" page listing these same instructions.
 
-### Step 6 — Bind the `IndexCoordinator` Durable Object as `INDEX_COORDINATOR`
+### Step 6 — Deploy
 
-This is a **different resource from KV**, with its own binding, and it is the one step Cloudflare's Dashboard may not be able to complete. Read [the limitation section above](#️-one-cloudflare-limitation-before-you-start) if you skipped it.
-
-Again there are two names, and again they are not interchangeable:
-
-- `IndexCoordinator` is the **class name** — the component inside Vexa Panel's code.
-- `INDEX_COORDINATOR` is the **binding variable name** — how the code reaches that component.
-
-What it does: it makes sure that when two changes arrive at the same instant (two Users created together, a Node renamed while it is being deleted), one cannot silently overwrite the other. Creating, editing and deleting Users and Nodes, the one-time data migration, and the dashboard statistics all go through it.
-
-1. Still in your Worker's **Settings → Bindings**, select **Add**, then choose the binding type **Durable Object**.
-2. In the **Variable name** field, type exactly:
-
-   ```
-   INDEX_COORDINATOR
-   ```
-
-3. In the **Durable Object namespace** field, look for a namespace whose class is:
-
-   ```
-   IndexCoordinator
-   ```
-
-#### If `IndexCoordinator` appears in that list
-
-Select it, save, and deploy. The binding is done — continue to Step 7.
-
-It appears only if that class has already been provisioned on this Cloudflare account, for example by an earlier Vexa Panel deployment on the same account.
-
-#### If `IndexCoordinator` does not appear in that list
-
-Stop here — and note that this is not a mistake on your side. **There is no Dashboard action that creates it.**
-
-Cloudflare creates a new SQLite-backed Durable Object class only from a Worker upload that carries the class declaration in a Wrangler configuration file, applied at deploy time. Pasting `worker.js` into the Dashboard editor uploads the code — the `IndexCoordinator` class is inside that file — but the editor sends no such class declaration, so Cloudflare provisions no namespace for it. This repository's `wrangler.jsonc` already contains the correct declaration (binding `INDEX_COORDINATOR`, class `IndexCoordinator`, and the `new_sqlite_classes` migration), but applying that declaration is a deploy-time operation the Dashboard does not perform.
-
-So: with the current Vexa Panel architecture, a Worker created purely by uploading `worker.js` through the Dashboard cannot be fully provisioned on an account where this class does not already exist. This is a gap in what Cloudflare's Dashboard exposes today, not a limitation Vexa Panel chose, and it is stated here rather than hidden behind Dashboard clicks that do not exist.
-
-What happens if you continue without this binding: the pages still load and you can still log in, but the panel's data calls fail with an `internal_error` response, and nothing can be created or saved.
-
-### Step 7 — Deploy
-
-Deploy the Worker again so the bindings from Steps 5 and 6 are live on the running version. Your Worker's address is shown at the top of its page in the Dashboard:
+Deploy the Worker again so the binding from Step 5 is live on the running version. Your Worker's address is shown at the top of its page in the Dashboard:
 
 ```
 https://<your-worker-name>.<your-subdomain>.workers.dev
 ```
 
-### Step 8 — Open the Worker URL and generate your login values
+### Step 7 — Complete initial setup and choose your admin password
 
-You never invent Vexa Panel's secret values yourself. The running Worker generates them for you here, and you paste them back into Cloudflare in Step 9.
+1. Open your Worker's address in a browser. Because authentication isn't configured yet, the normal **Login page** shows a first-run form instead of the usual sign-in form: **Password**, **Confirm Password**, and **Create Account**. There is no separate setup page — this is the same Login page you'll use every time afterward.
+2. Enter the admin password you want to use, twice, then select **Create Account**.
+3. The Worker generates the underlying authentication configuration itself and saves it directly into the `auth_config` table of the D1 database you bound in Step 5 — there is nothing for you to copy or paste. The plaintext password you typed is never stored anywhere and cannot be recovered after you leave this page.
+4. You are logged out once and returned to the normal Login page. This is expected, not an error — first-run setup only chooses your password, it doesn't sign you in.
 
-1. Open your Worker's address in a browser.
-2. Because no login values are configured yet, you are sent automatically to the setup page at `/secret`.
-3. Choose an admin password (at least 8 characters) and submit it. This is the password you will log in with.
-4. The page now shows three generated values:
+### Step 8 — Log in
 
-   ```
-   ADMIN_PASSWORD_HASH
-   ADMIN_SALT
-   JWT_SECRET
-   ```
+1. On the Login page, enter the admin password you just chose in Step 7 and sign in.
+2. You land on the **Dashboard** view. Setup is complete.
 
-5. **Copy all three now**, using the **Copy All Secrets** button. The password you typed is never stored anywhere and cannot be recovered after you leave this page.
-6. Keep the page open, or paste the three values somewhere temporary, until Step 9 is done.
-
-### Step 9 — Save the three values as Worker Secrets
-
-These three must be saved as **Secrets** (encrypted by Cloudflare), not as plain **Text** variables. Cloudflare's form defaults to **Text**, so the type has to be changed for each one.
-
-What each value is:
-
-- **`JWT_SECRET`** — used to sign and check your login session, so the panel can tell it's still you.
-- **`ADMIN_SALT`** — a random value mixed into your password before it is hashed.
-- **`ADMIN_PASSWORD_HASH`** — the scrambled form of your admin password. Your actual password is never stored; what you type at login is scrambled the same way and compared against this.
-
-How to save them:
-
-1. In your Worker, go to **Settings → Variables and Secrets** (on some Dashboard versions this sits inside **Bindings**).
-2. Select **Add**.
-3. Set the type to **Secret** (not the default **Text**).
-4. For **Variable name**, type one of the three names exactly as shown above.
-5. For **Value**, paste the matching value copied in Step 8.
-6. Repeat for all three, so that `JWT_SECRET`, `ADMIN_SALT`, and `ADMIN_PASSWORD_HASH` are all present.
-7. Save.
-
-If any of the three is missing or misspelled, every page keeps redirecting to `/secret` instead of showing the login screen.
-
-### Step 10 — Deploy again and log in
-
-1. Deploy the Worker once more so the new Secrets are live.
-2. Reload your Worker's address in the browser. You should now see the **login screen** instead of the setup page.
-3. Log in with the admin password you chose in Step 8.
-4. You land on the **Dashboard** view. Setup is complete.
-
-### Step 11 — Create your first User (and optionally a Node)
+### Step 9 — Create your first User (and optionally a Node)
 
 1. Go to the **Users** section and create a User. A display name is all that's required.
 2. Paste that User's own proxy links, subscription URLs, Xray JSON, or Clash YAML into their sources.
 3. If you want one source shared by several Users, go to **Nodes** instead and create a Node there (one name + one source).
 4. Open the User and assign that Node to them from the Node picker. Editing the Node later updates every User it is assigned to.
 
-### Step 12 — Use the public subscription URL
+### Step 10 — Use the public subscription URL
 
 Each User has one public subscription link:
 
@@ -283,49 +192,52 @@ Disabling a User in the panel makes their link stop serving nodes immediately.
 
 ## 🩹 Troubleshooting
 
-- **Every page shows "KV Namespace Required".** The `STORAGE` binding is missing or misspelled. Two different things can be wrong: the KV Namespace itself was never created (Step 4), or it exists but was never bound to the Worker (Step 5). In Step 5 the **Variable name** must be exactly `STORAGE`, uppercase, and the Worker must be redeployed after saving.
-- **`/api/*` requests return `{"error":"kv_not_configured"}`.** Same cause as above — the Worker is running without its KV binding.
-- **You created a KV Namespace but the panel still can't see it.** Creating is not binding. Go back to Step 5 and add the binding under the variable name `STORAGE`; the namespace's own name (`vexa-panel-storage` or whatever you chose) is not what the code looks for.
-- **Every page redirects to `/secret`.** At least one of `JWT_SECRET`, `ADMIN_SALT`, `ADMIN_PASSWORD_HASH` is missing. All three must be present before the panel serves the login screen. Re-check Step 9, including that each was saved with type **Secret** rather than the default **Text**.
-- **The panel loads and you can log in, but saving anything returns `internal_error`.** The `INDEX_COORDINATOR` Durable Object binding is missing or points at the wrong class. Every write path and the one-time data migration call into `IndexCoordinator`. See Step 6.
-- **`IndexCoordinator` isn't offered in the Durable Object namespace list.** That class has never been provisioned on this account. This is the Cloudflare limitation described above, not a misconfiguration on your side — there is no Dashboard button that creates it.
+- **Every page shows "D1 Database Required".** The `DB` binding is missing or misspelled. Two different things can be wrong: the D1 database itself was never created (Step 4), or it exists but was never bound to the Worker (Step 5). In Step 5 the **Variable name** must be exactly `DB`, uppercase, and the Worker must be redeployed after saving. If Vexa Panel cannot access the `DB` binding, complete the D1 configuration first. Once `DB` is available, reload the Worker and continue with the normal Login page.
+- **`/api/*` requests return `{"error":"d1_not_configured"}`.** Same cause as above — the Worker is running without its D1 binding.
+- **You created a D1 database but the panel still can't see it.** Creating is not binding. Go back to Step 5 and add the binding under the variable name `DB`; the database's own name (`vexa-panel-db` or whatever you chose) is not what the code looks for.
+- **The Login page keeps showing the "Create Account" first-run form.** Authentication hasn't been initialized yet — no `auth_config` row exists in D1 (and no complete set of Cloudflare Secrets is bound, if you use that optional path). Complete Step 7.
 - **Login says "too many attempts".** Login is rate-limited to 10 attempts per IP per 5 minutes. Wait and try again.
 - **A subscription link returns "Not found".** Either the User ID in the URL is wrong, or that User is currently disabled.
 - **A User's link is missing some proxies.** A remote subscription source may have failed to fetch; a cached copy up to 14 days old is served in that case. Use the panel's merge preview to see per-source fetch errors.
-- **You lost the admin password.** Open `/secret` on your Worker and regenerate. Note that regenerating `JWT_SECRET`/`ADMIN_SALT` invalidates existing sessions once the new values are saved in Cloudflare.
+- **You lost the admin password.** There's no password recovery — the plaintext password is never stored. If you can still log in with the old password, use **Settings → Change Panel Password**. If you can't, you'll need to clear the `auth_config` row from your D1 database (via the Cloudflare dashboard's D1 console) so the Login page shows the first-run **Create Account** form again.
 
 ---
 
 ## 🔐 Secrets / Admin Password
 
-The admin password itself is never stored. Three related values are stored as Cloudflare Worker **Secrets** (encrypted at rest, distinct from plain-text variables):
+A normal deployment does not need this section — the Login page's first-run **Create Account** form (Step 7) is all that's required. It's included here for advanced users who want to understand what backs the login check, or who want the optional Cloudflare Secrets override described below.
 
-- **`JWT_SECRET`** — signs and verifies the session tokens issued at login (sessions last 48 hours).
-- **`ADMIN_SALT`** — the random salt used when hashing the admin password.
-- **`ADMIN_PASSWORD_HASH`** — the PBKDF2 hash (100,000 iterations, SHA-256) of your password combined with `ADMIN_SALT`. This is what a typed password is checked against.
+The admin password itself is never stored. Three related values back the actual authentication check:
 
-All three are generated at `/secret` on your deployed Worker (Step 8 of the guide) and pasted back into Cloudflare as Worker Secrets (Step 9). They can be regenerated from the same page later. `/change-panel-password` rotates only `ADMIN_PASSWORD_HASH`, so existing sessions and subscription links keep working — you still have to paste the new value into Cloudflare for it to take effect.
+- **JWT secret** — signs and verifies the session tokens issued at login (sessions last 48 hours).
+- **Admin salt** — the random salt used when hashing the admin password.
+- **Admin password hash** — the PBKDF2 hash (100,000 iterations, SHA-256) of your password combined with the salt. This is what a typed password is checked against.
 
-The admin password must be at least 8 characters; no other complexity rule is enforced, so choose a genuinely strong, unique password.
+**By default, all three are generated when you select Create Account on the Login page (Step 7) and saved directly into your D1 database's `auth_config` table.** Nothing needs to be copied or pasted, and there is no separate encrypted-variable step.
+
+**Optionally**, if you instead configure all three as Cloudflare Worker **Secrets** — `JWT_SECRET`, `ADMIN_SALT`, and `ADMIN_PASSWORD_HASH`, pasted into **Settings → Variables and Secrets** with type **Secret** — the Worker uses those instead of the D1-saved values. This is an advanced/legacy path: generating these values requires calling the `POST /api/secret/generate` endpoint directly (there is no in-panel page for it anymore), and is not part of the normal deployment flow. A deployment only ever uses one source at a time: a complete set of Secrets always takes precedence over the D1-saved values, and a partial set of Secrets (e.g. only one of the three) is treated as no Secrets at all.
+
+`/change-panel-password` (reached from the panel's **Settings → Change Panel Password**) rotates only the password hash, so existing sessions and subscription links keep working either way. For a D1-backed deployment this is saved automatically; for a Secrets-backed deployment you still have to paste the new hash into Cloudflare for it to take effect.
+
+No minimum length or complexity rule is enforced on the admin password, so choose a genuinely strong, unique one.
 
 ---
 
 ## 🔒 Security Notes
 
-- Never commit `JWT_SECRET`, `ADMIN_SALT`, or `ADMIN_PASSWORD_HASH` anywhere. They belong only in your Worker's Secrets.
+- If you use the optional Cloudflare Secrets path, never commit `JWT_SECRET`, `ADMIN_SALT`, or `ADMIN_PASSWORD_HASH` anywhere — they belong only in your Worker's Secrets.
 - The admin password is the only credential gating the entire panel — every User, every Node, every configured source.
-- Protect the Cloudflare account itself (strong password, two-factor authentication). Anyone with access to it can read or rotate your Worker's secrets.
+- Protect the Cloudflare account itself (strong password, two-factor authentication). Anyone with access to it can read your D1 data or rotate your Worker's authentication values.
 - A User's subscription URL (`/sub/user/:id`) is itself an access credential: anyone holding that link can fetch that User's combined proxy list without logging in, for as long as the User stays enabled. Treat it like a password, and disable the User if the link leaks.
 
 ---
 
 ## 🏗️ Architecture
 
-- **`src/index.js`** is the application entry point — the `fetch` handler Cloudflare Workers calls for every request. It also re-exports the `IndexCoordinator` Durable Object class.
-- Application logic is split into small ES modules under **`src/`** (routing, authentication, KV data access, the User/Node APIs, protocol parsers, and the admin UI).
+- **`src/index.js`** is the application entry point — the `fetch` handler Cloudflare Workers calls for every request.
+- Application logic is split into small ES modules under **`src/`** (routing, authentication, D1 data access, the User/Node APIs, protocol parsers, and the admin UI).
 - A Cloudflare Worker loads a single script, so a build step bundles everything under `src/` into one generated file, **`worker.js`** — the file attached to each GitHub Release and the file you deploy. It is a build artifact and is not edited by hand.
-- **Cloudflare KV** (bound as `STORAGE`) holds all persistent data: Users, Nodes, dashboard statistics, the recent-activity log, login rate-limit counters, and the subscription fallback cache.
-- The **`IndexCoordinator` Durable Object** (bound as `INDEX_COORDINATOR`) serializes concurrent changes — the Users/Nodes index lists, per-User record writes, Node-name uniqueness, dashboard statistics, and the one-time data migration — so simultaneous requests cannot silently overwrite each other. You never interact with it directly.
+- **Cloudflare D1** (bound as `DB`) holds all persistent data: Users, Nodes, their relationship, dashboard statistics, the recent-activity log, login rate-limit counters, the subscription fallback cache, and — unless Cloudflare Secrets are configured instead — the admin authentication values.
 
 ---
 
@@ -333,17 +245,16 @@ The admin password must be at least 8 characters; no other complexity rule is en
 
 ### Public routes
 
-- `GET /` / `/index.html` / `/login` / `/panel` / `/Dashboard` / `/Users` / `/Nodes` / `/Log`: the admin web interface (redirects to `/secret` if admin secrets aren't configured yet).
-- `GET /secret` or `/secrets`: initial setup / secret regeneration page.
+- `GET /` / `/index.html` / `/login` / `/panel` / `/Dashboard` / `/Users` / `/Nodes` / `/Log`: the admin web interface, served unconditionally as the same app shell. The Login page shows the first-run **Create Account** form instead of the normal sign-in form when authentication hasn't been initialized yet.
 - `GET /change-panel-password`: page for rotating just the admin password.
 - `GET /sub/user/:userId`: public combined subscription link for a User. Query parameters: `?canonical=1`, `?format=singbox`, `?format=clash`; with no `?format=`, the format is auto-detected from the client's User-Agent (falling back to raw Base64).
-- `GET /api/version`: unauthenticated; returns the deployed version string.
+- `GET /api/version`: unauthenticated; returns the deployed version string and an `authInitialized` boolean the Login page uses to decide which form to show.
 - `POST /api/login`: validates the admin password and returns a session token (48 hours).
-- `POST /api/secret/generate`: generates fresh `ADMIN_SALT`, `ADMIN_PASSWORD_HASH`, and `JWT_SECRET` from a chosen password. Public during initial setup; requires a valid session once secrets exist.
+- `POST /api/secret/generate`: called by the Login page's first-run **Create Account** form to complete initial D1-backed setup; also used to regenerate the legacy Cloudflare Secrets-backed values (advanced/optional path, no in-panel page for it). Public only while authentication isn't configured yet; requires a valid session once it is.
 
 ### Authenticated routes (valid session token required)
 
-- `POST /api/secret/change-password`: rotates `ADMIN_PASSWORD_HASH` only.
+- `POST /api/secret/change-password`: rotates the admin password hash only.
 - `GET /api/stats`: dashboard summary statistics.
 - `GET /api/users` / `POST /api/users`: list Users / create a User (`name`, `sources[]`, `nodeIds[]`).
 - `GET|PUT|DELETE /api/users/:id`: read, update (name, `enabled`, `sources[]`, `nodeIds[]`), or delete a User.
@@ -355,9 +266,9 @@ The admin password must be at least 8 characters; no other complexity rule is en
 
 ## 🗂️ Data Model
 
-All data lives in the one KV namespace bound as `STORAGE`.
+All data lives in the one D1 database bound as `DB`.
 
-**User** (`user:{uuid}`)
+**User** (`users` table, `id TEXT PRIMARY KEY`)
 
 | Field | Description |
 | --- | --- |
@@ -365,10 +276,9 @@ All data lives in the one KV namespace bound as `STORAGE`.
 | `name` | Display name |
 | `enabled` | Whether this User's subscription link currently serves nodes |
 | `sources[]` | Sources owned directly by this User (raw links, subscription URLs, Xray JSON, Clash YAML) |
-| `nodeIds[]` | Ordered list of Node IDs assigned to this User |
 | `createdAt` / `updatedAt` | Timestamps |
 
-**Node** (`node:{uuid}`)
+**Node** (`nodes` table, `id TEXT PRIMARY KEY`)
 
 | Field | Description |
 | --- | --- |
@@ -377,6 +287,8 @@ All data lives in the one KV namespace bound as `STORAGE`.
 | `source` | A single classified source object (same shape as one entry of a User's `sources[]`) |
 | `enabled` | Whether this Node contributes nodes to the Users referencing it |
 | `createdAt` / `updatedAt` | Timestamps |
+
+A User's assigned Nodes are stored as rows in a `user_nodes` relationship table (one row per User/Node pair, with an explicit ordering column), not as a JSON array on the User record. Deleting a User or a Node automatically removes the matching `user_nodes` rows.
 
 ---
 
@@ -391,6 +303,7 @@ All data lives in the one KV namespace bound as `STORAGE`.
 ### **v4.0.0** *(current)*
 
 - Version bumped in `src/constants.js`; see the repository's own change history for details of what this release contains.
+- Note: primary storage migrated from Cloudflare KV + a coordinating `IndexCoordinator` Durable Object to Cloudflare D1 (a single `DB` binding, no KV namespace or Durable Object required). Initial admin authentication can now be completed entirely through D1, with Cloudflare Secrets remaining available as an optional override. See the Deployment / Architecture / Secrets sections above for the current model.
 
 ### **v3.2.1**
 
@@ -398,9 +311,9 @@ feat: multi-format subscription export and per-user combined links
 
 - Add `?format=singbox` and `?format=clash` output options on `/sub/user/:userId`, generating ready-to-use sing-box JSON or Clash/Mihomo YAML configs on the fly, with auto-detection from the requesting client's User-Agent when `?format=` is omitted
 - Add per-user `enabled` flag: disabling a user immediately stops their combined link from serving nodes
-- Add reusable Nodes (`node:{uuid}` + a User's `nodeIds[]`) so a single Name+Source pair can be assigned to many Users at once
+- Add reusable Nodes so a single Name+Source pair can be assigned to many Users at once
 - Add a Nodes management view and a Node picker inside the User editor
-- Add guided setup screen (`renderKvSetupGuide`) shown when the `STORAGE` KV binding isn't configured yet, replacing opaque `internal_error` responses
+- Add guided setup screen shown when primary storage isn't configured yet, replacing opaque `internal_error` responses (originally a KV-bound guide; see v4.0.0 above for the current D1-bound version)
 - Add dedicated `/change-panel-password` page for rotating the admin password from Settings
 - Add `/login` and `/panel` as aliases serving the same app shell as `/`
 - Extend admin session lifetime from 12 hours to 48 hours
@@ -441,7 +354,7 @@ refactor(ui): standardize layout spacing scale and improve focus accessibility
 feat(ui): align UI metrics with Element Plus and add password-only rotation
 
 - Update buttons, inputs, and badges to Element Plus specs (4px radius, hover/active states)
-- Add "Change Password" action on `/secret` to rotate `ADMIN_PASSWORD_HASH` without invalidating sessions
+- Add "Change Password" action on `/secret` to rotate the admin password hash without invalidating sessions
 - Rename full secret regeneration action to "Destroy Secrets" for clarity
 - Replace ad-hoc loading indicators across all views with layout-matched skeleton screens
 
@@ -458,18 +371,18 @@ style(ui): update color tokens to match 3x-ui theme palette
 
 fix(auth): require custom admin password during initial setup and regeneration
 
-- Enforce custom password selection (min 8 chars) instead of default "admin"
-- Compute `ADMIN_PASSWORD_HASH` directly from user-defined password
-- Streamline two-step secret flow (`ADMIN_PASSWORD_HASH`, `ADMIN_SALT`, `JWT_SECRET`)
+- Enforce custom password selection instead of default "admin"
+- Compute the admin password hash directly from the user-defined password
+- Streamline two-step secret flow
 - Apply consistent setup/regeneration UX for both first-time setup and manual resets
 
 ### **v2.0.0**
 
 feat(admin): redesign admin panel (v2.0.0 Phase 1)
 
-- Introduce a User-Profile ownership hierarchy with automatic zero-downtime migration (the Profile layer was later merged away entirely — see v3.2.1 above; sources now live directly on `user.sources[]`)
-- Optimize KV storage using explicit index & stats records to avoid payload list() calls
-- Add `/secret` route for initial setup and secure env secret generation
+- Introduce a User-Profile ownership hierarchy with automatic zero-downtime migration (the Profile layer was later merged away entirely — see v3.2.1 above; sources now live directly on each User)
+- Optimize storage using explicit index & stats records to avoid expensive full-namespace scans
+- Add `/secret` route for initial setup and secure authentication value generation
 - Add modern sidebar layout with Dashboard and User/Profile management views
 - Add UI enhancements: toasts, modal confirms, theme toggles (light/dark/system)
 - Note: Core parsers, validators, and merge engine remain untouched
@@ -540,9 +453,7 @@ feat: add TUIC link support (tuic://)
 
 ## 📚 Official Cloudflare Documentation
 
-- [Workers KV — overview](https://developers.cloudflare.com/kv/)
-- [Workers — environment variables and secrets](https://developers.cloudflare.com/workers/configuration/secrets/)
+- [D1 — overview](https://developers.cloudflare.com/d1/)
+- [D1 — get started](https://developers.cloudflare.com/d1/get-started/)
 - [Workers — bindings (env)](https://developers.cloudflare.com/workers/runtime-apis/bindings/)
-- [Durable Objects — class exports](https://developers.cloudflare.com/durable-objects/reference/durable-objects-migrations/)
-- [Durable Objects — class migrations (legacy)](https://developers.cloudflare.com/durable-objects/reference/durable-object-class-migrations-legacy/)
-- [Durable Objects — accessing storage (SQLite backend)](https://developers.cloudflare.com/durable-objects/best-practices/access-durable-objects-storage/)
+- [Workers — environment variables and secrets](https://developers.cloudflare.com/workers/configuration/secrets/)
