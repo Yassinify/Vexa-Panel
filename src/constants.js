@@ -2,4 +2,4 @@
 // VEXA — Shared constants
 // =====================================================================
 
-export const VEXA_VERSION = "4.0.0";
+export const VEXA_VERSION = "4.1.0";
