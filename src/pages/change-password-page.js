@@ -28,7 +28,7 @@ export function renderChangePanelPasswordPage() {
       <div class="brand-sub">Sessions and subscription links keep working</div>
     </div>
     <div id="changePwBody"></div>
-    <button class="btn-secondary" style="width:100%;margin-top:14px;" onclick="location.href='/panel'">Back to Panel</button>
+    <button class="btn-secondary" style="width:100%;margin-top:var(--space-md);" onclick="location.href='/panel'">Back to Panel</button>
   </div>
 </div>
 <script>
@@ -54,7 +54,7 @@ function showToast(msg) {
   toast.className = "toast";
   toast.textContent = msg;
   document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 2500);
+  setTimeout(() => toast.remove(), 2600);
 }
 
 function renderGate() {
@@ -64,23 +64,44 @@ function renderGate() {
       <label class="field-label">Current Admin Password</label>
       <input type="password" id="gatePassword" placeholder="Enter current password" />
     </div>
-    <button class="btn-secondary" style="width:100%;" id="gateBtn">Continue</button>
+    <button class="btn-primary" style="width:100%;" id="gateBtn">Continue</button>
     <div class="error-text" id="gateError"></div>
   \`;
+  // In-flight guard: repeated clicks / Enter presses are ignored while the
+  // login request is pending (the button is also disabled for that period).
+  let gatePending = false;
   document.getElementById("gateBtn").onclick = async () => {
-    const password = document.getElementById("gatePassword").value;
-    const res = await fetch("/api/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password })
-    });
-    if (!res.ok) {
-      document.getElementById("gateError").textContent = "Incorrect password.";
-      return;
+    if (gatePending) return;
+    gatePending = true;
+    const btn = document.getElementById("gateBtn");
+    const errorEl = document.getElementById("gateError");
+    errorEl.textContent = "";
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Checking…';
+    try {
+      const password = document.getElementById("gatePassword").value;
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password })
+      });
+      if (!res.ok) {
+        errorEl.textContent = "Incorrect password.";
+        return;
+      }
+      const data = await res.json();
+      sessionToken = data.token;
+      renderForm();
+    } catch (e) {
+      // Network failure or unreadable response: keep the gate usable.
+      errorEl.textContent = "Connection error.";
+    } finally {
+      // After a successful login renderForm() has already replaced the gate,
+      // so this only touches the detached button in that case (harmless).
+      gatePending = false;
+      btn.disabled = false;
+      btn.innerHTML = "Continue";
     }
-    const data = await res.json();
-    sessionToken = data.token;
-    renderForm();
   };
   document.getElementById("gatePassword")?.addEventListener("keydown", e => {
     if (e.key === "Enter") document.getElementById("gateBtn").click();
@@ -98,12 +119,21 @@ function renderForm() {
   \`;
   const submit = async () => {
     const password = document.getElementById("newPw").value;
-    document.getElementById("changePwBody").innerHTML = '<div class="skel" style="width:100%;height:36px;margin-top:6px;"></div>';
-    const res = await fetch("/api/secret/change-password", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
-      body: JSON.stringify({ password })
-    });
+    document.getElementById("changePwBody").innerHTML = '<div class="skel" style="width:100%;height:36px;margin-top:var(--space-sm);"></div>';
+    let res;
+    try {
+      res = await fetch("/api/secret/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+        body: JSON.stringify({ password })
+      });
+    } catch (e) {
+      // The request never completed: restore the form instead of leaving the
+      // loading skeleton on screen, same recovery as the !res.ok path below.
+      renderForm();
+      document.getElementById("formError").textContent = "Connection error.";
+      return;
+    }
     if (res.status === 401) {
       renderGate();
       return;
@@ -125,8 +155,8 @@ function renderForm() {
           existing sessions stay valid.
         </div>
         \${fieldsHtml(data.values)}
-        <button class="btn-primary" style="width:100%;margin-top:6px;" id="copyAllBtn">Copy Value</button>
-        <div class="helper-text" style="margin-top:14px;">
+        <button class="btn-primary" style="width:100%;margin-top:var(--space-sm);" id="copyAllBtn">Copy Value</button>
+        <div class="helper-text" style="margin-top:var(--space-md);">
           In <strong>Cloudflare Dashboard → Workers → Settings → Variables and Secrets</strong>,
           update <strong>ADMIN_PASSWORD_HASH</strong> with this value. Set its type to
           <strong>Secret</strong> (not the default Text), then save and redeploy.
@@ -145,7 +175,7 @@ function renderForm() {
       <div class="helper-text" style="margin:16px 0;">
         Password updated. ADMIN_SALT and JWT_SECRET are unchanged, so existing sessions stay valid.
       </div>
-      <button class="btn-secondary" style="width:100%;" id="donePwBtn">Done</button>
+      <button class="btn-primary" style="width:100%;" id="donePwBtn">Done</button>
     \`;
     document.getElementById("donePwBtn").onclick = () => {
       location.href = "/panel";

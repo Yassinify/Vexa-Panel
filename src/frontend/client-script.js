@@ -5,6 +5,15 @@ const state = {
   token: localStorage.getItem("vexa_token") || null,
   view: "login",
   loading: false,
+  // Set when the last data load rejected, so the Users/Nodes views can show
+  // a load-error state instead of a misleading empty state.
+  loadError: false,
+  // True only for the single render() that follows a completed data load,
+  // so table rows animate in once instead of on every re-render.
+  animateRows: false,
+  // In-flight guards for submit buttons (see setButtonPending()).
+  authPending: false,
+  savingNode: false,
   errorMsg: "",
 
   // Whether admin authentication has been initialized yet (D1 auth_config
@@ -160,6 +169,16 @@ function showToast(msg, isError) {
   setTimeout(() => toast.remove(), 2600);
 }
 
+// In-flight state for a submit button: disabled plus an inline spinner.
+// Updated in place (not via render()) so typed input values are kept, and
+// restored to its normal label when the request ends.
+function setButtonPending(id, pending, pendingLabel, label) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.disabled = pending;
+  btn.innerHTML = pending ? '<span class="spinner"></span>' + pendingLabel : label;
+}
+
 function sortRows(rows, sort) {
   const copy = [...rows];
   copy.sort((a, b) => {
@@ -204,14 +223,14 @@ function renderLoginView() {
             <label class="field-label">Confirm Password</label>
             <input type="password" id="loginPasswordConfirm" placeholder="Confirm password" />
           </div>
-          <div class="helper-text" style="text-align:left;margin-bottom:6px;">This is the password you'll log in with. The plaintext password is never stored — only a hash of it is kept.</div>
-          <button class="btn-primary" style="width:100%;" onclick="doCreateAccount()">Create Account</button>
+          <div class="helper-text" style="text-align:left;margin-bottom:var(--space-sm);">This is the password you'll log in with. The plaintext password is never stored — only a hash of it is kept.</div>
+          <button class="btn-primary" id="createAccountBtn" style="width:100%;" onclick="doCreateAccount()">Create Account</button>
         \` : \`
           <div class="field-group" style="text-align:left;">
             <label class="field-label">Password</label>
             <input type="password" id="loginPassword" placeholder="Enter admin password" />
           </div>
-          <button class="btn-primary" style="width:100%;" onclick="doLogin()">Sign In</button>
+          <button class="btn-primary" id="loginBtn" style="width:100%;" onclick="doLogin()">Sign In</button>
         \`}
         <div class="error-text" id="loginError">\${state.errorMsg || ""}</div>
       </div>
@@ -220,8 +239,11 @@ function renderLoginView() {
 }
 
 async function doLogin() {
+  if (state.authPending) return; // ignore repeated submits while a request is in flight
   const password = document.getElementById("loginPassword").value;
   state.errorMsg = "";
+  state.authPending = true;
+  setButtonPending("loginBtn", true, "Signing in…", "Sign In");
   try {
     const res = await fetch("/api/login", {
       method: "POST",
@@ -244,6 +266,9 @@ async function doLogin() {
   } catch (e) {
     state.errorMsg = "Connection error.";
     render();
+  } finally {
+    state.authPending = false;
+    setButtonPending("loginBtn", false, "", "Sign In");
   }
 }
 
@@ -257,6 +282,7 @@ async function doLogin() {
 // login form so the admin enters the password they just chose, exactly
 // once, before reaching the panel.
 async function doCreateAccount() {
+  if (state.authPending) return; // ignore repeated submits while a request is in flight
   const password = document.getElementById("loginPassword").value;
   const confirm = document.getElementById("loginPasswordConfirm").value;
   state.errorMsg = "";
@@ -270,6 +296,8 @@ async function doCreateAccount() {
     render();
     return;
   }
+  state.authPending = true;
+  setButtonPending("createAccountBtn", true, "Creating account…", "Create Account");
   try {
     const res = await fetch("/api/secret/generate", {
       method: "POST",
@@ -300,6 +328,9 @@ async function doCreateAccount() {
   } catch (e) {
     state.errorMsg = "Connection error.";
     render();
+  } finally {
+    state.authPending = false;
+    setButtonPending("createAccountBtn", false, "", "Create Account");
   }
 }
 
@@ -313,14 +344,29 @@ function logout() {
   render();
 }
 
+// Renders once right after a data load finishes, with row animation on.
+// Later renders (search typing, toggles, modals) leave animateRows off so
+// the table rows don't replay their entrance animation.
+function renderAfterLoad() {
+  state.animateRows = true;
+  render();
+  state.animateRows = false;
+}
+
 async function bootAuthenticated() {
   state.loading = true;
+  state.loadError = false;
   render();
   try {
     await loadViewData(state.view);
+  } catch (e) {
+    // Flag the failure so list views don't show it as an empty dataset;
+    // the error is still rethrown for the caller's own handling.
+    state.loadError = true;
+    throw e;
   } finally {
     state.loading = false;
-    render();
+    renderAfterLoad();
   }
 }
 
@@ -356,8 +402,12 @@ function navigate(view) {
   const path = VIEW_PATHS[view];
   if (path && location.pathname !== path) history.pushState(null, "", path);
   state.loading = true;
+  state.loadError = false;
   render();
-  loadViewData(view).finally(() => { state.loading = false; render(); });
+  loadViewData(view)
+    // Ignore a stale failure if the user has already moved to another view.
+    .catch(() => { if (state.view === view) state.loadError = true; })
+    .finally(() => { state.loading = false; renderAfterLoad(); });
 }
 
 function renderSidebar() {
@@ -367,14 +417,17 @@ function renderSidebar() {
     { key: "nodes", label: "Nodes", icon: icon("link") },
     { key: "log", label: "Log", icon: icon("log") }
   ];
+  // Sidebar markup rebuilt from the reference board's Desktop panel:
+  // brand row reads "Vexa Panel" in a single line (logo mark + wordmark),
+  // active nav item is a solid filled-red pill (not a text-only row), and
+  // the footer sits pinned below a divider — same structure the board
+  // shows for its account/settings row. IDs/classes/handlers unchanged
+  // (#sidebar, .sidebar-link, .nav-icon, navigate()/openSettings()/logout()).
   return \`
     <div class="sidebar" id="sidebar">
       <div class="sidebar-brand">
         <img class="avatar" src="/favicon.svg" alt="VEXA logo">
-        <div>
-          <div style="font-weight:700;font-size:clamp(13px, .6vw + 12px, 14px);color:var(--accent-light);">VEXA</div>
-          <div style="font-size:clamp(9px, .3vw + 8px, 10px);color:var(--text-muted);">Admin Panel</div>
-        </div>
+        <div class="brand">VEXA</div>
       </div>
       \${items.map(it => \`
         <div class="sidebar-link \${state.view === it.key ? "active" : ""}"
@@ -406,13 +459,18 @@ function shellTitle() {
 
 function renderShell(innerHtml) {
   const [title, sub] = shellTitle();
+  // Topbar rebuilt from the reference board's page-header treatment
+  // (page title + one-line subtitle, hamburger only on the mobile/tablet
+  // off-canvas tiers per styles.js's .menu-toggle-btn media query).
+  // #menuToggleBtn / #sidebarBackdrop ids and toggleSidebar()/
+  // closeSidebar() handlers unchanged.
   return \`
     <div class="app-shell">
       \${renderSidebar()}
       <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebar()"></div>
       <div class="main">
         <div class="topbar">
-          <div style="display:flex;align-items:center;gap:var(--space-3);">
+          <div style="display:flex;align-items:center;gap:var(--space-md);">
             <button class="menu-toggle-btn" id="menuToggleBtn" aria-label="Toggle menu" aria-expanded="false" onclick="toggleSidebar()"><span class="menu-icon">\${icon("menu")}</span></button>
             <div>
               <h1>\${title}</h1>
@@ -428,23 +486,44 @@ function renderShell(innerHtml) {
 }
 
 // ---------------------------------------------------------------------
-// DASHBOARD
+// DASHBOARD — visually rebuilt from the reference board's Desktop/
+// Tablet/Mobile Dashboard panels: each stat card now leads with a small
+// colored icon badge (.stat-card-icon, styles.js), matching the board's
+// icon-in-rounded-square treatment. Only 3 real stats exist in
+// state.stats (totalUsers/totalSubSources/totalRawSources, from
+// getStats() in src/users.js) — the board's extra "Active Subscriptions"/
+// "Total Traffic" cards and its User-Growth-chart/Recent-Activity panels
+// have no backing data source here and are intentionally not reproduced
+// (no fabricated stats/chart per this checkpoint's functional-
+// preservation rule). The status-row card below keeps its existing
+// "System operational" content, restyled to the same card language.
 // ---------------------------------------------------------------------
 function renderDashboardView() {
   if (state.loading || !state.stats) {
+    // Skeleton bars are padded up to the loaded line heights (stat number:
+    // --text-h1 x 1.5 = 48px, status text: --text-body x 1.5 = 21px) so the view
+    // does not grow when data arrives; the bars keep their own size. The number
+    // bar sits in a 48px wrapper because its own top margin would collapse into
+    // the stat-card-head bottom margin; the status bar is a flex item, so a
+    // margin works there.
     return renderShell(\`
       <div class="stat-grid">
-        \${[1,2,3,4].map(() => \`
+        \${[1,2,3].map(() => \`
           <div class="card stat-card">
-            <div class="skel" style="width:65%;height:11px;margin-bottom:10px;"></div>
-            <div class="skel" style="width:38%;height:26px;"></div>
+            <div class="stat-card-head">
+              <div class="skel" style="width:34px;height:34px;border-radius:8px;"></div>
+              <div class="skel" style="width:60%;height:11px;"></div>
+            </div>
+            <div style="display:flex;align-items:center;height:calc(var(--text-h1) * 1.5);">
+              <div class="skel" style="width:38%;height:26px;"></div>
+            </div>
           </div>
         \`).join("")}
       </div>
-      <div class="card" style="margin-bottom:16px;">
+      <div class="card">
         <div class="status-row">
           <span class="skel" style="width:8px;height:8px;border-radius:50%;flex-shrink:0;"></span>
-          <div class="skel" style="width:130px;height:13px;"></div>
+          <div class="skel" style="width:130px;height:13px;margin-block:calc((var(--text-body) * 1.5 - 13px) / 2);"></div>
           <div class="skel" style="width:150px;height:12px;margin-left:auto;"></div>
         </div>
       </div>
@@ -452,20 +531,23 @@ function renderDashboardView() {
   }
   const s = state.stats;
   const cards = [
-    { label: "Total Users", num: s.totalUsers },
-    { label: "Subscription Sources", num: s.totalSubSources },
-    { label: "Raw / Static Sources", num: s.totalRawSources }
+    { label: "Total Users", num: s.totalUsers, icon: "users" },
+    { label: "Subscription Sources", num: s.totalSubSources, icon: "link" },
+    { label: "Raw / Static Sources", num: s.totalRawSources, icon: "merge" }
   ];
   return renderShell(\`
     <div class="stat-grid">
       \${cards.map(c => \`
         <div class="card stat-card">
-          <div class="stat-card-label">\${c.label}</div>
+          <div class="stat-card-head">
+            <span class="stat-card-icon">\${icon(c.icon)}</span>
+            <div class="stat-card-label">\${c.label}</div>
+          </div>
           <div class="stat-card-num">\${c.num}</div>
         </div>
       \`).join("")}
     </div>
-    <div class="card" style="margin-bottom:16px;">
+    <div class="card">
       <div class="status-row">
         <span class="status-dot"></span>
         <span>System operational</span>
@@ -485,8 +567,9 @@ function renderLogView() {
         <div class="activity-list">
           \${[1,2,3,4,5].map(() => \`
             <div class="activity-row">
+              <div class="skel" style="width:32px;height:32px;border-radius:50%;flex-shrink:0;"></div>
               <div class="skel" style="width:55%;height:13px;"></div>
-              <div class="skel" style="width:48px;height:12px;flex-shrink:0;"></div>
+              <div class="skel" style="width:48px;height:12px;flex-shrink:0;margin-left:auto;"></div>
             </div>
           \`).join("")}
         </div>
@@ -496,11 +579,12 @@ function renderLogView() {
   const activityHtml = state.activity.length
     ? state.activity.map(a => \`
         <div class="activity-row">
-          <span>\${escapeHtml(a.message)}</span>
+          <span class="activity-icon">\${icon("log")}</span>
+          <span class="activity-text">\${escapeHtml(a.message)}</span>
           <span class="activity-time">\${timeAgo(a.ts)}</span>
         </div>
       \`).join("")
-    : '<div class="empty-state">No activity yet.</div>';
+    : '<div class="empty-state"><div class="empty-state-icon">' + icon("log") + '</div>No activity yet.</div>';
 
   return renderShell(\`
     <div class="card">
@@ -521,12 +605,44 @@ function setUserSort(key) {
   render();
 }
 
+// Skeleton geometry for toolbar controls (search input, primary button),
+// derived from the shared control metrics in styles.js: line-height 1.4 +
+// 2 x --space-sm padding + 2px border = 37.6px, with --radius-md corners.
+// The skeleton search is a div, so it sets the width:100% a real input gets from
+// the global input rule. The skeleton primary button carries .desktop-only-action
+// so it hides at the same breakpoint as the real button (a floating button
+// replaces it there) and stops reserving space the loaded toolbar does not use.
+const SKEL_CONTROL_STYLE = "height:calc(var(--text-body) * 1.4 + var(--space-sm) * 2 + 2px);border-radius:var(--radius-md);";
+
+// Skeleton geometry for table-cell badge and switch placeholders, matched to
+// the loaded controls in styles.js. Badge: caption size x body line-height
+// 1.5 + 2 x 3px padding + 2px border = 26px, pill radius. Switch: 38x21,
+// pill radius (set inline because .skel's 4px radius is declared after
+// .switch and would win if the .switch class were reused).
+const SKEL_BADGE_STYLE = "height:calc(var(--text-caption) * 1.5 + 6px + 2px);border-radius:999px;";
+const SKEL_SWITCH_STYLE = "width:38px;height:21px;border-radius:999px;";
+
+// Skeleton geometry for row-action circles, matched to the loaded .btn-icon
+// in styles.js (34x34, 50% radius).
+const SKEL_ACTION_STYLE = "width:34px;height:34px;border-radius:50%;";
+
+// Neutral chip for informational labels (counts, node type), same recipe as
+// .version-badge in styles.js. The .badge dot still renders, in muted color.
+const NEUTRAL_BADGE_STYLE = "background:var(--color-surface-raised);color:var(--color-muted);";
+
+// Selected Node chip in the user editor. The name gets min-width:0 so it can
+// shrink and end in an ellipsis; the remove button gets flex-shrink:0 so the
+// shrinking row cannot squeeze it out of its 34x34 circle. Together a long
+// name no longer pushes the button outside the chip's overflow:hidden box.
+const NODE_CHIP_LABEL_STYLE = "min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+const NODE_CHIP_REMOVE_STYLE = "flex-shrink:0;";
+
 function renderUsersView() {
   if (state.loading) {
     return renderShell(\`
       <div class="toolbar">
-        <div class="toolbar-left"><div class="skel search-input" style="height:34px;"></div></div>
-        <div class="skel" style="width:112px;height:34px;border-radius:4px;"></div>
+        <div class="toolbar-left"><div class="skel search-input" style="width:100%;\${SKEL_CONTROL_STYLE}"></div></div>
+        <div class="skel desktop-only-action" style="width:112px;\${SKEL_CONTROL_STYLE}"></div>
       </div>
       <div class="card">
         <div class="table-wrap">
@@ -535,11 +651,11 @@ function renderUsersView() {
           <tbody>
             \${[1,2,3,4,5].map(() => \`
               <tr>
-                <td><div class="skel" style="width:130px;height:13px;"></div></td>
-                <td><div class="skel" style="width:76px;height:19px;border-radius:4px;"></div></td>
-                <td><div class="skel" style="width:36px;height:20px;border-radius:10px;"></div></td>
-                <td><div class="skel" style="width:64px;height:12px;"></div></td>
-                <td><div class="skel-row-actions">\${[1,2,3,4].map(() => '<div class="skel" style="width:22px;height:22px;border-radius:50%;"></div>').join("")}</div></td>
+                <td data-label="Name"><div class="skel" style="width:130px;height:13px;"></div></td>
+                <td data-label="Sources"><div class="skel" style="width:76px;\${SKEL_BADGE_STYLE}"></div></td>
+                <td data-label="Active"><div class="skel" style="\${SKEL_SWITCH_STYLE}"></div></td>
+                <td data-label="Updated"><div class="skel" style="width:64px;height:12px;"></div></td>
+                <td data-label=""><div class="skel-row-actions">\${[1,2,3,4].map(() => '<div class="skel" style="' + SKEL_ACTION_STYLE + '"></div>').join("")}</div></td>
               </tr>
             \`).join("")}
           </tbody>
@@ -559,8 +675,8 @@ function renderUsersView() {
       <td data-label="Name"><span class="row-name" onclick="openUser('\${u.id}')">\${escapeHtml(u.name)}</span>\${u._pending && u._pendingKind !== "toggle" ? ' <span class="spinner" title="Saving…"></span>' : ''}</td>
       <td data-label="Sources">
         <div class="badge-row">
-          <span class="badge">\${u.subCount} subs</span>
-          <span class="badge green">\${u.rawCount} raw</span>
+          <span class="badge" style="\${NEUTRAL_BADGE_STYLE}">\${u.subCount} subs</span>
+          <span class="badge" style="\${NEUTRAL_BADGE_STYLE}">\${u.rawCount} raw</span>
         </div>
       </td>
       <td data-label="Active">
@@ -590,11 +706,13 @@ function renderUsersView() {
     </div>
     <button class="mobile-fab" onclick="openUserEditor()" aria-label="New User" title="New User">\${icon("plus")}</button>
     <div class="card">
-      \${sorted.length === 0
+      \${state.loadError
+        ? '<div class="empty-state"><div class="error-text">Could not load users. Please try again.</div></div>'
+        : sorted.length === 0
         ? '<div class="empty-state"><div class="empty-state-icon">' + icon("users") + '</div>No users yet. Create one to get started.</div>'
         : \`
           <div class="table-wrap">
-          <table class="data-table">
+          <table class="data-table\${state.animateRows ? " rows-animate" : ""}">
             <thead>
               <tr>
                 <th onclick="setUserSort('name')">Name\${sortIndicator(state.userSort, "name")}</th>
@@ -761,7 +879,7 @@ function copySubFormatLink() {
   const t = state.subFormatTarget;
   if (!t) return;
   navigator.clipboard.writeText(buildSubUrl(t.id));
-  showToast("Link copied to clipboard!");
+  showToast("Copied to clipboard!");
 }
 
 async function toggleUserEnabled(id) {
@@ -792,7 +910,7 @@ function renderNodesView() {
     return renderShell(\`
       <div class="toolbar">
         <div class="toolbar-left"></div>
-        <div class="skel" style="width:112px;height:34px;border-radius:4px;"></div>
+        <div class="skel desktop-only-action" style="width:112px;\${SKEL_CONTROL_STYLE}"></div>
       </div>
       <div class="card">
         <div class="table-wrap">
@@ -801,11 +919,11 @@ function renderNodesView() {
           <tbody>
             \${[1,2,3].map(() => \`
               <tr>
-                <td><div class="skel" style="width:130px;height:13px;"></div></td>
-                <td><div class="skel" style="width:76px;height:19px;border-radius:4px;"></div></td>
-                <td><div class="skel" style="width:36px;height:20px;border-radius:10px;"></div></td>
-                <td><div class="skel" style="width:64px;height:12px;"></div></td>
-                <td><div class="skel-row-actions">\${[1,2].map(() => '<div class="skel" style="width:22px;height:22px;border-radius:50%;"></div>').join("")}</div></td>
+                <td data-label="Name"><div class="skel" style="width:130px;height:13px;"></div></td>
+                <td data-label="Type"><div class="skel" style="width:76px;\${SKEL_BADGE_STYLE}"></div></td>
+                <td data-label="Active"><div class="skel" style="\${SKEL_SWITCH_STYLE}"></div></td>
+                <td data-label="Updated"><div class="skel" style="width:64px;height:12px;"></div></td>
+                <td data-label=""><div class="skel-row-actions">\${[1,2].map(() => '<div class="skel" style="' + SKEL_ACTION_STYLE + '"></div>').join("")}</div></td>
               </tr>
             \`).join("")}
           </tbody>
@@ -818,16 +936,16 @@ function renderNodesView() {
   const rows = state.nodes.map(n => \`
     <tr class="row-hover">
       <td data-label="Name"><span class="row-name" onclick="openNode('\${n.id}')">\${escapeHtml(n.name)}</span></td>
-      <td data-label="Type"><span class="badge">\${n.source.type}</span></td>
+      <td data-label="Type"><span class="badge" style="\${NEUTRAL_BADGE_STYLE}">\${n.source.type}</span></td>
       <td data-label="Active">
-        <button class="switch \${n.enabled ? "on" : ""}" role="switch" aria-checked="\${n.enabled ? "true" : "false"}"
+        <button class="switch \${n.enabled ? "on" : ""} \${n._pending ? "pending" : ""}" role="switch" aria-checked="\${n.enabled ? "true" : "false"}"
                 title="\${n.enabled ? "Active — click to disable" : "Disabled — click to enable"}"
-                onclick="toggleNodeEnabled('\${n.id}')"><span class="switch-knob"></span></button>
+                onclick="toggleNodeEnabled('\${n.id}')"><span class="switch-knob"></span>\${n._pending ? '<span class="spinner switch-spinner"></span>' : ''}</button>
       </td>
       <td class="timestamp" data-label="Updated">\${timeAgo(n.updatedAt)}</td>
       <td data-label="">
         <div class="row-actions">
-          <button class="btn-icon" title="Edit" onclick="openNode('\${n.id}')">\${icon("edit")}</button>
+          <button class="btn-icon icon-edit" title="Edit" onclick="openNode('\${n.id}')">\${icon("edit")}</button>
           <button class="btn-icon icon-delete" title="Delete" onclick="askDeleteNode('\${n.id}', '\${escapeHtml(n.name).replace(/'/g, "&#39;")}')">\${icon("delete")}</button>
         </div>
       </td>
@@ -841,11 +959,13 @@ function renderNodesView() {
     </div>
     <button class="mobile-fab" onclick="openNodeEditor()" aria-label="New Node" title="New Node">\${icon("plus")}</button>
     <div class="card">
-      \${state.nodes.length === 0
-        ? '<div class="empty-state">No nodes yet. Create one to reuse across users.</div>'
+      \${state.loadError
+        ? '<div class="empty-state"><div class="error-text">Could not load nodes. Please try again.</div></div>'
+        : state.nodes.length === 0
+        ? '<div class="empty-state"><div class="empty-state-icon">' + icon("link") + '</div>No nodes yet. Create one to reuse across users.</div>'
         : \`
           <div class="table-wrap">
-          <table class="data-table">
+          <table class="data-table\${state.animateRows ? " rows-animate" : ""}">
             <thead><tr><th>Name</th><th>Type</th><th>Active</th><th>Updated</th><th></th></tr></thead>
             <tbody>\${rows}</tbody>
           </table>
@@ -878,6 +998,7 @@ async function openNode(id) {
 }
 
 async function saveNode() {
+  if (state.savingNode) return; // ignore repeated Save clicks while a request is in flight
   const isEdit = state.editingNode && state.editingNode.id;
   const name = document.getElementById("nodeNameInput").value.trim();
   const errorEl = document.getElementById("nodeNameError");
@@ -886,28 +1007,38 @@ async function saveNode() {
   const source = document.getElementById("nodeSourceInput").value.trim();
   if (!source) { showToast("Source is required.", true); return; }
 
-  const result = isEdit
-    ? await apiFetch("/api/nodes/" + state.editingNode.id, { method: "PUT", body: JSON.stringify({ name, source }) })
-    : await apiFetch("/api/nodes", { method: "POST", body: JSON.stringify({ name, source }) });
+  state.savingNode = true;
+  setButtonPending("nodeSaveBtn", true, "Saving…", "Save");
+  try {
+    const result = isEdit
+      ? await apiFetch("/api/nodes/" + state.editingNode.id, { method: "PUT", body: JSON.stringify({ name, source }) })
+      : await apiFetch("/api/nodes", { method: "POST", body: JSON.stringify({ name, source }) });
 
-  if (result.error === "duplicate_name") {
-    if (errorEl) errorEl.textContent = "A node with this name already exists.";
-    return;
-  }
-  if (result.error) {
-    showToast("Could not save node — check the source format.", true);
-    return;
-  }
+    if (result.error === "duplicate_name") {
+      if (errorEl) errorEl.textContent = "A node with this name already exists.";
+      return;
+    }
+    if (result.error) {
+      showToast("Could not save node — check the source format.", true);
+      return;
+    }
 
-  if (isEdit) {
-    const idx = state.nodes.findIndex(n => n.id === result.node.id);
-    if (idx !== -1) state.nodes[idx] = result.node; else state.nodes.push(result.node);
-    closeModal();
-    showToast("Node updated.");
-  } else {
-    state.nodes.push(result.node);
-    closeModal();
-    showToast("Node created.");
+    if (isEdit) {
+      const idx = state.nodes.findIndex(n => n.id === result.node.id);
+      if (idx !== -1) state.nodes[idx] = result.node; else state.nodes.push(result.node);
+      closeModal();
+      showToast("Node updated.");
+    } else {
+      state.nodes.push(result.node);
+      closeModal();
+      showToast("Node created.");
+    }
+  } catch (e) {
+    // Request failed: keep the modal open so the entered values are not lost.
+    showToast("Could not save node.", true);
+  } finally {
+    state.savingNode = false;
+    setButtonPending("nodeSaveBtn", false, "", "Save");
   }
 }
 
@@ -940,9 +1071,9 @@ async function performDeleteNode(id) {
 
 async function toggleNodeEnabled(id) {
   const idx = state.nodes.findIndex(n => n.id === id);
-  if (idx === -1) return;
+  if (idx === -1 || state.nodes[idx]._pending) return;
   const prevEnabled = state.nodes[idx].enabled;
-  state.nodes[idx] = { ...state.nodes[idx], enabled: !prevEnabled };
+  state.nodes[idx] = { ...state.nodes[idx], enabled: !prevEnabled, _pending: true };
   render();
   try {
     const result = await apiFetch("/api/nodes/" + id, { method: "PUT", body: JSON.stringify({ enabled: !prevEnabled }) });
@@ -950,7 +1081,7 @@ async function toggleNodeEnabled(id) {
     render();
     showToast(result.node.enabled ? "Node enabled." : "Node disabled.");
   } catch (e) {
-    state.nodes[idx] = { ...state.nodes[idx], enabled: prevEnabled };
+    state.nodes[idx] = { ...state.nodes[idx], enabled: prevEnabled, _pending: false };
     showToast("Could not update node status.", true);
     render();
   }
@@ -975,7 +1106,7 @@ function renderNodePicker() {
       \${selected.length ? \`
         <div class="badge-row" style="margin-bottom:8px;flex-wrap:wrap;">
           \${selected.map(n => \`
-            <span class="badge">\${escapeHtml(n.name)} <button type="button" class="btn-icon icon-delete" style="width:16px;height:16px;" title="Remove" onclick="removeNodeFromUser('\${n.id}')">\${icon("delete")}</button></span>
+            <span class="badge" style="\${NEUTRAL_BADGE_STYLE}"><span style="\${NODE_CHIP_LABEL_STYLE}">\${escapeHtml(n.name)}</span> <button type="button" class="btn-icon icon-delete" title="Remove" style="\${NODE_CHIP_REMOVE_STYLE}" onclick="removeNodeFromUser('\${n.id}')">\${icon("delete")}</button></span>
           \`).join("")}
         </div>
       \` : ""}
@@ -1028,20 +1159,32 @@ async function openMerge(id) {
   state.modal = "merge";
   state.mergeResult = { loading: true, userId: id };
   render();
-  const data = await apiFetch("/api/merge-preview", {
-    method: "POST",
-    body: JSON.stringify({ userId: id })
-  });
-  state.mergeResult = { ...data, loading: false, userId: id };
-  render();
-  setTimeout(() => {
-    const qrEl = document.getElementById("qrContainer");
-    if (qrEl && window.qrcodegen) {
-      const fullUrl = location.origin + data.subUrl;
-      const qr = qrcodegen.QrCode.encodeText(fullUrl, qrcodegen.QrCode.Ecc.MEDIUM);
-      qrEl.innerHTML = qr.toSvgString(4);
-    }
-  }, 0);
+  // The loading overlay can be dismissed via the backdrop, so a response (or
+  // failure) may arrive after the modal was closed or reopened for another
+  // user. Only apply it while this request is still the one being shown.
+  const isCurrent = () => state.modal === "merge" && state.mergeResult && state.mergeResult.userId === id;
+  try {
+    const data = await apiFetch("/api/merge-preview", {
+      method: "POST",
+      body: JSON.stringify({ userId: id })
+    });
+    if (!isCurrent()) return;
+    state.mergeResult = { ...data, loading: false, userId: id };
+    render();
+    setTimeout(() => {
+      const qrEl = document.getElementById("qrContainer");
+      if (qrEl && window.qrcodegen) {
+        const fullUrl = location.origin + data.subUrl;
+        const qr = qrcodegen.QrCode.encodeText(fullUrl, qrcodegen.QrCode.Ecc.MEDIUM);
+        qrEl.innerHTML = qr.toSvgString(4);
+      }
+    }, 0);
+  } catch (e) {
+    if (!isCurrent()) return;
+    // closeModal() also clears state.mergeResult, ending the loading state.
+    closeModal();
+    showToast("Could not load merge preview.", true);
+  }
 }
 
 function copyLink() {
@@ -1076,7 +1219,7 @@ function renderModal() {
       <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
         <div class="card modal-card small">
           <div class="modal-title">Subscription — \${escapeHtml(t.name)}</div>
-          <div class="helper-text" style="margin-bottom:10px;">One link works with any supported client — the format is detected automatically.</div>
+          <div class="helper-text" style="margin-bottom:var(--space-md);">One link works with any supported client — the format is detected automatically.</div>
           <div class="qr-box" id="subFormatQrBox"></div>
           <label class="field-label">Subscription Link</label>
           <div class="link-row">
@@ -1105,7 +1248,7 @@ function renderModal() {
           \${renderNodePicker()}
           <div class="field-group">
             <label class="field-label">Sources</label>
-            <div class="helper-text" style="margin-bottom:8px;">Paste subscription URLs, individual vless/vmess/ss/trojan links, or an Xray/V2Ray JSON outbound — each source gets its own row (JSON entries can span multiple lines within a row).</div>
+            <div class="helper-text" style="margin-bottom:var(--space-sm);">Paste subscription URLs, individual vless/vmess/ss/trojan links, or an Xray/V2Ray JSON outbound — each source gets its own row (JSON entries can span multiple lines within a row).</div>
             <div class="source-repeater">
               \${state.editingUserSources.map((val, i) => \`
                 <div class="source-row">
@@ -1139,12 +1282,12 @@ function renderModal() {
           </div>
           <div class="field-group">
             <label class="field-label">Source</label>
-            <div class="helper-text" style="margin-bottom:8px;">A subscription URL, a single vless/vmess/ss/trojan link, or an Xray/V2Ray JSON outbound.</div>
+            <div class="helper-text" style="margin-bottom:var(--space-sm);">A subscription URL, a single vless/vmess/ss/trojan link, or an Xray/V2Ray JSON outbound.</div>
             <textarea id="nodeSourceInput" rows="3" placeholder="https://example.com/sub-link">\${escapeHtml(state.editingNodeSource)}</textarea>
           </div>
           <div class="modal-footer">
             <button class="btn-secondary" onclick="closeModal()">Cancel</button>
-            <button class="btn-primary" onclick="saveNode()">Save</button>
+            <button class="btn-primary" id="nodeSaveBtn" onclick="saveNode()">Save</button>
           </div>
         </div>
       </div>
@@ -1155,7 +1298,7 @@ function renderModal() {
     const r = state.mergeResult;
     if (r.loading) {
       return \`
-        <div class="modal-overlay">
+        <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
           <div class="card modal-card">
             <div class="modal-title">Merge Result</div>
             <div class="stat-row">
@@ -1216,7 +1359,7 @@ function renderModal() {
       <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
         <div class="card modal-card small">
           <div class="modal-title">\${escapeHtml(c.title)}</div>
-          <div class="helper-text" style="font-size:13px;color:var(--text-primary);">\${escapeHtml(c.message)}</div>
+          <div class="helper-text">\${escapeHtml(c.message)}</div>
           <div class="modal-footer">
             <button class="btn-secondary" onclick="closeModal()">Cancel</button>
             <button class="btn-secondary \${c.danger ? "btn-danger" : ""}" id="confirmActionBtn">\${escapeHtml(c.confirmLabel || "Confirm")}</button>
@@ -1269,7 +1412,12 @@ function render() {
 ${RIPPLE_SCRIPT}
 
 (async function init() {
-  document.addEventListener("keydown", e => { if (e.key === "Escape") closeSidebar(); });
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Escape") return;
+    // An open modal takes priority; otherwise fall back to closing the sidebar.
+    if (state.modal) closeModal();
+    else closeSidebar();
+  });
 
   if (state.token) {
     try {

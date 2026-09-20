@@ -8,6 +8,7 @@
 
 import { STYLES } from "../frontend/styles.js";
 import { QR_LIB } from "../frontend/qr-lib.js";
+import { RIPPLE_SCRIPT } from "../frontend/ripple-script.js";
 
 function escapeHtml(str) {
   return String(str == null ? "" : str)
@@ -26,7 +27,7 @@ export function renderUserSubPage(user, mergeResult, url) {
   const degraded = (sourceErrors || []).filter((e) => e.usedCache);
   const issuesHtml =
     failed.length || degraded.length
-      ? `<div style="margin-bottom:18px;">
+      ? `<div style="margin-bottom:var(--space-lg);">
           ${failed.length ? `<div class="error-text" style="margin-top:0;">${failed.length} source(s) failed to fetch — nodes missing.</div>` : ""}
           ${degraded.length ? `<div class="helper-text">${degraded.length} source(s) used a cached copy.</div>` : ""}
         </div>`
@@ -43,10 +44,10 @@ export function renderUserSubPage(user, mergeResult, url) {
 </head>
 <body data-theme="dark">
 <div class="login-wrap">
-  <div class="card" style="width:100%;max-width:560px;padding:32px 28px;text-align:left;">
-    <div style="text-align:center;margin-bottom:22px;">
+  <div class="card login-card" style="width:100%;max-width:560px;min-width:0;text-align:left;">
+    <div style="text-align:center;margin-bottom:var(--space-xl);">
       <img class="logo-glow" src="/favicon.svg" alt="VEXA logo">
-      <div class="brand">${escapeHtml(user.name)}</div>
+      <div class="brand" style="overflow-wrap:anywhere;">${escapeHtml(user.name)}</div>
       <div class="brand-sub">VEXA subscription</div>
     </div>
     <div class="stat-row">
@@ -54,7 +55,7 @@ export function renderUserSubPage(user, mergeResult, url) {
       <div class="stat-box"><div class="stat-num">${duplicatesRemoved}</div><div class="stat-label">Duplicates Removed</div></div>
     </div>
     ${issuesHtml}
-    <div class="helper-text" style="margin-bottom:10px;">One link works with any supported client — the format is detected automatically.</div>
+    <div class="helper-text" style="margin-bottom:var(--space-md);">One link works with any supported client — the format is detected automatically.</div>
     <div class="qr-box" id="qrBox"></div>
     <label class="field-label">Subscription Link</label>
     <div class="link-row">
@@ -83,9 +84,10 @@ function showToast(msg) {
   toast.className = "toast";
   toast.textContent = msg;
   document.body.appendChild(toast);
-  setTimeout(() => toast.remove(), 2200);
+  setTimeout(() => toast.remove(), 2600);
 }
 </script>
+<script>${RIPPLE_SCRIPT}</script>
 </body>
 </html>`;
 }

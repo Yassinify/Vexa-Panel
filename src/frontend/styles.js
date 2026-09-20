@@ -1,304 +1,346 @@
 export const STYLES = `
+/* =====================================================================
+   VEXA — visual design system, rebuilt from scratch from the supplied
+   reference board (ChatGPT_Image_Sep_18__2026__04_02_40_AM.png). Every
+   token below is taken directly from that board's labeled Color Palette,
+   Typography, and Spacing & Radius panels — not carried over from any
+   prior implementation. Class names / element ids referenced by
+   client-script.js and the standalone pages (d1-setup.js,
+   change-password-page.js, sub-page.js) are preserved exactly so no
+   selector, DOM id, or inline handler needs to change — only the visual
+   values behind them do.
+   ===================================================================== */
 :root {
-  /* 4px/8px spacing scale (Carbon-style 2x grid) — layout paddings, gaps,
-     and margins below are chosen from this scale rather than ad hoc values,
-     so spacing stays consistent across the whole panel. */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 24px;
-  --space-6: 32px;
-}
-:root {
-  /* --- Design system: near-black + deep-red accent (see docs/how-program-work.md
-     Change Log for the redesign this replaces). Every component below reads
-     these tokens rather than a hardcoded color, so the palette below is the
-     single source of truth for the whole panel's visual language. Red is
-     reserved for primary actions, active/selected state, and error state —
-     deliberately NOT used as a general decorative color, per the "avoid
-     excessive red" constraint this palette was built against. */
-  --bg-page: #0b0b0e;
-  --bg-surface: #111317;
-  --bg-surface-raised: #17191e;
-  --bg-surface-raised: color-mix(in srgb, var(--accent) 3%, #17191e);
-  --border: rgba(255,255,255,0.08);
-  --accent: #e11d48;
-  --accent-hover: #be123c;
-  --accent-active: #9f1239;
-  --accent-light: #fb6f86;
-  --accent-strong: #9f1239;
-  --accent-soft: rgba(225,29,72,0.14);
-  --good: #10b981;
-  --good-soft: rgba(16,185,129,0.14);
-  --warn: #f59e0b;
-  --warn-soft: rgba(245,158,11,0.14);
-  --bad: #ef4444;
-  --bad-light: #f87171;
-  --bad-soft: rgba(239,68,68,0.14);
-  --disabled: #4b5563;
-  --text-primary: #f8fafc;
-  --text-secondary: #a9afbc;
-  --text-muted: #9ca3af;
-  --sidebar-bg: #0d0e11;
-  --sidebar-text: #9ca3af;
-  --sidebar-active-bg: rgba(225,29,72,0.12);
-  --sidebar-active-text: #ffffff;
-  --font-stack: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --mono-stack: 'SF Mono', Consolas, monospace;
-  /* Radius hierarchy: sm for tight inline chips, md for the controls a user
-     directly operates (buttons/inputs/menu items), lg for cards/panels, xl
-     for full-screen containers like modals and the mobile bottom sheet.
-     Badges/switches intentionally stay pill-shaped (999px) as the one
-     deliberate exception for status/toggle controls, not part of this scale. */
+  /* --- Color Palette (reference board, labeled swatches) --- */
+  --color-primary: #E11D48;
+  --color-primary-hover: #BE123C;
+  --color-bg: #0B0B0F;
+  --color-surface: #111317;
+  --color-border: #1F1F24;
+  --color-text: #F8FAFC;
+  --color-muted: #9CA3AF;
+  --color-success: #10B981;
+  --color-warning: #F59E0B;
+  --color-error: #EF4444;
+  --color-disabled: #4B5563;
+
+  /* Derived-but-necessary variants (not separately swatched on the board,
+     needed for hover/soft-fill/active states — built from the primary
+     scale above, same hue family, not introduced from outside it). */
+  --color-primary-active: #9F1239;
+  --color-primary-soft: rgba(225, 29, 72, 0.14);
+  --color-success-soft: rgba(16, 185, 129, 0.14);
+  --color-warning-soft: rgba(245, 158, 11, 0.14);
+  --color-error-soft: rgba(239, 68, 68, 0.14);
+  --color-surface-raised: #26262c;
+  --color-text-dim: #6b7280;
+
+  /* --- Spacing Scale (reference board: xs 4 / sm 8 / md 12 / lg 16 /
+     xl 24 / xxl 32) --- */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-xxl: 32px;
+
+  /* Shared content width: .container and .topbar align to the same
+     centered measure, so the page title and the content below it keep
+     one left edge at wide viewports. */
+  --container-max: 1180px;
+
+  /* --- Border Radius (reference board: sm 4 / md 8 / lg 12 / xl 16) --- */
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
-  /* Elevation shadows stay neutral/restrained (not colored) so they read as
-     depth rather than decoration; the one deliberate exception is the small
-     red-tinted glow added to .btn-primary:hover below, kept to that single
-     spot per the "restrained glow where appropriate" constraint. */
-  --shadow-1: 0 1px 2px rgba(0,0,0,.4), 0 1px 3px 1px rgba(0,0,0,.3);
-  --shadow-2: 0 1px 2px rgba(0,0,0,.5), 0 3px 8px 1px rgba(0,0,0,.4);
+
+  /* --- Typography (reference board: H1 32/700, H2 24/600, H3 18/600,
+     Body Large 16/400, Body 14/400, Caption 12/400) --- */
+  --font-stack: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mono-stack: 'SF Mono', Consolas, monospace;
+  --text-h1: 32px;
+  --text-h2: 24px;
+  --text-h3: 18px;
+  --text-body-lg: 16px;
+  --text-body: 14px;
+  --text-caption: 12px;
+
+  /* Elevation: the board shows flat surfaces with hairline borders, not
+     heavy drop shadows — shadows here stay restrained (depth cue only). */
+  --shadow-card: 0 1px 2px rgba(0,0,0,.35), 0 1px 3px 1px rgba(0,0,0,.25);
+  --shadow-raised: 0 1px 2px rgba(0,0,0,.45), 0 3px 10px 1px rgba(0,0,0,.35);
+  --shadow-glow: 0 0 0 1px rgba(225,29,72,.28), 0 4px 16px rgba(225,29,72,.30);
+
+  /* Back-compat aliases: a handful of inline styles in client-script.js /
+     change-password-page.js reference these two tokens directly by name
+     (--space-3, --accent-light, --text-muted, --mono-stack). Mapped onto
+     the rebuilt scale above so those call sites keep working without
+     editing files outside this task's current checkpoint. */
+  --space-3: var(--space-md);
+  --accent-light: #fb6f86;
+  --text-muted: var(--color-muted);
 }
+
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 html { color-scheme: dark; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
-  margin: 0; min-height: 100vh; background: var(--bg-page);
-  font-family: var(--font-stack); color: var(--text-primary); font-size: clamp(13px, 1.1vw + 11px, 14px);
+  margin: 0; min-height: 100vh;
+  /* Ambient background per reference image 2: one large, soft crimson
+     glow anchored above the upper-left, falling off smoothly into the
+     near-black base. Pixel radii (not percentages) keep the glow the
+     same size whatever the page height. Single gradient, no texture,
+     no decorative shapes, no animation. Literal rgba of
+     --color-primary, same convention as the --color-*-soft tokens. */
+  background-color: var(--color-bg);
+  background-image: radial-gradient(1200px 800px at 20% -160px,
+    rgba(225,29,72,.20) 0%, rgba(225,29,72,.06) 45%, rgba(225,29,72,0) 72%);
+  background-repeat: no-repeat;
+  font-family: var(--font-stack); color: var(--color-text);
+  font-size: var(--text-body); line-height: 1.5;
   -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
   -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none;
 }
-/* Thin scrollbars on the browsers that support each API — Firefox via the
-   standard property, Chrome/Safari/Edge via the older webkit pseudo-element. */
+h1, h2, h3, h4, h5, h6 { margin: 0; font-weight: 700; letter-spacing: -0.01em; }
+p { margin: 0; }
 * { scrollbar-width: thin; }
 .table-wrap::-webkit-scrollbar, .modal-card::-webkit-scrollbar { height: 6px; width: 6px; }
-.table-wrap::-webkit-scrollbar-thumb, .modal-card::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.table-wrap::-webkit-scrollbar-thumb, .modal-card::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
 a { color: inherit; }
+
+/* --- Surface: card --- */
 .card {
-  background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-1);
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-card);
 }
+
+/* --- Buttons (reference board: Primary Button filled + arrow accent,
+   Secondary Button outlined/muted, Danger Button filled red-error) --- */
 .btn-primary {
-  background: var(--accent); border: 1px solid var(--accent); color: #fff; padding: 10px 20px; border-radius: var(--radius-md);
-  font-weight: 600; cursor: pointer; font-size: 13px; line-height: 1.4; transition: background .1s, border-color .1s, box-shadow .15s ease;
-  box-shadow: var(--shadow-1); position: relative; overflow: hidden;
+  background: var(--color-primary); border: 1px solid var(--color-primary); color: #fff;
+  padding: var(--space-sm) var(--space-lg); border-radius: var(--radius-md);
+  font-weight: 600; font-size: var(--text-body); line-height: 1.4; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-xs);
+  transition: background .12s ease, border-color .12s ease, box-shadow .15s ease;
+  box-shadow: var(--shadow-card); position: relative; overflow: hidden;
 }
-/* The one deliberate colored glow in this system (see the --shadow-1/2
-   comment above) — a restrained red-tinted lift on the primary action's
-   hover, not applied to any other component. */
-.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); box-shadow: var(--shadow-2), 0 0 0 1px rgba(225,29,72,.25), 0 4px 16px rgba(225,29,72,.28); }
-.btn-primary:active { background: var(--accent-active); border-color: var(--accent-active); box-shadow: var(--shadow-1); }
+.btn-primary:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); box-shadow: var(--shadow-raised), var(--shadow-glow); }
+.btn-primary:active { background: var(--color-primary-active); border-color: var(--color-primary-active); box-shadow: var(--shadow-card); }
 .btn-secondary {
-  background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-primary);
-  padding: 9px 16px; border-radius: var(--radius-md); cursor: pointer; font-size: 13px; font-weight: 500; line-height: 1.4;
-  transition: background .1s, border-color .1s, color .1s;
+  background: transparent; border: 1px solid var(--color-border); color: var(--color-text);
+  padding: var(--space-sm) var(--space-lg); border-radius: var(--radius-md);
+  font-weight: 500; font-size: var(--text-body); line-height: 1.4; cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
   position: relative; overflow: hidden;
 }
-.btn-secondary:hover { color: var(--accent-light); border-color: var(--accent-hover); background: var(--accent-soft); }
-.btn-secondary:active { color: var(--accent-active); border-color: var(--accent-active); }
-.btn-danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
-.btn-danger:hover { background: var(--bad-light); border-color: var(--bad-light); color: #fff; }
-.btn-danger:active { background: var(--bad); border-color: var(--bad); }
+.btn-secondary:hover { color: var(--accent-light); border-color: var(--color-primary-hover); background: var(--color-primary-soft); }
+.btn-secondary:active { color: var(--color-primary-active); border-color: var(--color-primary-active); }
+.btn-danger { background: var(--color-error); border-color: var(--color-error); color: #fff; font-weight: 600; }
+.btn-danger:hover { background: #f87171; border-color: #f87171; color: #fff; }
+.btn-danger:active { background: var(--color-error); border-color: var(--color-error); }
 .btn-icon {
-  background: transparent; border: none; color: var(--text-muted); cursor: pointer;
-  /* Fluid across the full 320px–3840px+ range: bigger near mobile widths
-     (better tap target), settles to a compact desktop size by ~1024px,
-     then holds flat on larger screens instead of shrinking further. */
-  font-size: clamp(13px, calc(16px - 0.35vw), 16px);
-  width: clamp(32px, calc(40px - 1.2vw), 40px); height: clamp(32px, calc(40px - 1.2vw), 40px);
+  background: transparent; border: none; color: var(--color-muted); cursor: pointer;
+  width: 34px; height: 34px; font-size: 15px;
   border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
   transition: background .15s ease, color .15s ease, transform .15s cubic-bezier(.34,1.56,.64,1);
   position: relative; overflow: hidden;
 }
-.btn-icon:hover { background: var(--accent-soft); color: var(--accent); transform: translateY(-2px) scale(1.08); }
+.btn-icon:hover { background: var(--color-primary-soft); color: var(--color-primary); transform: translateY(-1px) scale(1.06); }
 .btn-icon:active { transform: translateY(0) scale(.94); transition-duration: .08s; }
-/* Inline SVG icons (Heroicons outline) replace the old emoji glyphs. They
-   inherit color via currentColor/stroke, so every .icon-* hue rule and
-   hover state below applies to them the same way it did to text glyphs —
-   no separate color logic needed. Sized to roughly match cap-height of the
-   emoji they replaced, fluidly via clamp() so they scale with the button. */
-.ui-icon {
-  width: clamp(15px, calc(18px - 0.35vw), 18px); height: clamp(15px, calc(18px - 0.35vw), 18px);
-  stroke: currentColor; fill: none; flex-shrink: 0; display: block;
-}
+
+/* --- Icons (Heroicons outline, inherited currentColor) --- */
+.ui-icon { width: 17px; height: 17px; stroke: currentColor; fill: none; flex-shrink: 0; display: block; }
 .nav-icon .ui-icon { width: 17px; height: 17px; }
-.menu-icon .ui-icon { width: clamp(18px, 4.4vw, 22px); height: clamp(18px, 4.4vw, 22px); }
-.empty-state-icon .ui-icon { width: clamp(26px, 7vw, 32px); height: clamp(26px, 7vw, 32px); margin: 0 auto; }
-/* Dedicated wrapper for table sort indicator icons — separate from .nav-icon,
-   which is scoped to .sidebar-link and shouldn't be reused elsewhere. */
-.sort-icon {
-  display: inline-flex;
-  vertical-align: middle;
-}
-/* Purpose-colored icon accents — each action gets its own hue so the row
-   actions read at a glance instead of sitting in flat neutral gray. Resting
-   state is the full hue (vibrant, not washed out); hover/focus deepens it
-   with a tinted background for feedback. */
-/* Plain-color fallback first (older Safari/Firefox without color-mix()
-   support just get the flat hue at rest), then color-mix() overrides it
-   with a near-full-strength tint on browsers that support it — mixed
-   mostly with itself and only a touch of --text-muted so it stays vivid
-   instead of fading toward gray. Cascade order, not @supports, keeps this
-   terse across six repeated icon variants. */
-.btn-icon.icon-link { color: var(--accent); color: color-mix(in srgb, var(--accent) 95%, var(--text-muted)); }
-.btn-icon.icon-link:hover { background: var(--accent-soft); color: var(--accent); }
-.btn-icon.icon-open { color: var(--good); color: color-mix(in srgb, var(--good) 95%, var(--text-muted)); }
-.btn-icon.icon-open:hover { background: var(--good-soft); color: var(--good); }
-.btn-icon.icon-merge { color: #a78bfa; color: color-mix(in srgb, #a78bfa 95%, var(--text-muted)); }
-.btn-icon.icon-merge:hover { background: rgba(167,139,250,0.16); color: #a78bfa; }
-.btn-icon.icon-edit { color: #f0a020; color: color-mix(in srgb, #f0a020 95%, var(--text-muted)); }
-.btn-icon.icon-edit:hover { background: rgba(240,160,32,0.16); color: #f0a020; }
-.btn-icon.icon-delete { color: var(--bad); color: color-mix(in srgb, var(--bad) 95%, var(--text-muted)); }
-.btn-icon.icon-delete:hover { background: var(--bad-soft); color: var(--bad); transform: translateY(-2px) scale(1.08) rotate(-6deg); }
+.menu-icon .ui-icon { width: 20px; height: 20px; }
+.empty-state-icon .ui-icon { width: 30px; height: 30px; margin: 0 auto; }
+.sort-icon { display: inline-flex; vertical-align: middle; }
+.btn-icon.icon-link { color: var(--color-primary); }
+.btn-icon.icon-link:hover { background: var(--color-primary-soft); color: var(--color-primary); }
+.btn-icon.icon-open { color: var(--color-success); }
+.btn-icon.icon-open:hover { background: var(--color-success-soft); color: var(--color-success); }
+.btn-icon.icon-merge { color: var(--color-muted); }
+.btn-icon.icon-merge:hover { background: var(--color-surface-raised); color: var(--color-text); }
+.btn-icon.icon-edit { color: var(--color-warning); }
+.btn-icon.icon-edit:hover { background: var(--color-warning-soft); color: var(--color-warning); }
+.btn-icon.icon-delete { color: var(--color-error); }
+.btn-icon.icon-delete:hover { background: var(--color-error-soft); color: var(--color-error); transform: translateY(-1px) scale(1.06) rotate(-5deg); }
+
+/* --- Inputs / selects (reference board: bordered, dark-filled, small
+   leading-icon slot on "Input field") --- */
 input, textarea, select {
-  width: 100%; background: var(--bg-surface); border: 1px solid var(--border);
-  color: var(--text-primary); padding: 10px 12px; border-radius: var(--radius-md); font-size: 13px; font-family: inherit;
-  transition: border-color .1s, box-shadow .1s;
+  width: 100%; background: var(--color-bg); border: 1px solid var(--color-border);
+  color: var(--color-text); padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md); font-size: var(--text-body); font-family: inherit;
+  /* Same line-height the buttons use, so an input and the button beside
+     it (.link-row, .toolbar) resolve to the same height. */
+  line-height: 1.4;
+  transition: border-color .12s ease, box-shadow .12s ease;
 }
-input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-/* Consistent keyboard-focus ring across every interactive element, so
-   tabbing through the panel never relies on the browser's inconsistent
-   default outline. Mouse/touch clicks don't trigger :focus-visible, so
-   this never shows up as an unwanted ring on click. */
+input::placeholder, textarea::placeholder { color: var(--color-text-dim); }
+input:focus, textarea:focus, select:focus { outline: none; border-color: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-soft); }
 button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
-  outline: 2px solid var(--accent); outline-offset: 2px;
+  outline: 2px solid var(--color-primary); outline-offset: 2px;
 }
-/* Disabled state: consistent across every button/input variant so a
-   disabled control is unambiguous at a glance (Doherty Threshold — no
-   guessing whether a click is pending or blocked) rather than relying on
-   the browser's inconsistent default disabled look. */
 button:disabled, .btn-primary:disabled, .btn-secondary:disabled, .btn-danger:disabled {
-  background: var(--bg-surface-raised); border-color: var(--border); color: var(--disabled);
+  background: var(--color-surface); border-color: var(--color-border); color: var(--color-disabled);
   cursor: not-allowed; box-shadow: none; transform: none;
 }
 input:disabled, textarea:disabled, select:disabled {
-  background: var(--bg-surface-raised); color: var(--disabled); cursor: not-allowed; border-color: var(--border);
+  background: var(--color-surface); color: var(--color-disabled); cursor: not-allowed; border-color: var(--color-border);
 }
-.login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-.login-card { width: 100%; max-width: 380px; padding: 36px 32px; text-align: center; }
-.logo-glow { margin-bottom: 8px; width: clamp(48px, 14vw, 64px); height: clamp(48px, 14vw, 64px); border-radius: var(--radius-lg); }
-.brand { font-weight: 700; font-size: clamp(17px, 1.6vw + 13px, 20px); letter-spacing: -.01em; margin-bottom: 4px; }
-.brand-sub { color: var(--text-secondary); font-size: 13px; margin-bottom: 24px; }
 
-/* --- App shell: sidebar + topbar, 3x-ui style --- */
+/* --- Login card --- */
+.login-wrap { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: var(--space-xl); }
+.login-card { width: 100%; max-width: 380px; padding: var(--space-xxl) var(--space-xl); text-align: center; }
+.logo-glow { margin-bottom: var(--space-sm); width: 56px; height: 56px; border-radius: var(--radius-lg); }
+.brand { font-weight: 700; font-size: var(--text-h3); letter-spacing: -.01em; margin-bottom: var(--space-xs); }
+.brand-sub { color: var(--color-muted); font-size: var(--text-body); margin-bottom: var(--space-xl); }
+
+/* --- App shell: sidebar + topbar (reference board Desktop/Tablet/
+   Mobile panels) --- */
 .app-shell { display: flex; min-height: 100vh; }
 .sidebar {
-  width: 220px; flex-shrink: 0; background: var(--sidebar-bg); border-right: 1px solid rgba(0,0,0,.2);
-  display: flex; flex-direction: column; padding: 16px 12px;
+  width: 232px; flex-shrink: 0; background: var(--color-bg); border-right: 1px solid var(--color-border);
+  display: flex; flex-direction: column; padding: var(--space-lg) var(--space-md);
 }
-.sidebar-brand { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-2) var(--space-5); }
+.sidebar-brand { display: flex; align-items: center; gap: var(--space-md); padding: var(--space-sm) var(--space-sm) var(--space-xl); }
 .sidebar-brand .avatar {
-  width: 30px; height: 30px; border-radius: var(--radius-md); background: var(--accent);
+  width: 32px; height: 32px; border-radius: var(--radius-md); background: var(--color-primary);
   display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; color: #fff;
   object-fit: cover;
 }
-.sidebar-brand .brand { color: var(--accent-light); }
-/* Active/hover state stays a subtle red-tinted fill (not a solid red block)
-   plus a left accent bar, per the "avoid excessive red" constraint — Von
-   Restorff distinction without turning navigation into a red banner. */
+.sidebar-brand .brand { color: var(--color-text); font-size: var(--text-body-lg); margin-bottom: 0; }
 .sidebar-link {
-  display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); margin-bottom: 2px;
-  color: var(--sidebar-text); cursor: pointer; font-size: 13px; font-weight: 500; text-decoration: none;
-  transition: background .15s ease, color .15s ease, transform .15s ease, border-color .15s ease;
-  position: relative; overflow: hidden; border-left: 3px solid transparent;
+  display: flex; align-items: center; gap: var(--space-md); padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md); margin-bottom: 2px;
+  color: var(--color-muted); cursor: pointer; font-size: var(--text-body); font-weight: 500; text-decoration: none;
+  transition: background .15s ease, color .15s ease, transform .15s ease;
+  position: relative; overflow: hidden;
 }
-.sidebar-link:hover { background: var(--bg-surface-raised); color: var(--sidebar-active-text); transform: translateX(2px); }
-.sidebar-link.active { background: var(--sidebar-active-bg); color: var(--sidebar-active-text); border-left-color: var(--accent); }
-.sidebar-link .nav-icon { display: inline-flex; transition: transform .2s cubic-bezier(.34,1.56,.64,1), color .15s ease; }
-.sidebar-link.active .nav-icon { color: var(--accent); transform: scale(1.15); }
-.sidebar-link:hover .nav-icon { transform: scale(1.15) rotate(-4deg); }
-.sidebar-footer { margin-top: auto; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.08); display: flex; flex-direction: column; gap: 6px; }
+.sidebar-link:hover { background: var(--color-surface); color: var(--color-text); transform: translateX(2px); }
+.sidebar-link.active { background: var(--color-primary); color: #fff; }
+.sidebar-link .nav-icon { display: inline-flex; transition: transform .2s cubic-bezier(.34,1.56,.64,1); }
+.sidebar-link.active .nav-icon { color: #fff; }
+.sidebar-link:hover .nav-icon { transform: scale(1.1); }
+.sidebar-footer { margin-top: auto; padding-top: var(--space-md); border-top: 1px solid var(--color-border); display: flex; flex-direction: column; gap: var(--space-sm); }
 .main { flex: 1; min-width: 0; }
-/* Off-canvas sidebar controls — hidden on desktop, switched on for narrow
-   viewports in the @media block below. Sized to a 40px touch target
-   (below WCAG's 44px minimum only by a hair, kept for visual balance with
-   the 28px btn-icon set) rather than the visual icon's own dimensions. */
 .menu-toggle-btn {
   display: none; align-items: center; justify-content: center;
-  background: var(--bg-page); border: 1px solid var(--border); color: var(--text-primary);
-  width: clamp(38px, 9vw, 44px); height: clamp(38px, 9vw, 44px); border-radius: var(--radius-md);
-  font-size: clamp(16px, 4vw, 20px); line-height: 1; cursor: pointer; flex-shrink: 0;
-  transition: background .15s ease, color .15s ease, border-color .15s ease, transform .2s ease;
+  background: var(--color-surface); border: 1px solid var(--color-border); color: var(--color-text);
+  width: 40px; height: 40px; border-radius: var(--radius-md);
+  cursor: pointer; flex-shrink: 0; transition: background .15s ease, color .15s ease, transform .2s ease;
 }
-.menu-toggle-btn:hover { background: var(--accent-soft); color: var(--accent); }
+.menu-toggle-btn:hover { background: var(--color-primary-soft); color: var(--color-primary); }
 .menu-toggle-btn:active { transform: scale(.92); }
 .menu-toggle-btn .menu-icon { display: inline-block; transition: transform .25s ease; }
 .menu-toggle-btn.is-open .menu-icon { transform: rotate(90deg); }
 .sidebar-backdrop {
-  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 39;
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 39;
   opacity: 0; pointer-events: none; transition: opacity .2s ease;
 }
 .sidebar-backdrop.visible { opacity: 1; pointer-events: auto; }
 .topbar {
-  display: flex; align-items: center; justify-content: space-between; padding: 16px 28px;
-  border-bottom: 1px solid var(--border); background: var(--bg-surface); gap: var(--space-3);
+  display: flex; align-items: center; justify-content: space-between;
+  /* Horizontal padding tracks .container's centered measure so the title
+     shares its left edge; falls back to --space-xl below that width.
+     The border/background still span the full width. */
+  padding: var(--space-lg) max(var(--space-xl), calc((100% - var(--container-max)) / 2 + var(--space-xl)));
+  border-bottom: 1px solid var(--color-border); background: var(--color-surface); gap: var(--space-md);
 }
 .topbar h1 {
-  font-size: clamp(16px, 1.4vw + 12px, 20px); margin: 0; font-weight: 700; letter-spacing: -.01em;
+  font-size: var(--text-h2); margin: 0; font-weight: 600; letter-spacing: -.01em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46vw;
 }
 .topbar-sub {
-  color: var(--text-secondary); font-size: clamp(11px, .5vw + 10px, 12px); margin-top: 2px;
+  color: var(--color-muted); font-size: var(--text-caption); margin-top: 2px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46vw;
 }
-.container { max-width: 1180px; margin: 0 auto; padding: 24px 28px 60px; }
+.container { max-width: var(--container-max); margin: 0 auto; padding: var(--space-xl) var(--space-xl) 60px; }
 
 /* --- Stat cards --- */
-.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-4); margin-bottom: var(--space-5); }
-.stat-card { padding: 18px 20px; }
-.stat-card-label { font-size: clamp(11px, .5vw + 10px, 12px); color: var(--text-muted); margin-bottom: 8px; }
-.stat-card-num { font-size: clamp(20px, 2.4vw + 13px, 28px); font-weight: 700; letter-spacing: -.01em; }
-.section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin: 0 0 12px; }
-.activity-list { padding: 4px 0; }
-.activity-row { display: flex; justify-content: space-between; gap: 12px; padding: 10px 20px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-lg); margin-bottom: var(--space-xl); }
+.stat-card { padding: var(--space-lg) var(--space-xl); }
+.stat-card-label { font-size: var(--text-caption); color: var(--color-muted); margin-bottom: var(--space-sm); }
+.stat-card-num { font-size: var(--text-h1); font-weight: 700; letter-spacing: -.01em; }
+/* Dashboard-only: small icon badge in each stat card's header row, per
+   the reference board's Desktop/Tablet/Mobile Dashboard panels (each
+   stat card leads with a colored icon-in-rounded-square). Built only
+   from existing tokens; no new colors introduced. */
+.stat-card-head { display: flex; align-items: center; gap: var(--space-md); margin-bottom: var(--space-md); }
+/* .stat-card-label keeps margin-bottom: var(--space-sm) for its other use
+   (stacked above .stat-card-num, no head wrapper). Inside .stat-card-head
+   that margin was part of the label's flex-centered margin box, pushing
+   the text 4px above the 34px icon's midline. Zeroing it only in this
+   context centers the label against the icon without touching the
+   stacked layout or the shared token. */
+.stat-card-head .stat-card-label { margin-bottom: 0; }
+.stat-card-icon {
+  width: 34px; height: 34px; border-radius: var(--radius-md); flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--color-primary-soft); color: var(--color-primary);
+}
+.stat-card-icon .ui-icon { width: 18px; height: 18px; }
+.section-title { font-size: var(--text-body); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--color-muted); margin: 0 0 var(--space-md); }
+/* Log / activity list, per the reference board's "Recent Activity" card:
+   each row leads with a small circular icon badge, then the event text,
+   then a muted right-aligned relative time. Vexa's activity records only
+   carry { message, ts } (activity table, src/d1.js), so there is no
+   per-event type or subtitle to show — the badge is uniform, not a
+   fabricated event-type indicator. */
+.activity-list { padding: var(--space-xs) 0; }
+.activity-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); padding: var(--space-md) var(--space-xl); border-bottom: 1px solid var(--color-border); font-size: var(--text-body); }
 .activity-row:last-child { border-bottom: none; }
-.activity-time { color: var(--text-muted); font-size: 12px; white-space: nowrap; }
-.status-row { display: flex; align-items: center; gap: 8px; padding: 10px 20px; font-size: 13px; }
-.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 3px var(--good-soft); animation: status-pulse 2.4s ease-in-out infinite; }
+.activity-icon {
+  width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--color-primary-soft); color: var(--color-primary);
+}
+.activity-icon .ui-icon { width: 16px; height: 16px; }
+.activity-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.activity-time { color: var(--color-muted); font-size: var(--text-caption); white-space: nowrap; }
+.status-row { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-sm) var(--space-xl); font-size: var(--text-body); }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-success); box-shadow: 0 0 0 3px var(--color-success-soft); animation: status-pulse 2.4s ease-in-out infinite; }
 @keyframes status-pulse {
-  0%, 100% { box-shadow: 0 0 0 3px var(--good-soft); }
+  0%, 100% { box-shadow: 0 0 0 3px var(--color-success-soft); }
   50% { box-shadow: 0 0 0 6px transparent; }
 }
 
 /* --- Toolbar / search / table --- */
-.toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
-.toolbar-left { display: flex; align-items: center; gap: var(--space-3); flex: 1; min-width: 200px; }
-/* Mobile floating action button — the primary "+ New X" action becomes a
-   thumb-reachable FAB pinned to the bottom-right on phones (Digikala/most
-   native apps put primary creation actions here rather than in a toolbar
-   that scrolls out of reach). Hidden on desktop, where the toolbar button
-   next to search is already convenient with a mouse. */
+.toolbar { display: flex; justify-content: space-between; align-items: center; gap: var(--space-md); margin-bottom: var(--space-lg); flex-wrap: wrap; }
+.toolbar-left { display: flex; align-items: center; gap: var(--space-md); flex: 1; min-width: 200px; }
 .mobile-fab {
   display: none; position: fixed; z-index: 30; align-items: center; justify-content: center;
-  background: var(--accent); color: #fff; border: none; border-radius: 50%; cursor: pointer; overflow: hidden;
-  width: 56px; height: 56px; box-shadow: var(--shadow-2);
+  background: var(--color-primary); color: #fff; border: none; border-radius: 50%; cursor: pointer; overflow: hidden;
+  width: 56px; height: 56px; box-shadow: var(--shadow-raised);
   transition: transform .15s cubic-bezier(.34,1.56,.64,1), background .15s ease;
 }
-.mobile-fab:hover { background: var(--accent-light); transform: scale(1.06); }
+.mobile-fab:hover { background: var(--color-primary-hover); transform: scale(1.05); }
 .mobile-fab:active { transform: scale(.92); }
 .mobile-fab .ui-icon { width: 24px; height: 24px; }
 .search-input { max-width: 280px; }
 .breadcrumb {
-  display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 13px; margin-bottom: 4px;
-  white-space: nowrap; overflow: hidden;
+  display: flex; align-items: center; gap: var(--space-xs); color: var(--color-muted); font-size: var(--text-body);
+  margin-bottom: var(--space-xs); white-space: nowrap; overflow: hidden;
 }
 .breadcrumb span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .breadcrumb a { cursor: pointer; }
-.breadcrumb a:hover { color: var(--accent); }
+.breadcrumb a:hover { color: var(--color-primary); }
 .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .data-table { width: 100%; border-collapse: collapse; }
 .data-table th {
-  text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted);
-  padding: 10px 16px; border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; white-space: nowrap;
+  text-align: left; font-size: var(--text-caption); text-transform: uppercase; letter-spacing: .04em; color: var(--color-muted);
+  padding: var(--space-sm) var(--space-lg); border-bottom: 1px solid var(--color-border); user-select: none; white-space: nowrap;
 }
-.data-table th:hover { color: var(--text-primary); }
-.data-table td { padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: clamp(12px, .5vw + 11px, 13px); vertical-align: middle; }
+/* Only headers with a click handler (the sortable ones, marked by their
+   onclick attribute in client-script.js) get the interactive cursor and
+   hover treatment — a header with no handler has nothing to click. */
+.data-table th[onclick] { cursor: pointer; }
+.data-table th[onclick]:hover { color: var(--color-text); }
+.data-table td { padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--color-border); font-size: var(--text-body); vertical-align: middle; }
 .data-table tr:last-child td { border-bottom: none; }
-.data-table tr.row-hover:hover { background: var(--accent-soft); }
-.data-table tbody tr { animation: row-in .3s ease both; }
+.data-table tr.row-hover:hover { background: var(--color-primary-soft); }
+.data-table.rows-animate tbody tr { animation: row-in .3s ease both; }
 .data-table tbody tr:nth-child(1) { animation-delay: 0s; }
 .data-table tbody tr:nth-child(2) { animation-delay: .03s; }
 .data-table tbody tr:nth-child(3) { animation-delay: .06s; }
@@ -310,154 +352,138 @@ input:disabled, textarea:disabled, select:disabled {
   font-weight: 600; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   max-width: 100%; display: inline-block; vertical-align: middle;
 }
-.row-name:hover { color: var(--accent); }
+.row-name:hover { color: var(--color-primary); }
 .row-actions { display: flex; gap: 4px; justify-content: flex-end; flex-wrap: nowrap; }
-.badge-row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* --- Badges (reference board: Success pill dot+label, Error pill
+   dot+label) --- */
+.badge-row { display: flex; gap: var(--space-sm); flex-wrap: wrap; }
 .badge {
-  font-size: 11px; padding: 3px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent);
+  font-size: var(--text-caption); padding: 3px var(--space-md); border-radius: 999px;
+  background: var(--color-primary-soft); color: var(--color-primary);
   font-weight: 600; letter-spacing: .02em; border: 1px solid transparent; display: inline-flex; align-items: center;
-  white-space: nowrap;
+  gap: 5px; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
 }
-.switch { position: relative; overflow: hidden; width: clamp(34px, 8vw, 40px); height: clamp(19px, 4.4vw, 22px); border-radius: 999px; border: none; background: var(--border); cursor: pointer; padding: 0; flex-shrink: 0; transition: background .15s ease; }
-.switch.on { background: var(--accent); }
+.badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.badge.green { background: var(--color-success-soft); color: var(--color-success); }
+.badge-row .btn-secondary { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+
+/* --- Switch (reference board: pill toggle, filled-red = on) --- */
+.switch { position: relative; overflow: hidden; width: 38px; height: 21px; border-radius: 999px; border: none; background: var(--color-surface); cursor: pointer; padding: 0; flex-shrink: 0; transition: background .15s ease; }
+.switch.on { background: var(--color-primary); }
 .switch.pending { cursor: default; pointer-events: none; }
-.switch-knob { position: absolute; top: 2px; left: 2px; width: calc(clamp(19px, 4.4vw, 22px) - 4px); height: calc(clamp(19px, 4.4vw, 22px) - 4px); border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .15s ease; }
-.switch.on .switch-knob { transform: translateX(calc(clamp(34px, 8vw, 40px) - clamp(19px, 4.4vw, 22px))); }
-/* Cloudflare-style spinner: a partial ring that rotates. Used on buttons
-   (and inline next to a row's name for actions with no persistent button,
-   like create/duplicate) while a save is in flight, replacing the old
-   "saving…" text badge. */
-.spinner { display: inline-block; width: clamp(13px, 3vw, 15px); height: clamp(13px, 3vw, 15px); border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; flex-shrink: 0; }
-.switch-spinner { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: calc(clamp(19px, 4.4vw, 22px) - 8px); height: calc(clamp(19px, 4.4vw, 22px) - 8px); border-width: 2px; }
+.switch-knob { position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform .15s ease; }
+.switch.on .switch-knob { transform: translateX(17px); }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--color-border); border-top-color: var(--color-primary); border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; flex-shrink: 0; }
+/* Centered with inset + margin:auto instead of a transform, so the shared
+   spin keyframes' rotate() has no translate to replace and the ring turns
+   in place. */
+.switch-spinner { position: absolute; top: 0; right: 0; bottom: 0; left: 0; margin: auto; width: 13px; height: 13px; border-width: 2px; }
 @keyframes spin { to { transform: rotate(360deg); } }
-/* Material ink-ripple: a JS-spawned span expands from the pointer-down
-   point and fades out, giving click feedback the way Material components
-   do. Color/opacity is picked per-element in client-script.js (light ink
-   on colored surfaces like .btn-primary/.mobile-fab, dark ink everywhere
-   else) since a single fixed color wouldn't read on both. The host element
-   needs position:relative + overflow:hidden (set alongside each component
-   above) so the ripple is clipped to its shape, rounded corners included. */
+
+/* --- Ripple ink (see ripple-script.js for the JS half) --- */
 .ripple-ink {
   position: absolute; border-radius: 50%; transform: scale(0); pointer-events: none;
   animation: ripple-anim .5s cubic-bezier(.4,0,.2,1) forwards;
 }
-@keyframes ripple-anim {
-  to { transform: scale(1); opacity: 0; }
+@keyframes ripple-anim { to { transform: scale(1); opacity: 0; } }
+
+.format-menu { display: flex; flex-direction: column; gap: var(--space-sm); margin-bottom: var(--space-sm); }
+.format-menu-item {
+  display: flex; align-items: center; justify-content: space-between; width: 100%;
+  padding: var(--space-md); font-size: var(--text-body); font-weight: 600; color: var(--color-text);
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  cursor: pointer; transition: background .15s ease, border-color .15s ease, box-shadow .15s ease;
+  box-shadow: var(--shadow-card); position: relative; overflow: hidden;
 }
-.format-menu { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-2); }
-.format-menu-item { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 12px 14px; font-size: 13px; font-weight: 600; color: var(--text-primary); background: var(--bg-surface-raised); border: 1px solid var(--border); border-radius: var(--radius-md); cursor: pointer; transition: background .15s ease, border-color .15s ease, box-shadow .15s ease; box-shadow: var(--shadow-1); position: relative; overflow: hidden; }
-.format-menu-item:hover { background: var(--accent-soft); border-color: var(--accent); box-shadow: var(--shadow-2); }
-.format-menu-arrow { color: var(--text-muted); font-size: clamp(14px, 3.4vw, 16px); }
-.badge.green { background: var(--good-soft); color: var(--good); }
-.timestamp { color: var(--text-muted); font-size: 12px; }
-.empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+.format-menu-item:hover { background: var(--color-primary-soft); border-color: var(--color-primary); box-shadow: var(--shadow-raised); }
+.format-menu-arrow { color: var(--color-muted); font-size: 15px; }
+
+.timestamp { color: var(--color-muted); font-size: var(--text-caption); }
+.empty-state { text-align: center; padding: 60px var(--space-lg); color: var(--color-muted); }
 .empty-state-icon {
-  font-size: clamp(22px, 6vw, 28px); margin-bottom: 10px; opacity: .85; color: var(--accent);
+  margin-bottom: var(--space-sm); opacity: .85; color: var(--color-primary);
   display: inline-block; animation: empty-float 3s ease-in-out infinite;
 }
-@keyframes empty-float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-6px); }
-}
-/* --- Skeleton screens: shimmer bars sized/positioned to match the real
-   content they stand in for, so nothing jumps once data arrives --- */
-.skel {
-  display: block; background: var(--bg-page); border-radius: 4px;
-  position: relative; overflow: hidden;
-}
+@keyframes empty-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+
+/* --- Skeletons --- */
+.skel { display: block; background: var(--color-bg); border-radius: 4px; position: relative; overflow: hidden; }
 .skel::after {
   content: ""; position: absolute; inset: 0; transform: translateX(-100%);
-  background: linear-gradient(90deg, transparent, var(--accent-soft), transparent);
+  background: linear-gradient(90deg, transparent, var(--color-primary-soft), transparent);
   animation: skel-shimmer 1.4s ease-in-out infinite;
 }
 @keyframes skel-shimmer { 100% { transform: translateX(100%); } }
-.skel-row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.skel-row-actions { display: flex; gap: var(--space-xs); justify-content: flex-end; }
 
 /* --- Modals / confirm dialog / toasts --- */
 @keyframes modal-overlay-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes modal-card-in { from { opacity: 0; transform: translateY(14px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
 .modal-overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center;
-  padding: 20px; z-index: 50; animation: modal-overlay-in .18s ease both;
+  position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center;
+  padding: var(--space-lg); z-index: 50; animation: modal-overlay-in .18s ease both;
 }
-.modal-card { width: 100%; max-width: 520px; padding: 24px; max-height: 85vh; overflow-y: auto; animation: modal-card-in .22s cubic-bezier(.2,.8,.3,1) both; }
+.modal-card { width: 100%; max-width: 520px; padding: var(--space-xl); max-height: 85vh; overflow-y: auto; animation: modal-card-in .22s cubic-bezier(.2,.8,.3,1) both; }
 .modal-card.small { max-width: 400px; }
-.modal-title { font-size: clamp(14px, 1vw + 11px, 16px); font-weight: 700; margin-bottom: var(--space-4); }
-.field-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin-bottom: 6px; display: block; }
-.field-group { margin-bottom: 16px; }
-/* Source repeater rows in the userEditor modal — one textarea + remove
-   button per row, reusing .field-group/.helper-text/.btn-icon rather than
-   inventing a parallel set of classes. */
-.source-repeater { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-2); }
-.source-row { display: flex; gap: var(--space-2); align-items: flex-start; }
-.source-row-input { flex: 1; font-family: var(--mono-stack); font-size: 12px; resize: vertical; }
+.modal-title { font-size: var(--text-h3); font-weight: 600; margin-bottom: var(--space-lg); }
+.field-label { font-size: var(--text-caption); text-transform: uppercase; letter-spacing: .04em; color: var(--color-muted); margin-bottom: var(--space-xs); display: block; }
+.field-group { margin-bottom: var(--space-lg); }
+.source-repeater { display: flex; flex-direction: column; gap: var(--space-sm); margin-bottom: var(--space-sm); }
+.source-row { display: flex; gap: var(--space-sm); align-items: flex-start; }
+.source-row-input { flex: 1; min-width: 0; font-family: var(--mono-stack); font-size: var(--text-caption); resize: vertical; }
 .source-row .btn-icon { flex-shrink: 0; margin-top: 2px; }
-.modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
-.stat-row { display: flex; gap: var(--space-3); margin-bottom: var(--space-4); flex-wrap: wrap; }
-.stat-box { flex: 1; min-width: 100px; text-align: center; padding: var(--space-4); background: var(--bg-page); border-radius: var(--radius-md); border: 1px solid var(--border); box-shadow: var(--shadow-1); }
-.stat-num { font-size: clamp(18px, 1.6vw + 12px, 22px); font-weight: 700; }
-.stat-label { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
-.qr-box { background: #fff; border-radius: var(--radius-lg); padding: var(--space-4); display: flex; align-items: center; justify-content: center; margin: var(--space-4) 0; }
-.qr-box svg { width: clamp(140px, 45vw, 180px); height: clamp(140px, 45vw, 180px); }
-.link-row { display: flex; gap: 8px; align-items: center; }
-.link-row input { font-family: var(--mono-stack); font-size: 12px; }
+.modal-footer { display: flex; justify-content: flex-end; gap: var(--space-sm); margin-top: var(--space-sm); }
+.stat-row { display: flex; gap: var(--space-md); margin-bottom: var(--space-lg); flex-wrap: wrap; }
+.stat-box { flex: 1; min-width: 100px; text-align: center; padding: var(--space-lg); background: var(--color-bg); border-radius: var(--radius-md); border: 1px solid var(--color-border); box-shadow: var(--shadow-card); }
+.stat-num { font-size: var(--text-h3); font-weight: 700; }
+.stat-label { font-size: var(--text-caption); color: var(--color-muted); margin-top: var(--space-xs); }
+.qr-box { background: #fff; border-radius: var(--radius-lg); padding: var(--space-lg); display: flex; align-items: center; justify-content: center; margin: var(--space-lg) 0; }
+.qr-box svg { width: 160px; height: 160px; }
+.link-row { display: flex; gap: var(--space-sm); align-items: stretch; }
+.link-row input { min-width: 0; font-family: var(--mono-stack); font-size: var(--text-caption); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 .toast {
-  position: fixed; bottom: 24px; right: 24px; max-width: min(340px, calc(100vw - 48px));
-  background: var(--bg-surface-raised); border: 1px solid var(--good-soft); color: var(--good);
-  padding: 10px 20px; border-radius: var(--radius-md); font-size: clamp(12px, 2.2vw, 13px); z-index: 100; box-shadow: var(--shadow-2);
-  animation: toast-in .2s cubic-bezier(.2,.8,.3,1) both;
+  position: fixed; bottom: var(--space-xl); right: var(--space-xl); max-width: min(340px, calc(100vw - 48px));
+  background: var(--color-surface-raised); border: 1px solid var(--color-success-soft); color: var(--color-success);
+  padding: var(--space-sm) var(--space-xl); border-radius: var(--radius-md); font-size: var(--text-body);
+  z-index: 100; box-shadow: var(--shadow-raised); animation: toast-in .2s cubic-bezier(.2,.8,.3,1) both;
 }
-.toast.error { border-color: var(--bad-soft); color: var(--bad); }
+.toast.error { border-color: var(--color-error-soft); color: var(--color-error); }
 .version-badge {
   position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
-  background: var(--bg-surface-raised); border: 1px solid var(--border);
-  color: var(--text-muted); font-family: var(--mono-stack); font-size: 11px;
-  letter-spacing: .02em; padding: 4px 12px; border-radius: 20px;
+  background: var(--color-surface-raised); border: 1px solid var(--color-border);
+  color: var(--color-muted); font-family: var(--mono-stack); font-size: 11px;
+  letter-spacing: .02em; padding: 4px var(--space-md); border-radius: 20px;
   z-index: 20; cursor: pointer; text-decoration: none; display: inline-block;
 }
-.version-badge:hover { color: var(--text-primary); border-color: var(--accent, var(--border)); }
-.error-text { color: var(--bad); font-size: 13px; margin-top: 10px; min-height: 16px; }
-.helper-text { color: var(--text-muted); font-size: 12px; margin-top: 6px; }
-/* --- Setup steps list (D1 setup guide) — reuses existing surface/spacing/
-   radius tokens to give an ordered how-to list the same card-like visual
-   language as the rest of the app, instead of a bare browser <ol>. Each
-   step is its own small raised surface with a numbered accent marker;
-   no new colors/fonts/shadows/radii are introduced, only existing tokens
-   already used elsewhere (--bg-surface-raised, --border, --radius-md,
-   --accent-soft, --accent, the --space-* scale). Intentionally lighter
-   than a full .card (no box-shadow) so the setup page stays visually
-   simple, per its own minimal/prerequisite purpose. */
-.setup-steps { list-style: none; margin: 0 0 var(--space-5); padding: 0; display: flex; flex-direction: column; gap: var(--space-2); counter-reset: setup-step; }
+.version-badge:hover { color: var(--color-text); border-color: var(--color-primary); }
+.error-text { color: var(--color-error); font-size: var(--text-body); margin-top: var(--space-sm); min-height: 16px; }
+.helper-text { color: var(--color-muted); font-size: var(--text-caption); margin-top: var(--space-xs); }
+
+.setup-steps { list-style: none; margin: 0 0 var(--space-xl); padding: 0; display: flex; flex-direction: column; gap: var(--space-sm); counter-reset: setup-step; }
 .setup-steps li {
   counter-increment: setup-step;
-  display: flex; align-items: flex-start; gap: var(--space-3);
-  background: var(--bg-surface-raised); border: 1px solid var(--border); border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-4); line-height: 1.55;
+  display: flex; align-items: flex-start; gap: var(--space-md);
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  padding: var(--space-md) var(--space-lg); line-height: 1.55;
 }
 .setup-steps li::before {
   content: counter(setup-step);
   flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
-  background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 12px;
+  background: var(--color-primary-soft); color: var(--color-primary); font-weight: 700; font-size: var(--text-caption);
   display: flex; align-items: center; justify-content: center; margin-top: 1px;
 }
-/* --- Responsive tiers ---
-   Icons (.btn-icon, .switch, .spinner, .menu-toggle-btn,
-   .logo-glow, .empty-state-icon, .format-menu-arrow, .qr-box svg) size
-   themselves fluidly via clamp()/calc() tied to viewport width, so they
-   scale smoothly at any width from 320px up through 4K+ rather than
-   jumping at fixed breakpoints — bigger near mobile widths (better tap
-   target), settling to a compact size by ~1024px and holding flat beyond
-   that. Layout still uses discrete tiers below for things that need to
-   actually restructure (columns, sidebar, modal shape):
-   1024px: tablet — sidebar narrows, content margins tighten.
-   780px:  mobile — sidebar goes off-canvas behind the hamburger + backdrop,
-           tables/modals adapt, inputs bump to 16px (stops iOS Safari's
-           auto-zoom-on-focus), tap targets grow toward the 44px minimum.
-   480px:  small phones — stat grid and toolbar collapse to one column. */
+
+/* --- Responsive tiers, rebuilt against the reference board's Desktop /
+   Tablet / Mobile panels: Tablet narrows the sidebar and tightens
+   margins; Mobile drops the sidebar to an off-canvas drawer behind the
+   hamburger and switches to a bottom tab bar + FAB, tables become
+   stacked cards. --- */
 @media (max-width: 1024px) {
-  .sidebar { width: 188px; }
-  .container { padding: var(--space-5) var(--space-4) 60px; }
+  .sidebar { width: 200px; }
+  .topbar { padding-left: var(--space-lg); padding-right: var(--space-lg); }
+  .container { padding: var(--space-xl) var(--space-lg) 60px; }
 }
 @media (max-width: 780px) {
   .menu-toggle-btn { display: flex; }
@@ -467,93 +493,80 @@ input:disabled, textarea:disabled, select:disabled {
     transform: translateX(-100%); transition: transform .2s ease;
   }
   .sidebar.open { transform: translateX(0); }
-  .topbar { padding: var(--space-3) var(--space-4); }
-  .container { padding: var(--space-4) var(--space-4) 60px; }
+  .topbar { padding: var(--space-md) var(--space-lg); }
+  .container { padding: var(--space-lg) var(--space-lg) 60px; }
   .modal-card { max-width: 100%; }
-  /* iOS Safari zooms the page in on focus of any input under 16px; this is
-     the single fix for that without changing how text looks anywhere else. */
   input, textarea, select { font-size: 16px; }
+  /* Skeleton search bar: its inline height is derived from the 14px body size.
+     min-height raises it to the 16px input above (16px x 1.4 + 2 x --space-sm + 2px
+     border). Only the skeleton has .skel; the loaded input is unaffected. */
+  .skel.search-input { min-height: calc(16px * 1.4 + var(--space-sm) * 2 + 2px); }
   .stat-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
   .desktop-only-action { display: none; }
   .mobile-fab {
     display: flex; right: max(18px, env(safe-area-inset-right));
     bottom: max(18px, env(safe-area-inset-bottom, 0px) + 18px);
   }
-
-  /* --- Table → card transform ---
-     Below 780px a <table> can never look native (it either overflows and
-     forces horizontal scroll, or squashes columns into unreadable slivers).
-     Instead of fighting that, the table is restructured purely with CSS:
-     header row is hidden, each <tr> becomes a self-contained rounded card,
-     and each <td> becomes a label/value line using its data-label attribute.
-     No horizontal scroll is possible because nothing is ever wider than the
-     viewport — every cell stacks vertically instead. */
   .table-wrap { overflow-x: hidden; }
   .data-table, .data-table tbody, .data-table tr, .data-table td { display: block; width: 100%; }
   .data-table thead { display: none; }
   .data-table tr {
-    border: 1px solid var(--border); border-radius: var(--radius-lg); margin-bottom: var(--space-3);
-    padding: var(--space-3) var(--space-4); background: var(--bg-surface-raised);
+    border: 1px solid var(--color-border); border-radius: var(--radius-lg); margin-bottom: var(--space-md);
+    padding: var(--space-md) var(--space-lg); background: var(--color-surface);
   }
   .data-table tr:last-child { margin-bottom: 0; }
   .data-table td {
     border-bottom: none; padding: 7px 0; display: flex; align-items: center;
-    justify-content: space-between; gap: var(--space-3); white-space: normal;
+    justify-content: space-between; gap: var(--space-md); white-space: normal;
   }
   .data-table td:not([data-label=""])::before {
-    content: attr(data-label); font-size: 11px; font-weight: 600; text-transform: uppercase;
-    letter-spacing: .04em; color: var(--text-muted); flex-shrink: 0;
+    content: attr(data-label); font-size: var(--text-caption); font-weight: 600; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--color-muted); flex-shrink: 0;
   }
-  .data-table td[data-label=""] { justify-content: flex-end; padding-top: var(--space-2); margin-top: 4px; border-top: 1px solid var(--border); }
+  .data-table td[data-label=""] { justify-content: flex-end; padding-top: var(--space-sm); margin-top: 4px; border-top: 1px solid var(--color-border); }
   .data-table td[data-label="Name"] { padding-top: 0; }
   .data-table td[data-label="Name"] .row-name { max-width: 62vw; }
   .row-actions { gap: 2px; }
+  .skel-row-actions { gap: 2px; }
+  /* A flex cell is as tall as the taller of its label (18px) and its value. The
+     skeleton Name and Updated bars are shorter than a 14px x 1.5 = 21px value
+     line, so their cells came out 3px short. Margins pad each bar's box to that
+     line (bar heights 13px and 12px are set inline in client-script.js); the
+     bars themselves keep their size. Loaded cells never contain a .skel. */
+  .data-table td[data-label="Name"] > .skel { margin-block: calc((var(--text-body) * 1.5 - 13px) / 2); }
+  .data-table td[data-label="Updated"] > .skel { margin-block: calc((var(--text-body) * 1.5 - 12px) / 2); }
   .card { border-radius: var(--radius-lg); }
-  /* Belt-and-suspenders: nothing on the page should ever be able to force
-     the viewport to scroll sideways on a phone, no matter what content or
-     third-party string ends up inside a cell, badge, or modal. */
   html, body { overflow-x: hidden; max-width: 100vw; }
+  .toast { bottom: calc(94px + env(safe-area-inset-bottom, 0px)); }
 }
 @media (max-width: 480px) {
-  .stat-grid { grid-template-columns: 1fr 1fr; }
+  .stat-grid { grid-template-columns: 1fr; }
   .toolbar { flex-direction: column; align-items: stretch; }
   .toolbar-left, .search-input { max-width: none; width: 100%; }
-  .login-card { padding: var(--space-5) var(--space-4); }
+  .login-card { padding: var(--space-xl) var(--space-lg); }
   .stat-row { flex-direction: column; }
   .modal-overlay { padding: 0; align-items: flex-end; }
-  .modal-card { max-height: 92vh; border-radius: var(--radius-xl) var(--radius-xl) 0 0; padding: 14px 18px 20px; position: relative; }
+  .modal-card { max-height: 92vh; border-radius: var(--radius-xl) var(--radius-xl) 0 0; padding: var(--space-md) var(--space-lg) var(--space-xl); position: relative; }
   .modal-card::before {
     content: ""; position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
-    width: 36px; height: 4px; border-radius: 999px; background: var(--border);
+    width: 36px; height: 4px; border-radius: 999px; background: var(--color-border);
   }
-  .modal-title { margin-top: 10px; }
-  /* Bottom-sheet buttons go full-width and stack, largest/primary action on
-     top — mirrors how Digikala's mobile sheets present a single dominant
-     thumb-reach action instead of two small buttons squeezed to one corner. */
-  .modal-footer { flex-direction: column-reverse; gap: var(--space-2); }
-  .modal-footer button { width: 100%; padding: 12px 15px; }
+  .modal-title { margin-top: var(--space-sm); }
+  .modal-footer { flex-direction: column-reverse; gap: var(--space-sm); }
+  .modal-footer button { width: 100%; padding: var(--space-md) 15px; }
   .card { border-radius: var(--radius-md); }
-  .data-table tr { border-radius: var(--radius-md); padding: var(--space-3); }
+  .data-table tr { border-radius: var(--radius-md); padding: var(--space-md); }
   .stat-box { border-radius: var(--radius-sm); }
   .badge, .switch { border-radius: 999px; }
-  /* Names and badges keep their single-line ellipsis truncation down to the
-     smallest phones instead of ever breaking to a second line. */
   .topbar h1, .breadcrumb, .stat-card-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
-/* Devices that support hover (mouse/trackpad) get the hover states above;
-   touch-only devices skip them by re-asserting each button's own base
-   (non-hover) look, so a tap doesn't leave it visually "stuck" in its
-   hover color until an unrelated tap elsewhere clears it. */
 @media (hover: none) {
-  .btn-primary:hover { background: var(--accent); border-color: var(--accent); }
-  .btn-secondary:hover { background: var(--bg-surface); border-color: var(--border); color: var(--text-primary); }
-  .btn-danger:hover, .btn-danger.btn-secondary:hover { background: var(--bad); border-color: var(--bad); color: #fff; }
-  .btn-icon:hover { background: transparent; color: var(--text-muted); }
+  .btn-primary:hover { background: var(--color-primary); border-color: var(--color-primary); }
+  .btn-secondary:hover { background: transparent; border-color: var(--color-border); color: var(--color-text); }
+  .btn-danger:hover, .btn-danger.btn-secondary:hover { background: var(--color-error); border-color: var(--color-error); color: #fff; }
+  .btn-icon:hover { background: transparent; color: var(--color-muted); }
   .data-table tr.row-hover:hover { background: transparent; }
 }
-/* iPhone/Android notch and home-indicator safe areas, for elements pinned
-   to a screen edge. Falls back to the existing fixed value on browsers
-   without env() support (older Android/desktop). */
 .toast { padding-bottom: max(10px, env(safe-area-inset-bottom)); right: max(16px, env(safe-area-inset-right)); }
 .version-badge { bottom: max(10px, env(safe-area-inset-bottom)); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

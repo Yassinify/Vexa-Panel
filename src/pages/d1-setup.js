@@ -27,16 +27,16 @@ export function renderD1SetupGuide() {
       <div class="brand">D1 Database Required</div>
       <div class="brand-sub">This Worker needs a D1 database bound before it can run</div>
     </div>
-    <div class="helper-text" style="margin:16px 0 10px;">Follow these steps in the Cloudflare dashboard:</div>
+    <div class="helper-text" style="margin:var(--space-lg) 0 var(--space-md);">Follow these steps in the Cloudflare dashboard:</div>
     <ol class="setup-steps">
-      <li>Create a D1 database for this project, if you haven't already (Cloudflare dashboard → <strong>D1 SQL Database</strong> → <strong>Create</strong>). Vexa does not create this database for you.</li>
-      <li>Open your Worker in the Cloudflare dashboard.</li>
-      <li>Go to <strong>Settings → Bindings</strong>.</li>
-      <li>Click <strong>Add binding</strong> and choose <strong>D1 database</strong>.</li>
-      <li>Set the <strong>Variable name</strong> to exactly <code>DB</code> (uppercase).</li>
-      <li>Select the D1 database you created.</li>
-      <li>Click <strong>Save and deploy</strong>.</li>
-      <li>Reload this page.</li>
+      <li><span>Create a D1 database for this project, if you haven't already (Cloudflare dashboard → <strong>D1 SQL Database</strong> → <strong>Create</strong>). Vexa does not create this database for you.</span></li>
+      <li><span>Open your Worker in the Cloudflare dashboard.</span></li>
+      <li><span>Go to <strong>Settings → Bindings</strong>.</span></li>
+      <li><span>Click <strong>Add binding</strong> and choose <strong>D1 database</strong>.</span></li>
+      <li><span>Set the <strong>Variable name</strong> to exactly <code>DB</code> (uppercase).</span></li>
+      <li><span>Select the D1 database you created.</span></li>
+      <li><span>Click <strong>Save and deploy</strong>.</span></li>
+      <li><span>Reload this page.</span></li>
     </ol>
     <button class="btn-primary" style="width:100%;" onclick="location.reload()">I've added it — Reload</button>
   </div>

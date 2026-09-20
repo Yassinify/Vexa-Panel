@@ -11,7 +11,7 @@ export const RIPPLE_SCRIPT = `
 // a keyboard-triggered ripple, so keyboard activation (Enter/Space) is
 // unaffected and unchanged.
 const RIPPLE_SELECTOR = ".btn-primary, .btn-secondary, .btn-danger, .btn-icon, .mobile-fab, .sidebar-link, .format-menu-item, .switch";
-const RIPPLE_LIGHT_SELECTOR = ".btn-primary, .btn-danger, .mobile-fab, .switch.on";
+const RIPPLE_LIGHT_SELECTOR = ".btn-primary, .btn-danger, .mobile-fab, .switch.on, .sidebar-link.active";
 function attachRippleEffect() {
   document.addEventListener("pointerdown", e => {
     if (e.button === 1 || e.button === 2) return;
