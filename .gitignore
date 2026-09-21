@@ -144,3 +144,4 @@ vite.config.ts.timestamp-*
 
 # Internal project docs (not published to the repo)
 docs/
+reference/

@@ -281,6 +281,47 @@ input:disabled, textarea:disabled, select:disabled {
   background: var(--color-primary-soft); color: var(--color-primary);
 }
 .stat-card-icon .ui-icon { width: 18px; height: 18px; }
+/* --- User Growth chart (Dashboard), per the reference board's User Growth
+   panel. The SVG only draws the gridlines, area and line with non-scaling
+   strokes so it can stretch to any card width; the y values, date labels
+   and the latest-point marker are HTML, so text never scales or distorts.
+   The plot height (--growth-plot-h) and the note row are fixed, so the
+   loading skeleton and the loaded card have the same height. --- */
+.growth-card { --growth-plot-h: 200px; --growth-yaxis-w: 40px; padding: var(--space-lg) var(--space-xl); margin-bottom: var(--space-xl); }
+.growth-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); margin-bottom: var(--space-lg); min-height: 28px; }
+.growth-title { font-size: var(--text-body-lg); font-weight: 600; }
+.growth-range { font-size: var(--text-caption); line-height: 1.4; color: var(--color-muted); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-xs) var(--space-md); white-space: nowrap; }
+.growth-body { display: flex; gap: var(--space-sm); }
+.growth-yaxis { position: relative; flex-shrink: 0; width: var(--growth-yaxis-w); height: var(--growth-plot-h); }
+.growth-ytick { position: absolute; right: 0; transform: translateY(50%); font-size: var(--text-caption); line-height: 1; color: var(--color-muted); white-space: nowrap; }
+.growth-plot { position: relative; flex: 1; min-width: 0; height: var(--growth-plot-h); }
+.growth-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.growth-grid { stroke: var(--color-border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.growth-line { fill: none; stroke: var(--color-primary); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.growth-stop-top { stop-color: var(--color-primary); stop-opacity: .35; }
+.growth-stop-bottom { stop-color: var(--color-primary); stop-opacity: 0; }
+.growth-dot { position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: var(--color-primary); box-shadow: 0 0 0 3px var(--color-primary-soft); }
+.growth-xaxis { position: relative; height: 16px; margin: var(--space-sm) 0 0 calc(var(--growth-yaxis-w) + var(--space-sm)); }
+.growth-xlabel { position: absolute; top: 0; transform: translateX(-50%); font-size: var(--text-caption); line-height: 16px; color: var(--color-muted); white-space: nowrap; }
+.growth-note { height: 18px; margin-top: var(--space-sm); font-size: var(--text-caption); line-height: 18px; color: var(--color-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* --- Dashboard row: User Growth + Recent Activity side by side, per the
+   reference board's Desktop Dashboard; one column at 1024px and below.
+   The row owns the spacing, so the growth card's own bottom margin is
+   dropped inside it. --- */
+.dash-row { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: var(--space-lg); align-items: stretch; margin-bottom: var(--space-xl); }
+.dash-row .growth-card { margin-bottom: 0; }
+/* Recent Activity card: reuses the Log page's .activity-row/.activity-icon/
+   .activity-text/.activity-time. Rows stay on one line (ellipsis) so each is
+   32px icon + 2 x space-md tall, and the list keeps room for four rows
+   (4 x 56px + 3 borders + the list's own 2 x space-xs padding), so the card
+   is the same height with fewer than four records. In the row it stretches
+   to the growth card's height and clips any overflow. */
+.activity-card { display: flex; flex-direction: column; min-width: 0; padding: 0; overflow: hidden; }
+.activity-card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); padding: var(--space-lg) var(--space-xl) var(--space-sm); min-height: calc(28px + var(--space-lg) + var(--space-sm)); }
+.activity-viewall { background: none; border: none; padding: 0; font: inherit; font-size: var(--text-caption); font-weight: 600; color: var(--color-primary); cursor: pointer; white-space: nowrap; }
+.activity-viewall:hover { color: var(--color-primary-hover); }
+.activity-card .activity-list { flex: 1; min-height: calc(4 * (32px + 2 * var(--space-md)) + 3px + 2 * var(--space-xs)); overflow: hidden; }
+.activity-card .activity-text { overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap; }
 .section-title { font-size: var(--text-body); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--color-muted); margin: 0 0 var(--space-md); }
 /* Log / activity list, per the reference board's "Recent Activity" card:
    each row leads with a small circular icon badge, then the event text,
@@ -353,6 +394,12 @@ input:disabled, textarea:disabled, select:disabled {
   max-width: 100%; display: inline-block; vertical-align: middle;
 }
 .row-name:hover { color: var(--color-primary); }
+/* Wraps the QR/subscription-link icon button and the name on one line
+   (Users table only). min-width:0 on both the wrapper and .row-name lets
+   the name shrink to its own ellipsis instead of overflowing the row. */
+.row-name-cell { display: flex; align-items: center; gap: var(--space-sm); min-width: 0; }
+.row-name-cell .row-name { min-width: 0; flex: 1; }
+.row-name-cell .btn-icon { flex-shrink: 0; }
 .row-actions { display: flex; gap: 4px; justify-content: flex-end; flex-wrap: nowrap; }
 
 /* --- Badges (reference board: Success pill dot+label, Error pill
@@ -484,6 +531,7 @@ input:disabled, textarea:disabled, select:disabled {
   .sidebar { width: 200px; }
   .topbar { padding-left: var(--space-lg); padding-right: var(--space-lg); }
   .container { padding: var(--space-xl) var(--space-lg) 60px; }
+  .dash-row { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 780px) {
   .menu-toggle-btn { display: flex; }
@@ -525,16 +573,19 @@ input:disabled, textarea:disabled, select:disabled {
   }
   .data-table td[data-label=""] { justify-content: flex-end; padding-top: var(--space-sm); margin-top: 4px; border-top: 1px solid var(--color-border); }
   .data-table td[data-label="Name"] { padding-top: 0; }
-  .data-table td[data-label="Name"] .row-name { max-width: 62vw; }
+  .data-table td[data-label="Name"] .row-name { max-width: calc(62vw - 42px); }
   .row-actions { gap: 2px; }
   .skel-row-actions { gap: 2px; }
   /* A flex cell is as tall as the taller of its label (18px) and its value. The
-     skeleton Name and Updated bars are shorter than a 14px x 1.5 = 21px value
-     line, so their cells came out 3px short. Margins pad each bar's box to that
-     line (bar heights 13px and 12px are set inline in client-script.js); the
-     bars themselves keep their size. Loaded cells never contain a .skel. */
-  .data-table td[data-label="Name"] > .skel { margin-block: calc((var(--text-body) * 1.5 - 13px) / 2); }
-  .data-table td[data-label="Updated"] > .skel { margin-block: calc((var(--text-body) * 1.5 - 12px) / 2); }
+     skeleton date bars are shorter than a 14px x 1.5 = 21px value line, so
+     their cells came out 3px short. Margins pad each bar's box to that line
+     (bar height 12px, set inline in client-script.js); the bars themselves
+     keep their size. Loaded cells never contain a .skel. The Name cell's own
+     34px icon placeholder (row-name-cell, already centered via its
+     align-items:center) is taller than that value line, so it needs no
+     such margin. */
+  .data-table td[data-label="Updated"] > .skel,
+  .data-table td[data-label="Created At"] > .skel { margin-block: calc((var(--text-body) * 1.5 - 12px) / 2); }
   .card { border-radius: var(--radius-lg); }
   html, body { overflow-x: hidden; max-width: 100vw; }
   .toast { bottom: calc(94px + env(safe-area-inset-bottom, 0px)); }
@@ -555,6 +606,8 @@ input:disabled, textarea:disabled, select:disabled {
   .modal-footer { flex-direction: column-reverse; gap: var(--space-sm); }
   .modal-footer button { width: 100%; padding: var(--space-md) 15px; }
   .card { border-radius: var(--radius-md); }
+  .growth-card { --growth-plot-h: 160px; }
+  .growth-xlabel:nth-child(even) { display: none; }
   .data-table tr { border-radius: var(--radius-md); padding: var(--space-md); }
   .stat-box { border-radius: var(--radius-sm); }
   .badge, .switch { border-radius: 999px; }

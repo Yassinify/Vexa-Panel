@@ -40,6 +40,12 @@ const SCHEMA_STATEMENTS = [
     message TEXT NOT NULL,
     ts INTEGER NOT NULL
   )`,
+  // One row per UTC day (YYYY-MM-DD) holding the last total user count
+  // recorded that day; see recordUserGrowthSnapshot() below.
+  `CREATE TABLE IF NOT EXISTS user_growth (
+    day TEXT PRIMARY KEY,
+    total_users INTEGER NOT NULL
+  )`,
   // Replaces KV's subcache:{sha256} (src/merge.js). cache_key is the same
   // sha256-of-source-URL this project already used as a KV key (see
   // subCacheKeyFor() below) so cache-key semantics are unchanged. nodes is
@@ -559,6 +565,86 @@ export async function getRecentActivity(env, limit = ACTIVITY_CAP) {
     .bind(limit)
     .all();
   return results;
+}
+
+// ---------------------------------------------------------------------
+// LIVE COUNTS (Dashboard) — plain SELECT COUNT(*) queries rather than
+// more stats-table columns kept in sync via adjustStats(). The Dashboard
+// is a low-traffic, admin-only read, so a live count per request is cheap
+// and always exactly correct — no extra write-path bookkeeping (node
+// create/delete, user enable/disable) needed to keep a cached counter
+// from drifting.
+// ---------------------------------------------------------------------
+export async function getNodeCount(env) {
+  const row = await env.DB.prepare(`SELECT COUNT(*) AS c FROM nodes`).first();
+  return row ? row.c : 0;
+}
+
+export async function getActiveUserCount(env) {
+  const row = await env.DB
+    .prepare(`SELECT COUNT(*) AS c FROM users WHERE enabled = 1`)
+    .first();
+  return row ? row.c : 0;
+}
+
+// ---------------------------------------------------------------------
+// USER GROWTH (Dashboard chart) — one row per UTC calendar day holding
+// the total user count last recorded that day. Rows are written lazily
+// (no cron), so a day nobody touched has no row and getUserGrowth()
+// carries the previous value forward. Nothing before the first snapshot
+// is invented.
+// ---------------------------------------------------------------------
+const MS_PER_DAY = 86400000;
+
+function utcDayString(ms) {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+// Non-fatal, same DK-9 rationale as adjustStats(): a failed snapshot must
+// not fail the request that triggered it.
+export async function recordUserGrowthSnapshot(env, totalUsers) {
+  try {
+    await env.DB
+      .prepare(
+        `INSERT INTO user_growth (day, total_users) VALUES (?, ?)
+         ON CONFLICT(day) DO UPDATE SET total_users = excluded.total_users`,
+      )
+      .bind(utcDayString(Date.now()), totalUsers)
+      .run();
+  } catch (err) {
+    console.error("recordUserGrowthSnapshot (D1) failed (non-fatal):", err);
+  }
+}
+
+// Returns [{ day, totalUsers }] for the last `days` UTC days, oldest
+// first. Days before the first known value are omitted (no backfill).
+export async function getUserGrowth(env, days = 7) {
+  const now = Date.now();
+  const dayList = [];
+  for (let i = days - 1; i >= 0; i--) {
+    dayList.push(utcDayString(now - i * MS_PER_DAY));
+  }
+  // The newest row before the window seeds the carry-forward value.
+  const seedRow = await env.DB
+    .prepare(
+      `SELECT total_users FROM user_growth WHERE day < ? ORDER BY day DESC LIMIT 1`,
+    )
+    .bind(dayList[0])
+    .first();
+  const { results } = await env.DB
+    .prepare(
+      `SELECT day, total_users FROM user_growth WHERE day >= ? ORDER BY day ASC`,
+    )
+    .bind(dayList[0])
+    .all();
+  const byDay = new Map(results.map((r) => [r.day, r.total_users]));
+  let last = seedRow ? seedRow.total_users : null;
+  const series = [];
+  for (const day of dayList) {
+    if (byDay.has(day)) last = byDay.get(day);
+    if (last !== null) series.push({ day, totalUsers: last });
+  }
+  return series;
 }
 
 // ---------------------------------------------------------------------

@@ -19,18 +19,20 @@ const state = {
   // Whether admin authentication has been initialized yet (D1 auth_config
   // row exists, or a complete Cloudflare Secret triplet is bound) — null
   // until the first /api/version check resolves it. The login view uses
-  // this to decide between the normal "Sign In" form and the first-run
+  // this to decide between the normal login form and the first-run
   // "choose a password" form; there is no separate /secret page anymore.
   authInitialized: null,
 
   users: [],
   userSearch: "",
-  userSort: { key: "updatedAt", dir: "desc" },
+  userSort: { key: "createdAt", dir: "desc" },
 
   nodes: [],
 
   stats: null,
   activity: [],
+  // Daily total-user snapshots for the Dashboard growth chart (API userGrowth).
+  userGrowth: [],
 
   modal: null,
   editingUser: null,
@@ -70,6 +72,7 @@ async function loadDashboard() {
   const data = await apiFetch("/api/stats");
   state.stats = data.stats;
   state.activity = data.activity || [];
+  state.userGrowth = data.userGrowth || [];
 }
 
 async function loadUsers() {
@@ -102,6 +105,13 @@ function timeAgo(ts) {
   if (diff < 3600) return Math.floor(diff / 60) + "m ago";
   if (diff < 86400) return Math.floor(diff / 3600) + "h ago";
   return Math.floor(diff / 86400) + "d ago";
+}
+
+// "YYYY-MM-DD" in the browser's local time; a dash for a missing or invalid value.
+function formatDate(ts) {
+  const d = new Date(ts);
+  if (!ts || isNaN(d.getTime())) return "—";
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
 
 function formatCacheAge(ms) {
@@ -230,7 +240,7 @@ function renderLoginView() {
             <label class="field-label">Password</label>
             <input type="password" id="loginPassword" placeholder="Enter admin password" />
           </div>
-          <button class="btn-primary" id="loginBtn" style="width:100%;" onclick="doLogin()">Sign In</button>
+          <button class="btn-primary" id="loginBtn" style="width:100%;" onclick="doLogin()">Submit Password</button>
         \`}
         <div class="error-text" id="loginError">\${state.errorMsg || ""}</div>
       </div>
@@ -243,7 +253,7 @@ async function doLogin() {
   const password = document.getElementById("loginPassword").value;
   state.errorMsg = "";
   state.authPending = true;
-  setButtonPending("loginBtn", true, "Signing in…", "Sign In");
+  setButtonPending("loginBtn", true, "Signing in…", "Submit Password");
   try {
     const res = await fetch("/api/login", {
       method: "POST",
@@ -268,7 +278,7 @@ async function doLogin() {
     render();
   } finally {
     state.authPending = false;
-    setButtonPending("loginBtn", false, "", "Sign In");
+    setButtonPending("loginBtn", false, "", "Submit Password");
   }
 }
 
@@ -486,17 +496,140 @@ function renderShell(innerHtml) {
 }
 
 // ---------------------------------------------------------------------
+// USER GROWTH card (Dashboard) — draws state.userGrowth ([{ day,
+// totalUsers }], oldest first, right-aligned so today is the right edge,
+// shorter than 7 entries while history is still being recorded). The SVG
+// (viewBox 0 0 100 100, stretched) only holds the gridlines, area and
+// line; y values, date labels and the latest-point dot are HTML so text
+// never scales. Classes live in styles.js (.growth-*).
+// ---------------------------------------------------------------------
+const GROWTH_DAYS = 7;
+const GROWTH_MS_PER_DAY = 86400000;
+
+// "Sep 15" for a UTC timestamp (the API's days are UTC calendar days).
+function growthDayLabel(ms) {
+  return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+// Integer y ticks from 0: a 1/2/5 x 10^k step giving 4 to 5 intervals.
+function growthTicks(maxValue) {
+  let step = 1;
+  for (let mag = 1; ; mag *= 10) {
+    const found = [1, 2, 5].map((m) => m * mag).find((s) => Math.ceil(maxValue / s) <= 5);
+    if (found) { step = found; break; }
+  }
+  const intervals = Math.max(4, Math.ceil(maxValue / step));
+  const ticks = [];
+  for (let i = 0; i <= intervals; i++) ticks.push(i * step);
+  return ticks;
+}
+
+function renderGrowthChart(series) {
+  const n = GROWTH_DAYS;
+  const points = Array.isArray(series) ? series.slice(-n) : [];
+  const offset = n - points.length;
+  const lastMs = points.length
+    ? Date.parse(points[points.length - 1].day + "T00:00:00Z")
+    : Date.now();
+  const maxValue = points.reduce((m, p) => Math.max(m, p.totalUsers), 0);
+  const ticks = growthTicks(maxValue);
+  const yMax = ticks[ticks.length - 1];
+  const xPct = (slot) => (slot / (n - 1)) * 100;
+  const yPct = (value) => 100 - (value / yMax) * 100;
+  const coords = points.map((p, i) => xPct(offset + i).toFixed(2) + "," + yPct(p.totalUsers).toFixed(2));
+
+  const gridLines = ticks.map((t) => {
+    const y = yPct(t).toFixed(2);
+    return '<line class="growth-grid" x1="0" x2="100" y1="' + y + '" y2="' + y + '"/>';
+  }).join("");
+  // A line and area need two points; one point is shown as the dot only.
+  let shapes = "";
+  if (points.length >= 2) {
+    shapes =
+      '<polygon points="' + xPct(offset).toFixed(2) + ',100 ' + coords.join(" ") + ' 100,100" fill="url(#growthFill)" stroke="none"/>' +
+      '<polyline class="growth-line" points="' + coords.join(" ") + '"/>';
+  }
+  const dot = points.length
+    ? '<span class="growth-dot" style="left:100%;top:' + yPct(points[points.length - 1].totalUsers).toFixed(2) + '%"></span>'
+    : "";
+  const yTicks = ticks.map((t) =>
+    '<span class="growth-ytick" style="bottom:' + ((t / yMax) * 100).toFixed(2) + '%">' + t.toLocaleString("en-US") + '</span>'
+  ).join("");
+  let xLabels = "";
+  for (let slot = 0; slot < n; slot++) {
+    xLabels += '<span class="growth-xlabel" style="left:' + xPct(slot).toFixed(2) + '%">' +
+      growthDayLabel(lastMs - (n - 1 - slot) * GROWTH_MS_PER_DAY) + '</span>';
+  }
+  let note = "";
+  if (!points.length) note = "No data yet.";
+  else if (points.length < n) {
+    note = "Tracking started " + growthDayLabel(Date.parse(points[0].day + "T00:00:00Z")) + ". Earlier days are not recorded.";
+  }
+  const summary = "User growth, last " + n + " days" +
+    (points.length ? ": " + points[points.length - 1].totalUsers + " users" : "");
+
+  return '<div class="card growth-card">' +
+    '<div class="growth-head"><span class="growth-title">User Growth</span><span class="growth-range">Last ' + n + ' days</span></div>' +
+    '<div class="growth-body" role="img" aria-label="' + summary + '">' +
+      '<div class="growth-yaxis">' + yTicks + '</div>' +
+      '<div class="growth-plot">' +
+        '<svg class="growth-svg" viewBox="0 0 100 100" preserveAspectRatio="none" overflow="visible" aria-hidden="true">' +
+          '<defs><linearGradient id="growthFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="growth-stop-top"/><stop offset="1" class="growth-stop-bottom"/></linearGradient></defs>' +
+          gridLines + shapes +
+        '</svg>' + dot +
+      '</div>' +
+    '</div>' +
+    '<div class="growth-xaxis">' + xLabels + '</div>' +
+    '<div class="growth-note">' + note + '</div>' +
+  '</div>';
+}
+
+// ---------------------------------------------------------------------
+// RECENT ACTIVITY card (Dashboard) — short companion to the User Growth
+// card, per the reference board's Desktop Dashboard. Shows the first 4
+// records of state.activity (already loaded by loadDashboard()), reusing
+// the Log page's .activity-row/.activity-icon/.activity-text/.activity-time
+// and timeAgo(); "View all" navigates to the full list on the Log page.
+// Records only carry { message, ts } (see renderLogView()), so every row
+// uses the same icon. Classes live in styles.js (.activity-card-head,
+// .activity-viewall); .growth-title is reused for the card title (same
+// size/weight, no new class needed).
+// ---------------------------------------------------------------------
+function renderRecentActivity() {
+  const items = state.activity.slice(0, 4);
+  const rowsHtml = items.length
+    ? items.map(a => \`
+        <div class="activity-row">
+          <span class="activity-icon">\${icon("log")}</span>
+          <span class="activity-text">\${escapeHtml(a.message)}</span>
+          <span class="activity-time">\${timeAgo(a.ts)}</span>
+        </div>
+      \`).join("")
+    : '<div class="empty-state" style="padding:var(--space-xl) var(--space-lg);">No activity yet.</div>';
+  return \`
+    <div class="card activity-card">
+      <div class="activity-card-head">
+        <span class="growth-title">Recent Activity</span>
+        <button class="activity-viewall" onclick="navigate('log')">View all →</button>
+      </div>
+      <div class="activity-list">\${rowsHtml}</div>
+    </div>
+  \`;
+}
+
+// ---------------------------------------------------------------------
 // DASHBOARD — visually rebuilt from the reference board's Desktop/
 // Tablet/Mobile Dashboard panels: each stat card now leads with a small
 // colored icon badge (.stat-card-icon, styles.js), matching the board's
-// icon-in-rounded-square treatment. Only 3 real stats exist in
-// state.stats (totalUsers/totalSubSources/totalRawSources, from
-// getStats() in src/users.js) — the board's extra "Active Subscriptions"/
-// "Total Traffic" cards and its User-Growth-chart/Recent-Activity panels
-// have no backing data source here and are intentionally not reproduced
-// (no fabricated stats/chart per this checkpoint's functional-
-// preservation rule). The status-row card below keeps its existing
-// "System operational" content, restyled to the same card language.
+// icon-in-rounded-square treatment. The 3 cards read state.stats
+// (totalUsers/totalNodes/activeUsers, from getStats() in src/users.js);
+// Active Subscriptions = enabled-user count, and there is no Total
+// Traffic card. Below the stat cards, .dash-row holds the User Growth
+// card (renderGrowthChart()) and the Recent Activity card
+// (renderRecentActivity()) side by side, stacking to one column at
+// 1024px and below (styles.js). The status-row card below keeps its
+// existing "System operational" content, restyled to the same card
+// language.
 // ---------------------------------------------------------------------
 function renderDashboardView() {
   if (state.loading || !state.stats) {
@@ -520,6 +653,35 @@ function renderDashboardView() {
           </div>
         \`).join("")}
       </div>
+      <div class="dash-row">
+        <div class="card growth-card">
+          <div class="growth-head">
+            <div class="skel" style="width:110px;height:16px;"></div>
+            <div class="skel" style="width:88px;height:28px;border-radius:8px;"></div>
+          </div>
+          <div class="growth-body">
+            <div class="growth-yaxis"></div>
+            <div class="growth-plot"><div class="skel" style="width:100%;height:100%;"></div></div>
+          </div>
+          <div class="growth-xaxis"></div>
+          <div class="growth-note"></div>
+        </div>
+        <div class="card activity-card">
+          <div class="activity-card-head">
+            <div class="skel" style="width:110px;height:16px;"></div>
+            <div class="skel" style="width:56px;height:12px;"></div>
+          </div>
+          <div class="activity-list">
+            \${[1,2,3,4].map(() => \`
+              <div class="activity-row">
+                <div class="skel" style="width:32px;height:32px;border-radius:50%;flex-shrink:0;"></div>
+                <div class="skel" style="width:55%;height:13px;"></div>
+                <div class="skel" style="width:48px;height:12px;flex-shrink:0;margin-left:auto;"></div>
+              </div>
+            \`).join("")}
+          </div>
+        </div>
+      </div>
       <div class="card">
         <div class="status-row">
           <span class="skel" style="width:8px;height:8px;border-radius:50%;flex-shrink:0;"></span>
@@ -532,8 +694,8 @@ function renderDashboardView() {
   const s = state.stats;
   const cards = [
     { label: "Total Users", num: s.totalUsers, icon: "users" },
-    { label: "Subscription Sources", num: s.totalSubSources, icon: "link" },
-    { label: "Raw / Static Sources", num: s.totalRawSources, icon: "merge" }
+    { label: "Total Nodes", num: s.totalNodes, icon: "link" },
+    { label: "Active Subscriptions", num: s.activeUsers, icon: "merge" }
   ];
   return renderShell(\`
     <div class="stat-grid">
@@ -546,6 +708,10 @@ function renderDashboardView() {
           <div class="stat-card-num">\${c.num}</div>
         </div>
       \`).join("")}
+    </div>
+    <div class="dash-row">
+      \${renderGrowthChart(state.userGrowth)}
+      \${renderRecentActivity()}
     </div>
     <div class="card">
       <div class="status-row">
@@ -647,15 +813,15 @@ function renderUsersView() {
       <div class="card">
         <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Name</th><th>Sources</th><th>Active</th><th>Updated</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Sources</th><th>Active</th><th>Created At</th><th></th></tr></thead>
           <tbody>
             \${[1,2,3,4,5].map(() => \`
               <tr>
-                <td data-label="Name"><div class="skel" style="width:130px;height:13px;"></div></td>
+                <td data-label="Name"><div class="row-name-cell"><div class="skel" style="\${SKEL_ACTION_STYLE}flex-shrink:0;"></div><div class="skel" style="width:130px;height:13px;"></div></div></td>
                 <td data-label="Sources"><div class="skel" style="width:76px;\${SKEL_BADGE_STYLE}"></div></td>
                 <td data-label="Active"><div class="skel" style="\${SKEL_SWITCH_STYLE}"></div></td>
-                <td data-label="Updated"><div class="skel" style="width:64px;height:12px;"></div></td>
-                <td data-label=""><div class="skel-row-actions">\${[1,2,3,4].map(() => '<div class="skel" style="' + SKEL_ACTION_STYLE + '"></div>').join("")}</div></td>
+                <td data-label="Created At"><div class="skel" style="width:64px;height:12px;"></div></td>
+                <td data-label=""><div class="skel-row-actions">\${[1,2,3].map(() => '<div class="skel" style="' + SKEL_ACTION_STYLE + '"></div>').join("")}</div></td>
               </tr>
             \`).join("")}
           </tbody>
@@ -672,7 +838,7 @@ function renderUsersView() {
 
   const rows = sorted.map(u => \`
     <tr class="row-hover">
-      <td data-label="Name"><span class="row-name" onclick="openUser('\${u.id}')">\${escapeHtml(u.name)}</span>\${u._pending && u._pendingKind !== "toggle" ? ' <span class="spinner" title="Saving…"></span>' : ''}</td>
+      <td data-label="Name"><div class="row-name-cell"><button class="btn-icon icon-link" title="Subscription link and QR" aria-label="Subscription link and QR" onclick="openSubFormatPicker('\${u.id}', '\${escapeHtml(u.name).replace(/'/g, "&#39;")}')">\${icon("merge")}</button><span class="row-name" onclick="openUser('\${u.id}')">\${escapeHtml(u.name)}</span>\${u._pending && u._pendingKind !== "toggle" ? ' <span class="spinner" title="Saving…"></span>' : ''}</div></td>
       <td data-label="Sources">
         <div class="badge-row">
           <span class="badge" style="\${NEUTRAL_BADGE_STYLE}">\${u.subCount} subs</span>
@@ -684,10 +850,9 @@ function renderUsersView() {
                 title="\${u.enabled ? "Active — click to disable" : "Disabled — click to enable"}"
                 onclick="toggleUserEnabled('\${u.id}')"><span class="switch-knob"></span>\${u._pending && u._pendingKind === "toggle" ? '<span class="spinner switch-spinner"></span>' : ''}</button>
       </td>
-      <td class="timestamp" data-label="Updated">\${timeAgo(u.updatedAt)}</td>
+      <td class="timestamp" data-label="Created At">\${formatDate(u.createdAt)}</td>
       <td data-label="">
         <div class="row-actions">
-          <button class="btn-icon icon-link" title="Get subscription link" onclick="openSubFormatPicker('\${u.id}', '\${escapeHtml(u.name).replace(/'/g, "&#39;")}')">\${icon("link")}</button>
           <button class="btn-icon icon-merge" title="Merge / QR" onclick="openMerge('\${u.id}')">\${icon("merge")}</button>
           <button class="btn-icon icon-open" title="Edit sources" onclick="openUser('\${u.id}')">\${icon("open")}</button>
           <button class="btn-icon icon-delete" title="Delete" onclick="askDeleteUser('\${u.id}', '\${escapeHtml(u.name).replace(/'/g, "&#39;")}')">\${icon("delete")}</button>
@@ -718,7 +883,7 @@ function renderUsersView() {
                 <th onclick="setUserSort('name')">Name\${sortIndicator(state.userSort, "name")}</th>
                 <th>Sources</th>
                 <th>Active</th>
-                <th onclick="setUserSort('updatedAt')">Updated\${sortIndicator(state.userSort, "updatedAt")}</th>
+                <th onclick="setUserSort('createdAt')">Created At\${sortIndicator(state.userSort, "createdAt")}</th>
                 <th></th>
               </tr>
             </thead>
@@ -801,14 +966,14 @@ async function saveUser() {
   } else {
     closeModal();
     const tempId = "temp-" + Date.now();
-    state.users.push({ id: tempId, name, enabled: true, subCount: 0, rawCount: 0, updatedAt: Date.now(), _pending: true, _pendingKind: "create" });
+    state.users.push({ id: tempId, name, enabled: true, subCount: 0, rawCount: 0, createdAt: Date.now(), updatedAt: Date.now(), _pending: true, _pendingKind: "create" });
     render();
     try {
       const result = await apiFetch("/api/users", { method: "POST", body: JSON.stringify({ name, sources, nodeIds: state.editingUserNodeIds }) });
       const u = result.user;
       const idx = state.users.findIndex(x => x.id === tempId);
       state.users[idx] = {
-        id: u.id, name: u.name, enabled: u.enabled !== false,
+        id: u.id, name: u.name, enabled: u.enabled !== false, createdAt: u.createdAt,
         subCount: u.sources.filter(s => s.type === "subscription").length,
         rawCount: u.sources.filter(s => s.type !== "subscription").length,
         updatedAt: u.updatedAt, _pending: false
@@ -1439,7 +1604,7 @@ ${RIPPLE_SCRIPT}
   // No valid session at this point (either no token was stored, or the
   // token was rejected above). Before showing the login form, check
   // whether authentication has even been initialized yet — this is what
-  // decides between the normal "Sign In" form and the first-run "choose a
+  // decides between the normal login form and the first-run "choose a
   // password" form (see renderLoginView()). /api/version is public and
   // unauthenticated, so this call works even on a completely fresh
   // deployment with no admin account yet.

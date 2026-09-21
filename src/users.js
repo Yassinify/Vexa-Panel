@@ -2,6 +2,10 @@ import { json, safeJson } from "./http.js";
 import { VEXA_VERSION } from "./constants.js";
 import {
   getStatsRow,
+  getNodeCount,
+  getActiveUserCount,
+  getUserGrowth,
+  recordUserGrowthSnapshot,
   getRecentActivity,
   adjustStats,
   recordActivity,
@@ -21,16 +25,41 @@ import { validateNodeUri } from "./uri-validate.js";
 import { parseXrayJsonSource } from "./xray-json.js";
 import { parseClashYamlSource } from "./clash-yaml.js";
 
+// Records today's total for the Dashboard growth chart. Non-fatal: a
+// snapshot failure must not fail an already-successful create/delete.
+async function snapshotUserGrowth(env) {
+  try {
+    const { totalUsers } = await getStatsRow(env);
+    await recordUserGrowthSnapshot(env, totalUsers);
+  } catch (err) {
+    console.error("snapshotUserGrowth failed (non-fatal):", err);
+  }
+}
+
 export async function getStats(env) {
   const stats = await getStatsRow(env);
   const activity = await getRecentActivity(env);
+  // Live COUNT(*) values (src/d1.js) for the Dashboard cards.
+  const totalNodes = await getNodeCount(env);
+  const activeUsers = await getActiveUserCount(env);
+  // Record today's point first so the series below includes it.
+  await recordUserGrowthSnapshot(env, stats.totalUsers);
+  let userGrowth = [];
+  try {
+    userGrowth = await getUserGrowth(env, 7);
+  } catch (err) {
+    console.error("getUserGrowth (D1) failed (non-fatal):", err);
+  }
   return json({
     stats: {
       totalUsers: stats.totalUsers,
       totalSubSources: stats.totalSubSources,
       totalRawSources: stats.totalRawSources,
+      totalNodes,
+      activeUsers,
     },
     activity,
+    userGrowth,
     version: VEXA_VERSION,
   });
 }
@@ -85,6 +114,7 @@ export async function createUser(request, env) {
     totalSubSources: sources.filter((s) => s.type === "subscription").length,
     totalRawSources: sources.filter((s) => s.type !== "subscription").length,
   });
+  await snapshotUserGrowth(env);
   await recordActivity(env, `Created user "${user.name}"`);
   return json({ user, invalidSources: invalid }, 201);
 }
@@ -208,6 +238,7 @@ export async function deleteUser(id, env) {
     totalSubSources: -subCount,
     totalRawSources: -rawCount,
   });
+  await snapshotUserGrowth(env);
   await recordActivity(env, `Deleted user "${row.name}"`);
   return json({ success: true });
 }
