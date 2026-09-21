@@ -42,7 +42,10 @@ const state = {
   editingNodeSource: "",
   mergeResult: null,
   confirmDialog: null,
-  subFormatTarget: null
+  subFormatTarget: null,
+  // Open Users row "..." menu ({ userId }) or null; drawn by renderRowMenu()
+  // (see the ROW MENU block).
+  menu: null
 };
 
 // ---------------------------------------------------------------------
@@ -157,6 +160,9 @@ const ICONS = {
   log: '<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />',
   sortAsc: '<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18" />',
   sortDesc: '<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 13.5 12 21m0 0-7.5-7.5M12 21V3" />',
+  more: '<path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z" />',
+  activate: '<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />',
+  deactivate: '<path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />',
 };
 function icon(name, extraClass) {
   const paths = ICONS[name] || "";
@@ -407,6 +413,7 @@ function closeSidebar() {
 
 function navigate(view) {
   closeSidebar();
+  state.menu = null;
   state.view = view;
   state.errorMsg = "";
   const path = VIEW_PATHS[view];
@@ -491,6 +498,7 @@ function renderShell(innerHtml) {
         <div class="container">\${innerHtml}</div>
       </div>
       \${renderModal()}
+      \${renderRowMenu()}
     </div>
   \`;
 }
@@ -813,15 +821,14 @@ function renderUsersView() {
       <div class="card">
         <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Name</th><th>Sources</th><th>Active</th><th>Created At</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Sources</th><th>Created At</th><th></th></tr></thead>
           <tbody>
             \${[1,2,3,4,5].map(() => \`
               <tr>
                 <td data-label="Name"><div class="row-name-cell"><div class="skel" style="\${SKEL_ACTION_STYLE}flex-shrink:0;"></div><div class="skel" style="width:130px;height:13px;"></div></div></td>
                 <td data-label="Sources"><div class="skel" style="width:76px;\${SKEL_BADGE_STYLE}"></div></td>
-                <td data-label="Active"><div class="skel" style="\${SKEL_SWITCH_STYLE}"></div></td>
                 <td data-label="Created At"><div class="skel" style="width:64px;height:12px;"></div></td>
-                <td data-label=""><div class="skel-row-actions">\${[1,2,3].map(() => '<div class="skel" style="' + SKEL_ACTION_STYLE + '"></div>').join("")}</div></td>
+                <td data-label=""><div class="skel-row-actions">\${[1,2].map(() => '<div class="skel" style="' + SKEL_ACTION_STYLE + '"></div>').join("")}</div></td>
               </tr>
             \`).join("")}
           </tbody>
@@ -838,24 +845,18 @@ function renderUsersView() {
 
   const rows = sorted.map(u => \`
     <tr class="row-hover">
-      <td data-label="Name"><div class="row-name-cell"><button class="btn-icon icon-link" title="Subscription link and QR" aria-label="Subscription link and QR" onclick="openSubFormatPicker('\${u.id}', '\${escapeHtml(u.name).replace(/'/g, "&#39;")}')">\${icon("merge")}</button><span class="row-name" onclick="openUser('\${u.id}')">\${escapeHtml(u.name)}</span>\${u._pending && u._pendingKind !== "toggle" ? ' <span class="spinner" title="Saving…"></span>' : ''}</div></td>
+      <td data-label="Name"><div class="row-name-cell"><button class="btn-icon icon-link" title="Subscription link and QR" aria-label="Subscription link and QR" onclick="openSubFormatPicker('\${u.id}', '\${escapeHtml(u.name).replace(/'/g, "&#39;")}')">\${icon("merge")}</button><span class="row-name" onclick="openUser('\${u.id}')">\${escapeHtml(u.name)}</span>\${u._pending ? ' <span class="spinner" title="Saving…"></span>' : ''}</div></td>
       <td data-label="Sources">
         <div class="badge-row">
           <span class="badge" style="\${NEUTRAL_BADGE_STYLE}">\${u.subCount} subs</span>
           <span class="badge" style="\${NEUTRAL_BADGE_STYLE}">\${u.rawCount} raw</span>
         </div>
       </td>
-      <td data-label="Active">
-        <button class="switch \${u.enabled ? "on" : ""} \${u._pending && u._pendingKind === "toggle" ? "pending" : ""}" role="switch" aria-checked="\${u.enabled ? "true" : "false"}"
-                title="\${u.enabled ? "Active — click to disable" : "Disabled — click to enable"}"
-                onclick="toggleUserEnabled('\${u.id}')"><span class="switch-knob"></span>\${u._pending && u._pendingKind === "toggle" ? '<span class="spinner switch-spinner"></span>' : ''}</button>
-      </td>
       <td class="timestamp" data-label="Created At">\${formatDate(u.createdAt)}</td>
       <td data-label="">
         <div class="row-actions">
           <button class="btn-icon icon-merge" title="Merge / QR" onclick="openMerge('\${u.id}')">\${icon("merge")}</button>
-          <button class="btn-icon icon-open" title="Edit sources" onclick="openUser('\${u.id}')">\${icon("open")}</button>
-          <button class="btn-icon icon-delete" title="Delete" onclick="askDeleteUser('\${u.id}', '\${escapeHtml(u.name).replace(/'/g, "&#39;")}')">\${icon("delete")}</button>
+          <button class="btn-icon icon-more row-menu-trigger" data-user-id="\${u.id}" title="More actions" aria-label="More actions" aria-haspopup="menu" aria-expanded="\${state.menu && state.menu.userId === u.id ? "true" : "false"}" onclick="openRowMenu('\${u.id}')">\${icon("more")}</button>
         </div>
       </td>
     </tr>
@@ -882,7 +883,6 @@ function renderUsersView() {
               <tr>
                 <th onclick="setUserSort('name')">Name\${sortIndicator(state.userSort, "name")}</th>
                 <th>Sources</th>
-                <th>Active</th>
                 <th onclick="setUserSort('createdAt')">Created At\${sortIndicator(state.userSort, "createdAt")}</th>
                 <th></th>
               </tr>
@@ -1063,6 +1063,122 @@ async function toggleUserEnabled(id) {
     showToast("Could not update user status.", true);
     render();
   }
+}
+
+// ---------------------------------------------------------------------
+// ROW MENU — the "..." actions menu on a Users row. The table scrolls
+// inside .table-wrap (overflow-x: auto), which would clip a dropdown
+// placed in the row, so the menu is one position:fixed element drawn by
+// renderShell() after the modal. A transparent backdrop closes it on an
+// outside click; Escape, scrolling, resizing, choosing an item,
+// navigating and the login view close it too. Opening and closing add
+// and remove the two elements directly instead of calling render(), which
+// would rebuild the table and reset its horizontal scroll, moving the
+// button from under the menu. Any other render() while the menu is open
+// redraws it from state.menu and positionRowMenu() places it again.
+// Classes live in styles.js (.row-menu*).
+// ---------------------------------------------------------------------
+const ROW_MENU_GAP = 4;
+const ROW_MENU_EDGE = 8;
+
+function rowMenuTrigger(userId) {
+  return document.querySelector('.row-menu-trigger[data-user-id="' + userId + '"]');
+}
+
+function removeRowMenuElements() {
+  const menu = document.getElementById("rowMenu");
+  if (menu) menu.remove();
+  const backdrop = document.querySelector(".row-menu-backdrop");
+  if (backdrop) backdrop.remove();
+}
+
+function openRowMenu(userId) {
+  const shell = document.querySelector(".app-shell");
+  if (!shell) return;
+  removeRowMenuElements();
+  state.menu = { userId };
+  shell.insertAdjacentHTML("beforeend", renderRowMenu());
+  const btn = rowMenuTrigger(userId);
+  if (btn) btn.setAttribute("aria-expanded", "true");
+  positionRowMenu();
+  const first = document.querySelector("#rowMenu .row-menu-item");
+  if (first) first.focus();
+}
+
+// restoreFocus is only passed for Escape, so a keyboard user lands back on
+// the button; after a click or a scroll focus is left alone.
+function closeRowMenu(restoreFocus) {
+  if (!state.menu) return;
+  const userId = state.menu.userId;
+  state.menu = null;
+  removeRowMenuElements();
+  const btn = rowMenuTrigger(userId);
+  if (!btn) return;
+  btn.setAttribute("aria-expanded", "false");
+  if (restoreFocus) btn.focus({ preventScroll: true });
+}
+
+// Right edge on the button's right edge, below the button, flipped above
+// it when there is no room; always kept inside the viewport. If the row is
+// gone (deleted, or filtered out by the search) the menu is dropped.
+function positionRowMenu() {
+  if (!state.menu) return;
+  const el = document.getElementById("rowMenu");
+  const btn = rowMenuTrigger(state.menu.userId);
+  if (!el || !btn) {
+    state.menu = null;
+    removeRowMenuElements();
+    return;
+  }
+  const r = btn.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth;
+  const vh = window.innerHeight;
+  const w = el.offsetWidth;
+  const h = el.offsetHeight;
+  const left = Math.max(ROW_MENU_EDGE, Math.min(r.right - w, vw - w - ROW_MENU_EDGE));
+  let top = r.bottom + ROW_MENU_GAP;
+  if (top + h > vh - ROW_MENU_EDGE) top = Math.max(ROW_MENU_EDGE, r.top - ROW_MENU_GAP - h);
+  el.style.left = left + "px";
+  el.style.top = top + "px";
+}
+
+// The item handlers take the user from state.users by id at click time, so
+// no name is put in an inline onclick string (a name containing an
+// apostrophe would break it).
+function menuEditUser() {
+  const userId = state.menu && state.menu.userId;
+  state.menu = null;
+  if (userId) openUser(userId); else render();
+}
+
+function menuToggleUser() {
+  const userId = state.menu && state.menu.userId;
+  // closeRowMenu() rather than a bare state reset: toggleUserEnabled() can
+  // return without rendering (row gone or still saving), which would leave
+  // the menu on screen.
+  closeRowMenu();
+  if (userId) toggleUserEnabled(userId);
+}
+
+function menuDeleteUser() {
+  const userId = state.menu && state.menu.userId;
+  state.menu = null;
+  const u = userId && state.users.find(x => x.id === userId);
+  if (u) askDeleteUser(u.id, u.name); else render();
+}
+
+function renderRowMenu() {
+  if (!state.menu || state.view !== "users") return "";
+  const u = state.users.find(x => x.id === state.menu.userId);
+  if (!u) return "";
+  const toggleLabel = u.enabled ? "Deactivate" : "Activate";
+  const toggleIcon = u.enabled ? "deactivate" : "activate";
+  return '<div class="row-menu-backdrop" onclick="closeRowMenu()"></div>' +
+    '<div class="row-menu" id="rowMenu" role="menu" aria-label="User actions">' +
+      '<button type="button" class="row-menu-item" role="menuitem" onclick="menuToggleUser()"><span class="row-menu-icon">' + icon(toggleIcon) + '</span>' + toggleLabel + '</button>' +
+      '<button type="button" class="row-menu-item" role="menuitem" onclick="menuEditUser()"><span class="row-menu-icon">' + icon("edit") + '</span>Edit</button>' +
+      '<button type="button" class="row-menu-item danger" role="menuitem" onclick="menuDeleteUser()"><span class="row-menu-icon">' + icon("delete") + '</span>Delete</button>' +
+    '</div>';
 }
 
 // ---------------------------------------------------------------------
@@ -1543,6 +1659,7 @@ function renderModal() {
 function render() {
   const app = document.getElementById("app");
   if (state.view === "login") {
+    state.menu = null;
     app.innerHTML = renderLoginView();
     const submit = state.authInitialized === false ? doCreateAccount : doLogin;
     document.getElementById("loginPassword")?.addEventListener("keydown", e => {
@@ -1557,6 +1674,9 @@ function render() {
   else if (state.view === "users") { app.innerHTML = renderUsersView(); }
   else if (state.view === "nodes") { app.innerHTML = renderNodesView(); }
   else if (state.view === "log") { app.innerHTML = renderLogView(); }
+
+  // The row menu is placed from its button's position in the new DOM.
+  positionRowMenu();
 
   // Confirm dialogs attach their handler post-render since the callback is
   // a closure, not something that survives being stamped into an HTML string.
@@ -1579,10 +1699,17 @@ ${RIPPLE_SCRIPT}
 (async function init() {
   document.addEventListener("keydown", e => {
     if (e.key !== "Escape") return;
-    // An open modal takes priority; otherwise fall back to closing the sidebar.
-    if (state.modal) closeModal();
+    // The row menu closes first, then an open modal; otherwise fall back to
+    // closing the sidebar.
+    if (state.menu) closeRowMenu(true);
+    else if (state.modal) closeModal();
     else closeSidebar();
   });
+  // The fixed-position row menu would drift away from its button, so it
+  // closes on any scroll (capture, so the table's own scrolling counts) and
+  // on resize.
+  window.addEventListener("scroll", () => { if (state.menu) closeRowMenu(); }, true);
+  window.addEventListener("resize", () => { if (state.menu) closeRowMenu(); });
 
   if (state.token) {
     try {

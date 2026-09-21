@@ -161,6 +161,8 @@ a { color: inherit; }
 .btn-icon.icon-open:hover { background: var(--color-success-soft); color: var(--color-success); }
 .btn-icon.icon-merge { color: var(--color-muted); }
 .btn-icon.icon-merge:hover { background: var(--color-surface-raised); color: var(--color-text); }
+.btn-icon.icon-more { color: var(--color-muted); }
+.btn-icon.icon-more:hover, .btn-icon.icon-more[aria-expanded="true"] { background: var(--color-surface-raised); color: var(--color-text); }
 .btn-icon.icon-edit { color: var(--color-warning); }
 .btn-icon.icon-edit:hover { background: var(--color-warning-soft); color: var(--color-warning); }
 .btn-icon.icon-delete { color: var(--color-error); }
@@ -401,6 +403,27 @@ input:disabled, textarea:disabled, select:disabled {
 .row-name-cell .row-name { min-width: 0; flex: 1; }
 .row-name-cell .btn-icon { flex-shrink: 0; }
 .row-actions { display: flex; gap: 4px; justify-content: flex-end; flex-wrap: nowrap; }
+/* "..." actions menu of a Users row (client-script.js, ROW MENU block). Both
+   layers are fixed; positionRowMenu() sets the menu's left/top. The backdrop
+   is transparent and only catches outside clicks. z-index sits above the
+   sidebar (40) and below modals (50). */
+.row-menu-backdrop { position: fixed; inset: 0; z-index: 45; }
+.row-menu {
+  position: fixed; z-index: 46; min-width: 160px; padding: var(--space-xs);
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-raised);
+}
+.row-menu-item {
+  display: flex; align-items: center; gap: var(--space-sm); width: 100%;
+  padding: var(--space-sm) var(--space-md); background: none; border: none;
+  border-radius: var(--radius-sm); color: var(--color-text); font: inherit; font-weight: 500;
+  text-align: left; cursor: pointer; transition: background .12s ease, color .12s ease;
+}
+.row-menu-item:hover, .row-menu-item:focus-visible { background: var(--color-surface-raised); }
+.row-menu-item:focus-visible { outline-offset: -2px; }
+.row-menu-item.danger { color: var(--color-error); }
+.row-menu-item.danger:hover, .row-menu-item.danger:focus-visible { background: var(--color-error-soft); }
+.row-menu-icon { display: inline-flex; }
 
 /* --- Badges (reference board: Success pill dot+label, Error pill
    dot+label) --- */
