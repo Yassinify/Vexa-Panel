@@ -89,7 +89,8 @@ export async function route(request, env, ctx) {
     pathname === "/Dashboard" ||
     pathname === "/Users" ||
     pathname === "/Nodes" ||
-    pathname === "/Log"
+    pathname === "/Log" ||
+    pathname === "/settings"
   ) {
     return htmlResponse(renderApp());
   }

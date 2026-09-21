@@ -6,6 +6,7 @@ import {
   resolveAuthConfig,
   initAuthConfigIfAbsent,
   updateAuthConfigPasswordHash,
+  recordActivity,
 } from "./d1.js";
 
 // Required Variables/Secrets for the panel to function at all. ADMIN_SALT
@@ -46,6 +47,15 @@ export async function handleChangePassword(request, env) {
 
   if (config.source === "d1") {
     await updateAuthConfigPasswordHash(env, adminPasswordHash);
+    // Dashboard Recent Activity: only this branch actually persists the
+    // new password itself (the Secret-backed fallback below just returns
+    // a value for the admin to paste in manually, so nothing is
+    // "changed" yet from this Worker's point of view). recordActivity()
+    // is the existing non-fatal bookkeeping call (src/d1.js) — same
+    // convention as every other activity write in this project, so a
+    // logging failure here cannot turn this already-successful password
+    // change into a failed request.
+    await recordActivity(env, 'Changed password for "Admin"');
     return json({ persisted: true });
   }
 

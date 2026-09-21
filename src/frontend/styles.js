@@ -212,7 +212,8 @@ input:disabled, textarea:disabled, select:disabled {
   display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; color: #fff;
   object-fit: cover;
 }
-.sidebar-brand .brand { color: var(--color-text); font-size: var(--text-body-lg); margin-bottom: 0; }
+.sidebar-brand .brand { color: var(--color-text); font-size: var(--text-body-lg); margin-bottom: 0; font-weight: 300; }
+.sidebar-brand .brand-strong { font-weight: 700; }
 .sidebar-link {
   display: flex; align-items: center; gap: var(--space-md); padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-md); margin-bottom: 2px;
@@ -222,6 +223,30 @@ input:disabled, textarea:disabled, select:disabled {
 }
 .sidebar-link:hover { background: var(--color-surface); color: var(--color-text); transform: translateX(2px); }
 .sidebar-link.active { background: var(--color-primary); color: #fff; }
+/* Dashboard-only active state: vivid crimson gradient, soft glow, 1px top highlight. */
+.sidebar-link.nav-dashboard.active {
+  background: linear-gradient(90deg, #E8173F 0%, #CC1540 50%, #A8123A 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.22), 0 0 14px rgba(232,23,63,.35);
+  color: #fff;
+}
+/* Users-only active state: same crimson family as Dashboard, more restrained (softer stops, lighter glow). */
+.sidebar-link.nav-users.active {
+  background: linear-gradient(90deg, #D9173F 0%, #BE1440 50%, #9E1238 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 0 10px rgba(217,23,63,.24);
+  color: #fff;
+}
+/* Logs-only active state: same restrained crimson treatment as Users. */
+.sidebar-link.nav-logs.active {
+  background: linear-gradient(90deg, #D9173F 0%, #BE1440 50%, #9E1238 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 0 10px rgba(217,23,63,.24);
+  color: #fff;
+}
+/* Settings-only active state: same restrained crimson treatment as Users and Logs. */
+.sidebar-link.nav-settings.active {
+  background: linear-gradient(90deg, #D9173F 0%, #BE1440 50%, #9E1238 100%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 0 10px rgba(217,23,63,.24);
+  color: #fff;
+}
 .sidebar-link .nav-icon { display: inline-flex; transition: transform .2s cubic-bezier(.34,1.56,.64,1); }
 .sidebar-link.active .nav-icon { color: #fff; }
 .sidebar-link:hover .nav-icon { transform: scale(1.1); }
@@ -258,6 +283,20 @@ input:disabled, textarea:disabled, select:disabled {
   color: var(--color-muted); font-size: var(--text-caption); margin-top: 2px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46vw;
 }
+/* Topbar right side (client-script.js renderShell()). .topbar-actions is the
+   right-aligned group; .topbar-bell is the decorative notification bell: a span with
+   no handler, no hover state and no focus stop, so it keeps the default cursor. It
+   has the size and radius of the mobile .menu-toggle-btn on the same bar, with the
+   input-field surface. The inline flex:1 spacer before the actions needs no rule, and
+   the padding of .topbar keeps the bell on the content area's right edge. */
+.topbar-actions { display: flex; align-items: center; gap: var(--space-sm); flex-shrink: 0; }
+.topbar-bell {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 40px; height: 40px; border-radius: var(--radius-md);
+  background: var(--color-bg); border: 1px solid var(--color-border);
+  color: var(--color-muted); cursor: default;
+}
+.topbar-bell .ui-icon { width: 20px; height: 20px; }
 .container { max-width: var(--container-max); margin: 0 auto; padding: var(--space-xl) var(--space-xl) 60px; }
 
 /* --- Stat cards --- */
@@ -323,7 +362,17 @@ input:disabled, textarea:disabled, select:disabled {
 .activity-viewall { background: none; border: none; padding: 0; font: inherit; font-size: var(--text-caption); font-weight: 600; color: var(--color-primary); cursor: pointer; white-space: nowrap; }
 .activity-viewall:hover { color: var(--color-primary-hover); }
 .activity-card .activity-list { flex: 1; min-height: calc(4 * (32px + 2 * var(--space-md)) + 3px + 2 * var(--space-xs)); overflow: hidden; }
-.activity-card .activity-text { overflow: hidden; overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap; }
+/* Dashboard-only: the mapped title/entity structure (.activity-title +
+   .activity-entity, see mapActivityForDashboard() in client-script.js)
+   stacks as two lines instead of the Log page's single nowrap line.
+   overflow/ellipsis truncation still applies per line, not to the whole
+   block, so a long title or entity is clipped on its own row instead of
+   pushing the other line or the row's width. Scoped to .activity-card so
+   the plain Log page rows (.activity-text with no children) keep their
+   existing single-line behavior untouched. */
+.activity-card .activity-text { display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+.activity-title { font-size: var(--text-body); font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-entity { font-size: var(--text-caption); font-weight: 400; color: var(--color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .section-title { font-size: var(--text-body); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--color-muted); margin: 0 0 var(--space-md); }
 /* Log / activity list, per the reference board's "Recent Activity" card:
    each row leads with a small circular icon badge, then the event text,
@@ -424,6 +473,32 @@ input:disabled, textarea:disabled, select:disabled {
 .row-menu-item.danger { color: var(--color-error); }
 .row-menu-item.danger:hover, .row-menu-item.danger:focus-visible { background: var(--color-error-soft); }
 .row-menu-icon { display: inline-flex; }
+/* Sidebar Admin profile (client-script.js: renderSidebar() footer and the PROFILE
+   MENU block). The trigger reuses .row-menu-item and the avatar reuses
+   .activity-icon, so these rules sit after them and override only what differs: a
+   bordered surface block instead of a flat menu row, a neutral dark avatar, and the
+   name/role hierarchy. The trigger's hover and focus states come from .row-menu-item. */
+.sidebar-profile {
+  gap: var(--space-md); background: var(--color-surface);
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
+}
+.sidebar-profile[aria-expanded="true"] { background: var(--color-surface-raised); }
+.sidebar-profile-avatar {
+  background: var(--color-bg); border: 1px solid var(--color-border);
+  color: var(--color-muted); transition: color .12s ease;
+}
+.sidebar-profile:hover .sidebar-profile-avatar,
+.sidebar-profile:focus-visible .sidebar-profile-avatar,
+.sidebar-profile[aria-expanded="true"] .sidebar-profile-avatar { color: var(--color-text); }
+.sidebar-profile-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.3; }
+.sidebar-profile-name { font-weight: 600; }
+.sidebar-profile-role { font-weight: 400; }
+/* Profile menu: .row-menu supplies the fixed placement, surface, border and shadow.
+   The markup does not carry .danger, so the single Logout item gets the same error
+   treatment as .row-menu-item.danger through this scope. */
+.sidebar-profile-menu .row-menu-item { color: var(--color-error); }
+.sidebar-profile-menu .row-menu-item:hover,
+.sidebar-profile-menu .row-menu-item:focus-visible { background: var(--color-error-soft); }
 
 /* --- Badges (reference board: Success pill dot+label, Error pill
    dot+label) --- */
