@@ -3,6 +3,8 @@ import { VEXA_VERSION } from "./constants.js";
 import {
   getStatsRow,
   getNodeCount,
+  getNodeCountOlderThan,
+  getUserCount,
   getActiveUserCount,
   getUserGrowth,
   recordUserGrowthSnapshot,
@@ -11,25 +13,22 @@ import {
   recordActivity,
   getUserRowById,
   listUserRows,
-  insertUserRow,
   insertUserWithNodes,
   updateUserRow,
   updateUserWithNodes,
   deleteUserRow,
   getNodeRowById,
   getUserNodeIds,
-  setUserNodeIds,
   rowToUser,
-} from "./d1.js";
-import { validateNodeUri } from "./uri-validate.js";
-import { parseXrayJsonSource } from "./xray-json.js";
-import { parseClashYamlSource } from "./clash-yaml.js";
+} from "./backend/database/d1.js";
+import { normalizeSources } from "./backend/protocols/sources.js";
 
 // Records today's total for the Dashboard growth chart. Non-fatal: a
 // snapshot failure must not fail an already-successful create/delete.
+// Uses the live user count, because the stored stats counter can drift.
 async function snapshotUserGrowth(env) {
   try {
-    const { totalUsers } = await getStatsRow(env);
+    const totalUsers = await getUserCount(env);
     await recordUserGrowthSnapshot(env, totalUsers);
   } catch (err) {
     console.error("snapshotUserGrowth failed (non-fatal):", err);
@@ -41,21 +40,26 @@ export async function getStats(env) {
   const activity = await getRecentActivity(env);
   // Live COUNT(*) values (src/d1.js) for the Dashboard cards.
   const totalNodes = await getNodeCount(env);
+  // Nodes created 30+ days ago: baseline for the Total nodes change line.
+  const previousTotalNodes = await getNodeCountOlderThan(env, 30);
+  const totalUsers = await getUserCount(env);
   const activeUsers = await getActiveUserCount(env);
   // Record today's point first so the series below includes it.
-  await recordUserGrowthSnapshot(env, stats.totalUsers);
+  await recordUserGrowthSnapshot(env, totalUsers);
   let userGrowth = [];
   try {
-    userGrowth = await getUserGrowth(env, 7);
+    // One year of daily points; the Dashboard shows the last 7, 30 or 365 of them.
+    userGrowth = await getUserGrowth(env, 365);
   } catch (err) {
     console.error("getUserGrowth (D1) failed (non-fatal):", err);
   }
   return json({
     stats: {
-      totalUsers: stats.totalUsers,
+      totalUsers,
       totalSubSources: stats.totalSubSources,
       totalRawSources: stats.totalRawSources,
       totalNodes,
+      previousTotalNodes,
       activeUsers,
     },
     activity,
@@ -76,6 +80,8 @@ export async function listUsers(env) {
       rawCount: sources.filter((s) => s.type !== "subscription").length,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      // NULL (never edited) reads as the creation time.
+      editedAt: row.edited_at ?? row.created_at,
     };
   });
   return json({ users });
@@ -97,6 +103,7 @@ export async function createUser(request, env) {
     nodeIds,
     createdAt: now,
     updatedAt: now,
+    editedAt: now,
   };
   // DK-20: the User row and its initial user_nodes relationships must
   // commit or fail together — insertUserWithNodes() (src/d1.js) runs
@@ -165,33 +172,57 @@ export async function updateUser(id, request, env) {
   }
   if (body && body.sources) {
     const result = normalizeSources(body.sources);
-    current.sources = result.sources;
+    // Reject the whole save so a rejected edit cannot wipe the previous valid source.
+    if (result.invalid.length > 0) {
+      return json(
+        { error: result.invalid[0].reason, invalidSources: result.invalid },
+        400,
+      );
+    }
     invalid = result.invalid;
-    sourcesChanged = true;
+    // An identical list is not a change: no write, no log entry, no stats.
+    if (JSON.stringify(result.sources) !== JSON.stringify(beforeSources)) {
+      current.sources = result.sources;
+      sourcesChanged = true;
+    }
   }
-  current.updatedAt = Date.now();
 
-  // DK-19: when this request supplies a new nodeIds[], the User row
-  // update and the user_nodes relationship replacement must commit or
-  // fail together — updateUserWithNodes() (src/d1.js) runs both in one
-  // env.DB.batch() transaction, closing the gap where updateUserRow()
-  // could persist while a separate setUserNodeIds() call afterward
-  // failed. Validation/deduplication (resolveValidNodeIds()) still runs
-  // first, exactly as before, so only the already-validated id list ever
-  // reaches the atomic write. When this request does NOT supply
-  // nodeIds[], there is nothing to batch it with, so the User row is
-  // still written with the plain updateUserRow() call and the existing
-  // assignment is left untouched (no query, no write) — unlike the old
-  // KV implementation, there's no stale-reference cleanup to
-  // opportunistically run here: the ON DELETE CASCADE foreign key
-  // (src/d1.js) already guarantees user_nodes never holds a reference to
-  // a deleted Node.
+  // Resolve the requested Node links and compare them with the stored ones.
+  // Validation/deduplication (resolveValidNodeIds()) runs first; a request
+  // without nodeIds[] keeps the existing assignment.
+  const existingNodeIds = await getUserNodeIds(env, id);
+  let nodeIds = existingNodeIds;
+  let nodeIdsChanged = false;
   if (body && Array.isArray(body.nodeIds)) {
-    current.nodeIds = await resolveValidNodeIds(env, body.nodeIds);
-    await updateUserWithNodes(env, current, current.nodeIds);
+    nodeIds = await resolveValidNodeIds(env, body.nodeIds);
+    // Stored links to Nodes that are now disabled are left out of the comparison: the editor
+    // drops them, so a Save without edits must not count as a Node link change.
+    const existingEnabledIds = await resolveValidNodeIds(env, existingNodeIds);
+    nodeIdsChanged =
+      JSON.stringify(nodeIds) !== JSON.stringify(existingEnabledIds);
+  }
+
+  // Nothing changed (a Save without edits): no write, no edit time, no log entry.
+  if (!renamed && !toggled && !sourcesChanged && !nodeIdsChanged) {
+    current.nodeIds = existingNodeIds;
+    return json({ user: current, invalidSources: invalid });
+  }
+  const now = Date.now();
+  // updatedAt is the last subscription fetch (public-sub.js), so a panel change leaves it alone.
+  // A rename, a sources change, a Node link change or an Enable / Disable is an edit.
+  if (renamed || sourcesChanged || nodeIdsChanged || toggled) current.editedAt = now;
+
+  // DK-19: when the Node links change, the User row update and the
+  // user_nodes replacement must commit or fail together —
+  // updateUserWithNodes() (src/d1.js) runs both in one env.DB.batch()
+  // transaction. Otherwise only the User row is written with the plain
+  // updateUserRow() call and the existing assignment is left untouched.
+  if (nodeIdsChanged) {
+    current.nodeIds = nodeIds;
+    await updateUserWithNodes(env, current, nodeIds);
   } else {
     await updateUserRow(env, current);
-    current.nodeIds = await getUserNodeIds(env, id);
+    current.nodeIds = existingNodeIds;
   }
 
   if (sourcesChanged) {
@@ -207,6 +238,8 @@ export async function updateUser(id, request, env) {
     });
     await recordActivity(env, `Updated sources for user "${current.name}"`);
   }
+  if (nodeIdsChanged)
+    await recordActivity(env, `Updated nodes for user "${current.name}"`);
   if (toggled)
     await recordActivity(
       env,
@@ -259,106 +292,4 @@ async function resolveValidNodeIds(env, nodeIds) {
     }
   }
   return result;
-}
-
-// ---------------------------------------------------------------------
-// SOURCE CLASSIFICATION
-// ---------------------------------------------------------------------
-function looksLikeXrayJson(str) {
-  const looksObj = str.startsWith("{") && str.endsWith("}");
-  const looksArr = str.startsWith("[") && str.endsWith("]");
-  if (!looksObj && !looksArr) return false;
-  try {
-    const data = JSON.parse(str);
-    if (looksArr) {
-      // Array of full client configs (e.g. BPB Panel's multi-config export)
-      // or a bare array of outbound objects.
-      return (
-        Array.isArray(data) &&
-        data.length > 0 &&
-        data.some(
-          (entry) =>
-            entry &&
-            typeof entry === "object" &&
-            (Array.isArray(entry.outbounds) || entry.protocol),
-        )
-      );
-    }
-    return Boolean(Array.isArray(data.outbounds) || data.protocol);
-  } catch {
-    return false;
-  }
-}
-
-function classifySourceString(str) {
-  const rawProtocols = [
-    "vless://",
-    "vmess://",
-    "ss://",
-    "trojan://",
-    "ssr://",
-    "hysteria2://",
-    "hy2://",
-    "tuic://",
-    "hysteria://",
-    "wireguard://",
-    "socks://",
-    "naive+https://",
-    "naive+quic://",
-  ];
-  if (rawProtocols.some((p) => str.startsWith(p)))
-    return { type: "raw", value: str };
-  if (str.startsWith("http://") || str.startsWith("https://"))
-    return { type: "subscription", url: str };
-  if (looksLikeXrayJson(str)) return { type: "json", value: str };
-  if (/^proxies:\s*(\[\s*\])?\s*$/m.test(str))
-    return { type: "yaml", value: str };
-  return null;
-}
-
-export function normalizeSources(sources) {
-  if (!Array.isArray(sources)) return { sources: [], invalid: [] };
-  const invalid = [];
-  const valid = [];
-  for (const s of sources) {
-    const classified =
-      typeof s === "string" ? classifySourceString(s.trim()) : s;
-    if (
-      !classified ||
-      (classified.type === "subscription" ? !classified.url : !classified.value)
-    ) {
-      if (typeof s === "string" && s.trim())
-        invalid.push({ value: s.trim(), reason: "unrecognized_format" });
-      continue;
-    }
-    if (classified.type === "raw") {
-      const check = validateNodeUri(classified.value);
-      if (!check.valid) {
-        invalid.push({ value: classified.value, reason: check.reason });
-        continue;
-      }
-    }
-    if (classified.type === "json") {
-      const { nodes } = parseXrayJsonSource(classified.value);
-      if (nodes.length === 0) {
-        invalid.push({
-          value: classified.value,
-          reason: "no_parseable_outbounds",
-        });
-        continue;
-      }
-    }
-    if (classified.type === "yaml") {
-      const uris = parseClashYamlSource(classified.value);
-      if (uris.length === 0) {
-        invalid.push({
-          value: classified.value,
-          reason: "no_parseable_proxies",
-        });
-        continue;
-      }
-    }
-    valid.push(classified);
-  }
-  return { sources: valid, invalid };
 }

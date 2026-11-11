@@ -1,5 +1,5 @@
 import { json } from "./http.js";
-import { ensureD1Migrated } from "./d1.js";
+import { ensureD1Migrated } from "./backend/database/migrations.js";
 import {
   getStats,
   listUsers,
@@ -12,7 +12,6 @@ import { mergePreviewHandler } from "./merge.js";
 import {
   listNodes,
   createNode,
-  getNode,
   updateNode,
   deleteNode,
 } from "./nodes.js";
@@ -55,7 +54,6 @@ export async function handleApi(pathname, method, request, env, authPayload) {
   const nodeMatch = pathname.match(/^\/api\/nodes\/([a-f0-9-]{36})$/);
   if (nodeMatch) {
     const id = nodeMatch[1];
-    if (method === "GET") return getNode(id, env);
     if (method === "PUT") return updateNode(id, request, env);
     if (method === "DELETE") return deleteNode(id, env);
   }

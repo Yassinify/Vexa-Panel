@@ -1,7 +1,6 @@
-import { splitOnce, robustAtob } from "./uri-helpers.js";
-import { parseXrayJsonSource } from "./xray-json.js";
-import { parseClashYamlSource } from "./clash-yaml.js";
-import { generateNodeUri } from "./uri-codec.js";
+import { parseXrayJsonSource } from "./backend/protocols/xray-json.js";
+import { parseClashYamlSource } from "./backend/protocols/clash-yaml.js";
+import { fingerprintNode } from "./fingerprint.js";
 import { json, safeJson } from "./http.js";
 import {
   subCacheKeyFor,
@@ -12,7 +11,7 @@ import {
   getUserRowById,
   getUserNodeIds,
   rowToUser,
-} from "./d1.js";
+} from "./backend/database/d1.js";
 
 function tryBase64Decode(str) {
   try {
@@ -32,6 +31,10 @@ function tryBase64Decode(str) {
 // and preventing every other source from being returned too.
 const SUBSCRIPTION_FETCH_TIMEOUT_MS = 10000;
 
+// Returns { nodes, jsonText }. A link-list, base64 or Clash YAML subscription
+// gives its proxy links in `nodes` and null in `jsonText`. A JSON subscription
+// is never converted: `nodes` is empty and `jsonText` is the response body
+// exactly as received.
 export async function fetchSubscriptionNodes(url) {
   const controller = new AbortController();
   const timeoutId = setTimeout(
@@ -54,24 +57,16 @@ export async function fetchSubscriptionNodes(url) {
   const text = await resp.text();
   const trimmed = text.trim();
 
-  // Some self-hosted panels serve a raw Xray/V2Ray config.json (a single
-  // outbound object, a full config, or — e.g. BPB Panel — an array of full
-  // configs) at the subscription URL instead of a URI list.
   const looksJsonBody =
     (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
     (trimmed.startsWith("[") && trimmed.endsWith("]"));
   if (looksJsonBody) {
+    // The parser is used only to check that the body is a usable config
+    // (at least one proxy outbound); its result is discarded, so the body
+    // itself is returned untouched.
     const { nodes: jsonNodes } = parseXrayJsonSource(trimmed);
     if (jsonNodes.length > 0) {
-      return jsonNodes
-        .map((n) => {
-          try {
-            return generateNodeUri(n);
-          } catch {
-            return null;
-          }
-        })
-        .filter(Boolean);
+      return { nodes: [], jsonText: text };
     }
     // The body is JSON-shaped but yielded no parseable proxy outbounds
     // (invalid/truncated JSON, or an unrecognized outbound shape). Do NOT
@@ -91,7 +86,7 @@ export async function fetchSubscriptionNodes(url) {
   // since a YAML body has no "://" lines for that fallback to find anyway.
   if (/^proxies:\s*(\[\s*\])?\s*$/m.test(body)) {
     const yamlUris = parseClashYamlSource(body);
-    if (yamlUris.length > 0) return yamlUris;
+    if (yamlUris.length > 0) return { nodes: yamlUris, jsonText: null };
   }
 
   // Plain-text / base64 line-list subscription: keep only lines that are
@@ -101,220 +96,91 @@ export async function fetchSubscriptionNodes(url) {
   // an HTML error page, etc.) could otherwise leak non-link text through.
   const KNOWN_NODE_SCHEMES =
     /^(vless|vmess|ss|ssr|trojan|hysteria2|hy2|tuic|hysteria|wireguard|socks):\/\/|^naive\+(https|quic):\/\//i;
-  return body
+  const lineNodes = body
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter((l) => l.length > 0 && KNOWN_NODE_SCHEMES.test(l));
+  return { nodes: lineNodes, jsonText: null };
 }
 
-// ---------------------------------------------------------------------
-// FINGERPRINTING — used to dedup nodes across merged sources
-// ---------------------------------------------------------------------
-
-// Query params that actually change the transport/identity of a node and so
-// must be part of the dedup fingerprint. Two nodes with the same host/uuid
-// but different values here (e.g. different SNI, different path, different
-// security mode) are different nodes, not duplicates.
-const FINGERPRINT_QUERY_KEYS = [
-  "security",
-  "sni",
-  "type",
-  "path",
-  "host",
-  "serviceName",
-  "flow",
-  "alpn",
-  "fp",
-  "pbk",
-  "sid",
-  "headerType",
-  "mode",
-];
-
-function normalizeQueryForFingerprint(searchStr) {
-  if (!searchStr) return "";
-  const params = new URLSearchParams(searchStr);
-  const pairs = [];
-  for (const key of FINGERPRINT_QUERY_KEYS) {
-    const val = params.get(key);
-    if (val) pairs.push(`${key}=${decodeURIComponent(val).toLowerCase()}`);
-  }
-  pairs.sort();
-  return pairs.join("&");
+// Fallback-cache entry for one fetched subscription. A link list is stored as
+// a plain array, exactly as before, so entries written by earlier versions
+// stay readable. A JSON subscription is stored as { jsonText }.
+function toCacheEntry(fetched) {
+  return fetched.jsonText === null ? fetched.nodes : { jsonText: fetched.jsonText };
 }
 
-// Normalizes Shadowsocks userinfo to method:password regardless of whether
-// the link encoded it as SIP002 (method:password base64'd before '@') or
-// left it as plain method:password before '@'.
-function normalizeSsUserinfo(creds) {
-  if (creds.includes(":")) return creds; // already plain method:password
-  try {
-    const decoded = robustAtob(creds);
-    if (decoded.includes(":")) return decoded;
-  } catch {
-    // fall through
+function fromCacheEntry(entry) {
+  if (Array.isArray(entry)) return { nodes: entry, jsonText: null };
+  if (entry && typeof entry.jsonText === "string") {
+    return { nodes: [], jsonText: entry.jsonText };
   }
-  return creds;
-}
-
-export function fingerprintNode(uri) {
-  try {
-    if (uri.startsWith("vmess://")) {
-      const payload = JSON.parse(robustAtob(uri.slice("vmess://".length)));
-      // Include network/tls-relevant fields so distinct transport configs
-      // pointing at the same host/id aren't collapsed into one node.
-      const net = (payload.net || "").toLowerCase();
-      const tls = (payload.tls || "").toLowerCase();
-      const path = payload.path || "";
-      const sni = payload.sni || payload.host || "";
-      return `vmess:${payload.add}:${payload.port}:${payload.id}:${net}:${tls}:${path}:${sni}`;
-    }
-    if (uri.startsWith("vless://") || uri.startsWith("trojan://")) {
-      const withoutProto = uri.split("://")[1];
-      const beforeHash = withoutProto.split("#")[0];
-      const [creds, rest] = splitOnce(beforeHash, "@");
-      const [hostPortRaw, search] = splitOnce(rest, "?");
-      // A bare "/" (RFC3986 authority terminator) commonly precedes the query
-      // string, e.g. "host:443/?security=tls" — strip it before fingerprinting.
-      const hostPort = hostPortRaw.split("/")[0];
-      const protocol = uri.startsWith("vless://") ? "vless" : "trojan";
-      const queryFp = normalizeQueryForFingerprint(search);
-      return `${protocol}:${hostPort}:${creds}:${queryFp}`;
-    }
-    if (uri.startsWith("ss://")) {
-      const withoutProto = uri.slice("ss://".length).split("#")[0];
-      if (withoutProto.includes("@")) {
-        const [creds, rest] = splitOnce(withoutProto, "@");
-        const [hostPortRaw, search] = splitOnce(rest, "?");
-        const hostPort = hostPortRaw.split("/")[0];
-        const normalizedCreds = normalizeSsUserinfo(creds);
-        const queryFp = normalizeQueryForFingerprint(search);
-        return `ss:${hostPort}:${normalizedCreds}:${queryFp}`;
-      }
-      // Legacy fully-base64 form: ss://BASE64(method:password@host:port)
-      const decoded = robustAtob(withoutProto);
-      return `ss:${decoded}`;
-    }
-    if (uri.startsWith("ssr://")) {
-      const decoded = robustAtob(uri.slice("ssr://".length).split("#")[0]);
-      return `ssr:${decoded.split("/")[0]}`;
-    }
-    if (uri.startsWith("hysteria2://") || uri.startsWith("hy2://")) {
-      const withoutProto = uri.split("://")[1].split("#")[0];
-      const [beforeQueryRaw, search] = splitOnce(withoutProto, "?");
-      const beforeQuery = beforeQueryRaw.split("/")[0]; // drop a bare "/" before the query
-      const [creds, hostPort] = splitOnce(beforeQuery, "@");
-      const queryFp = normalizeQueryForFingerprint(search);
-      return `hy2:${hostPort}:${creds}:${queryFp}`;
-    }
-    if (uri.startsWith("tuic://")) {
-      const withoutProto = uri.slice("tuic://".length).split("#")[0];
-      const [beforeQueryRaw, search] = splitOnce(withoutProto, "?");
-      const beforeQuery = beforeQueryRaw.split("/")[0];
-      const [creds, hostPort] = splitOnce(beforeQuery, "@");
-      const queryFp = normalizeQueryForFingerprint(search);
-      return `tuic:${hostPort}:${creds}:${queryFp}`;
-    }
-    if (uri.startsWith("hysteria://")) {
-      // Hysteria v1 has no userinfo in the authority — auth is a query
-      // param ("auth=...") rather than "auth@host" — so the fingerprint
-      // is just host:port plus the normalized query (auth included).
-      const withoutProto = uri.slice("hysteria://".length).split("#")[0];
-      const [hostPort, search] = splitOnce(withoutProto, "?");
-      const queryFp = normalizeQueryForFingerprint(search);
-      return `hysteria:${hostPort}:${queryFp}`;
-    }
-    if (uri.startsWith("wireguard://")) {
-      const withoutProto = uri.slice("wireguard://".length).split("#")[0];
-      const [beforeQueryRaw, search] = splitOnce(withoutProto, "?");
-      const beforeQuery = beforeQueryRaw.split("/")[0];
-      const hostPort = splitOnce(beforeQuery, "@")[1] || beforeQuery;
-      const pubkey = new URLSearchParams(search).get("publickey") || "";
-      return `wireguard:${hostPort}:${pubkey}`;
-    }
-    if (uri.startsWith("socks://")) {
-      const withoutProto = uri.slice("socks://".length).split("#")[0];
-      const beforeQuery = splitOnce(withoutProto, "?")[0].split("/")[0];
-      const [credsRaw, hostPort] = beforeQuery.includes("@")
-        ? splitOnce(beforeQuery, "@")
-        : ["", beforeQuery];
-      const creds = credsRaw ? normalizeSsUserinfo(credsRaw) : "";
-      return `socks:${hostPort}:${creds}`;
-    }
-    if (uri.startsWith("naive+https://") || uri.startsWith("naive+quic://")) {
-      const scheme = uri.startsWith("naive+https://") ? "https" : "quic";
-      const withoutProto = uri.slice(uri.indexOf("://") + 3).split("#")[0];
-      const beforeQuery = splitOnce(withoutProto, "?")[0].split("/")[0];
-      const [credsRaw, hostPort] = beforeQuery.includes("@")
-        ? splitOnce(beforeQuery, "@")
-        : ["", beforeQuery];
-      const creds = credsRaw ? decodeURIComponent(credsRaw) : "";
-      return `naive:${scheme}:${hostPort}:${creds}`;
-    }
-    return `raw:${uri}`;
-  } catch {
-    return `raw:${uri}`;
-  }
+  return { nodes: [], jsonText: null };
 }
 
 // ---------------------------------------------------------------------
 // MERGE: combine every source on a user (raw links, subscription URLs,
 // JSON, YAML) into one deduped node list, with a D1-backed fallback cache
 // so a temporarily-unreachable subscription doesn't blank out a client's
-// config.
+// config. JSON configs (pasted or from a subscription URL) are not part of
+// that list: they are kept as text, unchanged, in `jsonConfigs`.
 // ---------------------------------------------------------------------
 // Resolves a User's Node references (ordered) to their current, enabled
 // Node Source objects. Missing or disabled Nodes are skipped silently —
 // same tolerant behavior as an unavailable Exclusive Source, just resolved
 // one step earlier (before the per-type fetch loop below even sees it).
 async function resolveNodeSources(user, env) {
+  // Returns { sources, ids }: the usable Node sources and the ids of the Nodes they came from
+  // (the caller reports the ids so a client fetch can mark those Nodes as refreshed).
   const nodeIds = Array.isArray(user.nodeIds) ? user.nodeIds : [];
-  if (nodeIds.length === 0) return [];
+  if (nodeIds.length === 0) return { sources: [], ids: [] };
   const resolved = [];
+  const usedIds = [];
   for (const id of nodeIds) {
     const row = await getNodeRowById(env, id);
     const node = rowToNode(row);
     if (node && node.enabled !== false && node.source) {
       resolved.push(node.source);
+      usedIds.push(node.id);
     }
   }
-  return resolved;
+  return { sources: resolved, ids: usedIds };
 }
 
 export async function mergeUserNodes(user, env) {
   const allNodes = [];
+  const jsonConfigs = [];
   const errors = [];
-  const nodeSources = await resolveNodeSources(user, env);
+  const { sources: nodeSources, ids: usedNodeIds } = await resolveNodeSources(user, env);
   const sourcesToProcess = [...nodeSources, ...(user.sources || [])];
 
   for (const source of sourcesToProcess) {
     if (source.type === "raw") {
       allNodes.push(source.value);
     } else if (source.type === "subscription") {
-      const cacheKey = env ? await subCacheKeyFor(source.url) : null;
+      const cacheKey = await subCacheKeyFor(source.url);
       try {
-        const nodes = await fetchSubscriptionNodes(source.url);
-        allNodes.push(...nodes);
+        const fetched = await fetchSubscriptionNodes(source.url);
+        allNodes.push(...fetched.nodes);
+        if (fetched.jsonText !== null) jsonConfigs.push(fetched.jsonText);
         // Remember this successful fetch so a later outage of this same
         // source can fall back to it instead of silently dropping nodes.
         // putSubscriptionCache() already swallows its own write failures
         // (src/d1.js), so a cache-write failure still can't fail the merge.
-        if (cacheKey) {
-          await putSubscriptionCache(env, cacheKey, nodes);
-        }
+        await putSubscriptionCache(env, cacheKey, toCacheEntry(fetched));
       } catch (e) {
         let usedCache = false;
         let cacheAgeMs = null;
-        if (cacheKey) {
-          // getSubscriptionCache() returns null on a miss, an expired entry,
-          // or a read failure (src/d1.js) -- same "no fallback available"
-          // outcome as the old KV get()+JSON.parse() try/catch had.
-          const cached = await getSubscriptionCache(env, cacheKey);
-          if (cached) {
-            allNodes.push(...cached.nodes);
-            usedCache = true;
-            cacheAgeMs = Date.now() - cached.fetchedAt;
-          }
+        // getSubscriptionCache() returns null on a miss, an expired entry,
+        // or a read failure (src/d1.js) -- same "no fallback available"
+        // outcome as the old KV get()+JSON.parse() try/catch had.
+        const cached = await getSubscriptionCache(env, cacheKey);
+        if (cached) {
+          const entry = fromCacheEntry(cached.nodes);
+          allNodes.push(...entry.nodes);
+          if (entry.jsonText !== null) jsonConfigs.push(entry.jsonText);
+          usedCache = true;
+          cacheAgeMs = Date.now() - cached.fetchedAt;
         }
         errors.push({
           url: source.url,
@@ -324,15 +190,8 @@ export async function mergeUserNodes(user, env) {
         });
       }
     } else if (source.type === "json") {
-      const { nodes: jsonNodes } = parseXrayJsonSource(source.value);
-      for (const n of jsonNodes) {
-        try {
-          allNodes.push(generateNodeUri(n));
-        } catch {
-          // protocol parsed from JSON but has no URI generator yet (shouldn't
-          // happen for vless/vmess/trojan/shadowsocks); skip rather than fail
-        }
-      }
+      // Kept as the stored text, never parsed into links.
+      jsonConfigs.push(source.value);
     } else if (source.type === "yaml") {
       allNodes.push(...parseClashYamlSource(source.value));
     }
@@ -354,16 +213,17 @@ export async function mergeUserNodes(user, env) {
 
   return {
     nodes: deduped,
+    jsonConfigs,
     totalFetched: allNodes.length,
     duplicatesRemoved: duplicateCount,
     sourceErrors: errors,
+    usedNodeIds,
   };
 }
 
 export async function mergePreviewHandler(request, env) {
   const body = await safeJson(request);
-  if (!body || !body.userId)
-    return json({ error: "user_id_required" }, 400);
+  if (!body || !body.userId) return json({ error: "user_id_required" }, 400);
 
   const row = await getUserRowById(env, body.userId);
   if (!row) return json({ error: "not_found" }, 404);

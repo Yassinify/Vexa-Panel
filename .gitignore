@@ -145,3 +145,10 @@ vite.config.ts.timestamp-*
 # Internal project docs (not published to the repo)
 docs/
 reference/
+
+# Local-only design preview page (never published)
+/index.html
+/preview.bat
+
+# npm download cache used by preview.bat (local only, never published)
+/.preview-cache/

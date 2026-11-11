@@ -1,24 +1,23 @@
-import { json, safeJson } from "./http.js";
+import { json, safeJson } from "../../http.js";
 import { deriveKey, timingSafeEqual, randomHex } from "./crypto.js";
 import { signJwt } from "./jwt.js";
 import {
-  checkLoginRateLimit,
   resolveAuthConfig,
   initAuthConfigIfAbsent,
   updateAuthConfigPasswordHash,
-  recordActivity,
-} from "./d1.js";
+} from "./auth.js";
+import { checkLoginRateLimit, recordActivity } from "../database/d1.js";
 
 // Required Variables/Secrets for the panel to function at all. ADMIN_SALT
 // and ADMIN_PASSWORD_HASH gate login, JWT_SECRET signs/verifies sessions.
 //
 // This checks Cloudflare Secrets ONLY — it is NOT "is authentication
 // configured" in general (a D1-backed deployment can be fully configured
-// with zero Secrets bound; see resolveAuthConfig() in d1.js). It stays
-// Secret-only because src/router.js's page/route gating already depends
-// on exactly this meaning; broadening it here would silently change that
-// gating without router.js's own checkpoint having reviewed it (DK-18,
-// Task 2B-61 checkpoint 2).
+// with zero Secrets bound; see resolveAuthConfig() in
+// src/backend/auth/auth.js). It stays Secret-only because src/router.js's
+// page/route gating already depends on exactly this meaning; broadening
+// it here would silently change that gating without router.js's own
+// checkpoint having reviewed it (DK-18, Task 2B-61 checkpoint 2).
 export function secretsConfigured(env) {
   return Boolean(env.ADMIN_SALT && env.ADMIN_PASSWORD_HASH && env.JWT_SECRET);
 }
@@ -51,10 +50,11 @@ export async function handleChangePassword(request, env) {
     // new password itself (the Secret-backed fallback below just returns
     // a value for the admin to paste in manually, so nothing is
     // "changed" yet from this Worker's point of view). recordActivity()
-    // is the existing non-fatal bookkeeping call (src/d1.js) — same
-    // convention as every other activity write in this project, so a
-    // logging failure here cannot turn this already-successful password
-    // change into a failed request.
+    // is the existing non-fatal bookkeeping call
+    // (src/backend/database/d1.js) — same convention as every other
+    // activity write in this project, so a logging failure here cannot
+    // turn this already-successful password change into a failed
+    // request.
     await recordActivity(env, 'Changed password for "Admin"');
     return json({ persisted: true });
   }
@@ -140,6 +140,9 @@ export async function handleInitializeD1Auth(request, env) {
   // login must use, which is exactly what resolveAuthConfig() reads.
   await initAuthConfigIfAbsent(env, { adminSalt, adminPasswordHash, jwtSecret });
 
+  // Non-fatal Logs record of the first-run account creation (#114).
+  await recordActivity(env, "Created admin account");
+
   return json({ configured: true });
 }
 
@@ -149,7 +152,7 @@ export async function handleLogin(request, env) {
   // Replaces the old direct secretsConfigured(env) + env.ADMIN_SALT/
   // env.ADMIN_PASSWORD_HASH/env.JWT_SECRET reads so login works
   // identically for either source without duplicating the precedence
-  // rule here (see src/d1.js's resolveAuthConfig()).
+  // rule here (see src/backend/auth/auth.js's resolveAuthConfig()).
   const config = await resolveAuthConfig(env);
   if (!config) {
     return json({ error: "not_configured" }, 400);
@@ -167,6 +170,9 @@ export async function handleLogin(request, env) {
   const valid = timingSafeEqual(computedHash, config.adminPasswordHash);
 
   if (!valid) return json({ error: "invalid_credentials" }, 401);
+
+  // Non-fatal Logs record of a successful sign-in (R105).
+  await recordActivity(env, "Signed in");
 
   const token = await signJwt({ sub: "admin" }, config.jwtSecret);
   return json({ token });

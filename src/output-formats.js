@@ -1,4 +1,4 @@
-import { parseNodeUri, generateNodeUri } from "./uri-codec.js";
+import { parseNodeUri, generateNodeUri } from "./backend/protocols/uri-codec.js";
 
 function uniqueName(base, used) {
   let name = base && base.trim() ? base.trim() : "node";
@@ -492,4 +492,81 @@ export function buildFormattedSubResponse(nodes, subtitle, url, request) {
   }
 
   return buildSubResponse(nodes, subtitle, url);
+}
+
+// Splits the text of a JSON array into the texts of its elements, without
+// parsing or re-serializing anything: each element is the exact slice of the
+// original text (only the whitespace around it is dropped). Returns null when
+// the text is not one complete top-level array, so the caller keeps it whole.
+function splitJsonArrayElements(text) {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return null;
+  const elements = [];
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let elementStart = -1;
+  const pushElement = (end) => {
+    if (elementStart >= 0) elements.push(trimmed.slice(elementStart, end).trim());
+    elementStart = -1;
+  };
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      if (depth === 1 && elementStart < 0) elementStart = i;
+      inString = true;
+    } else if (ch === "[" || ch === "{") {
+      if (depth === 1 && elementStart < 0) elementStart = i;
+      depth++;
+    } else if (ch === "]" || ch === "}") {
+      depth--;
+      if (depth === 0) {
+        pushElement(i);
+        return i === trimmed.length - 1 ? elements : null;
+      }
+    } else if (ch === "," && depth === 1) {
+      pushElement(i);
+    } else if (depth === 1 && elementStart < 0 && !/\s/.test(ch)) {
+      elementStart = i; // a bare value such as a number, true or null
+    }
+  }
+  return null; // unbalanced: not a complete array
+}
+
+// Response for JSON configs that must reach the client exactly as the source
+// gave them (see docs/problem.md). One source is returned byte for byte,
+// whatever it is. Several sources are returned as one JSON array whose
+// elements are the original config texts; a source that is itself an array
+// contributes its elements, found by splitJsonArrayElements(), not re-encoded.
+export function buildJsonConfigResponse(jsonConfigs, subtitle) {
+  let body;
+  if (jsonConfigs.length === 1) {
+    body = jsonConfigs[0];
+  } else {
+    const parts = [];
+    for (const text of jsonConfigs) {
+      const elements = splitJsonArrayElements(text);
+      if (elements) parts.push(...elements);
+      else parts.push(text.trim());
+    }
+    body = `[${parts.join(",\n")}]`;
+  }
+
+  const encodedTitle = btoa(unescape(encodeURIComponent(subtitle)));
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${encodeURIComponent(subtitle)}.json"`,
+      "Profile-Title": `base64:${encodedTitle}`,
+      "Profile-Update-Interval": "24",
+      "Subscription-Userinfo": "upload=0; download=0; total=0; expire=0",
+    },
+  });
 }

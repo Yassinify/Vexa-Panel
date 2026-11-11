@@ -1,19 +1,20 @@
 import { VEXA_VERSION } from "./constants.js";
 import { withCors, json, htmlResponse, svgResponse } from "./http.js";
-import { FAVICON_SVG } from "./favicon-assets.js";
-import { d1Bound, ensureD1Migrated, resolveAuthConfig } from "./d1.js";
-import { requireAuth } from "./jwt.js";
+import { FAVICON_SVG, FAVICON_PATH } from "./favicon-assets.js";
+import { d1Bound } from "./backend/database/d1.js";
+import { ensureD1Migrated } from "./backend/database/migrations.js";
+import { resolveAuthConfig } from "./backend/auth/auth.js";
+import { requireAuth } from "./backend/auth/jwt.js";
 import {
   secretsConfigured,
   handleGenerateSecrets,
   handleInitializeD1Auth,
   handleChangePassword,
   handleLogin,
-} from "./secrets.js";
+} from "./backend/auth/secrets.js";
 import { handlePublicUserSub } from "./public-sub.js";
 import { renderD1SetupGuide } from "./pages/d1-setup.js";
 import { renderApp } from "./pages/app-shell.js";
-import { renderChangePanelPasswordPage } from "./pages/change-password-page.js";
 import { handleApi } from "./api-router.js";
 
 // DK-18: whether authentication is usable right now, from EITHER source —
@@ -37,7 +38,7 @@ export async function route(request, env, ctx) {
 
   // Reachable before KV/secrets are configured — the favicon has no
   // dependency on storage or auth.
-  if (pathname === "/favicon.svg" && method === "GET") {
+  if (pathname === FAVICON_PATH && method === "GET") {
     return svgResponse(FAVICON_SVG);
   }
 
@@ -85,7 +86,6 @@ export async function route(request, env, ctx) {
     pathname === "/" ||
     pathname === "/index.html" ||
     pathname === "/login" ||
-    pathname === "/panel" ||
     pathname === "/Dashboard" ||
     pathname === "/Users" ||
     pathname === "/Nodes" ||
@@ -93,18 +93,6 @@ export async function route(request, env, ctx) {
     pathname === "/settings"
   ) {
     return htmlResponse(renderApp());
-  }
-
-  // Dedicated deep link for the panel's Settings → "Change Panel Password"
-  // action. Nothing to change if auth was never initialized in the first
-  // place (neither Secrets nor D1), so send the admin back to the normal
-  // login/first-run page instead (there is no separate /secret page to
-  // redirect to).
-  if (pathname === "/change-panel-password" && method === "GET") {
-    if (!(await authInitialized(env))) {
-      return Response.redirect(`${url.origin}/`, 302);
-    }
-    return htmlResponse(renderChangePanelPasswordPage());
   }
 
   // Two independent flows share this path, distinguished by the current

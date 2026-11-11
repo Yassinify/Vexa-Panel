@@ -7,8 +7,8 @@ import {
   updateNodeRow,
   deleteNodeRow,
   rowToNode,
-} from "./d1.js";
-import { normalizeSources } from "./users.js";
+} from "./backend/database/d1.js";
+import { normalizeSources } from "./backend/protocols/sources.js";
 
 // D1's SQLite driver reports a UNIQUE-constraint violation with this
 // substring in the thrown error's message — used below to translate the
@@ -48,7 +48,7 @@ export async function createNode(request, env) {
   if (!name) return json({ error: "name_required" }, 400);
 
   const { source, error } = normalizeSingleSource(body.source);
-  if (!source) return json({ error: error || "invalid_source" }, 400);
+  if (!source) return json({ error }, 400);
 
   const now = Date.now();
   const node = {
@@ -58,6 +58,7 @@ export async function createNode(request, env) {
     enabled: true,
     createdAt: now,
     updatedAt: now,
+    editedAt: now,
   };
 
   // docs/problem.md DK-15: uniqueness is now enforced by the nodes.name
@@ -78,12 +79,6 @@ export async function createNode(request, env) {
   return json({ node }, 201);
 }
 
-export async function getNode(id, env) {
-  const row = await getNodeRowById(env, id);
-  if (!row) return json({ error: "not_found" }, 404);
-  return json({ node: rowToNode(row) });
-}
-
 export async function updateNode(id, request, env) {
   const row = await getNodeRowById(env, id);
   if (!row) return json({ error: "not_found" }, 404);
@@ -100,12 +95,14 @@ export async function updateNode(id, request, env) {
       : null;
   const isRename = requestedName !== null && requestedName !== node.name;
   let toggled = false;
+  let sourceChanged = false;
 
   if (isRename) node.name = requestedName;
 
   if (body && typeof body.source === "string") {
     const { source, error } = normalizeSingleSource(body.source);
-    if (!source) return json({ error: error || "invalid_source" }, 400);
+    if (!source) return json({ error }, 400);
+    sourceChanged = JSON.stringify(source) !== JSON.stringify(node.source);
     node.source = source;
   }
 
@@ -118,7 +115,12 @@ export async function updateNode(id, request, env) {
     toggled = true;
   }
 
-  node.updatedAt = Date.now();
+  // Nothing changed (a Save without edits): no write, no edit time, no log entry (as for Users).
+  if (!isRename && !sourceChanged && !toggled) return json({ node });
+
+  // updatedAt is the last subscription fetch (touchNodesUpdatedAt()), so a panel change leaves it alone.
+  // A real name or source change, or an Enable / Disable, counts as an edit.
+  node.editedAt = Date.now();
 
   // docs/problem.md DK-15: uniqueness for a rename is now enforced by the
   // nodes.name UNIQUE constraint (src/d1.js) instead of a separate
@@ -136,6 +138,9 @@ export async function updateNode(id, request, env) {
     throw err;
   }
 
+  // A source change is an edit, so it is logged (first, with the new name, as for Users).
+  if (sourceChanged)
+    await recordActivity(env, `Updated source for node "${node.name}"`);
   if (isRename)
     await recordActivity(env, `Renamed node "${oldName}" to "${node.name}"`);
   if (toggled)

@@ -67,43 +67,6 @@ function extractTransportFields(streamSettings) {
   };
 }
 
-function buildStreamSettings(node) {
-  const streamSettings = { network: node.network || "tcp" };
-
-  if (node.network === "ws") {
-    streamSettings.wsSettings = {
-      path: node.path || "/",
-      headers: node.host_header ? { Host: node.host_header } : {},
-    };
-  } else if (node.network === "grpc") {
-    streamSettings.grpcSettings = { serviceName: node.serviceName || "" };
-  } else if (node.network === "xhttp") {
-    streamSettings.xhttpSettings = {
-      path: node.path || "/",
-      host: node.host_header || "",
-    };
-  }
-
-  if (node.security === "tls") {
-    streamSettings.security = "tls";
-    streamSettings.tlsSettings = {
-      serverName: node.sni || "",
-      ...(node.fp ? { fingerprint: node.fp } : {}),
-      ...(node.alpn ? { alpn: node.alpn.split(",") } : {}),
-    };
-  } else if (node.security === "reality") {
-    streamSettings.security = "reality";
-    streamSettings.realitySettings = {
-      serverName: node.sni || "",
-      fingerprint: node.fp || "",
-      publicKey: node.pbk || "",
-      shortId: node.sid || "",
-    };
-  }
-
-  return streamSettings;
-}
-
 // Parses one Xray/V2Ray outbound object into the internal node shape.
 // Returns null for protocols/shapes it doesn't recognize (mirrors
 // parseNodeUri's behavior for unsupported protocols).
@@ -202,13 +165,8 @@ function parseXrayOutbound(outbound) {
     // V2Fly's separate "shadowsocks2022" protocol name (Xray-core folds 2022
     // ciphers into the unified "shadowsocks" protocol above and is already
     // handled by that branch — this covers the distinct V2Fly-flavored shape:
-    // a flat settings object with "psk" instead of "password", plus an
-    // optional "ipsk" array for SIP023 multi-user identity PSKs). We map psk
-    // -> password so it flows through the same internal node shape and can
-    // be re-exported as a normal ss:// SIP002 link; ipsk is preserved on the
-    // node (comma-joined) since there's no standardized way to encode a
-    // multi-identity PSK chain in a share link — it round-trips through JSON
-    // export but is dropped on URI export.
+    // a flat settings object with "psk" instead of "password"). We map psk
+    // -> password so it flows through the same internal node shape.
     if (protocol === "shadowsocks2022") {
       if (
         !settings.address ||
@@ -224,8 +182,6 @@ function parseXrayOutbound(outbound) {
         method: settings.method,
         password: settings.psk,
         plugin: "",
-        ipsk: Array.isArray(settings.ipsk) ? settings.ipsk.join(",") : "",
-        xrayVariant: "shadowsocks2022",
         remark: outbound.tag || "",
       };
     }
@@ -252,9 +208,6 @@ function parseXrayOutbound(outbound) {
         mtu: settings.mtu ? String(settings.mtu) : "",
         reserved: Array.isArray(settings.reserved)
           ? settings.reserved.join(",")
-          : "",
-        allowedIPs: Array.isArray(peer.allowedIPs)
-          ? peer.allowedIPs.join(",")
           : "",
         remark: outbound.tag || "",
       };
@@ -303,178 +256,6 @@ function parseXrayOutbound(outbound) {
   }
 }
 
-// Generates a full Xray outbound object from the internal node shape —
-// the inverse of parseXrayOutbound. Throws on unsupported protocols to
-// match generateNodeUri's behavior.
-export function generateXrayOutbound(node) {
-  const tag = node.remark || undefined;
-
-  if (node.protocol === "vless") {
-    return {
-      ...(tag ? { tag } : {}),
-      protocol: "vless",
-      settings: {
-        vnext: [
-          {
-            address: node.address,
-            port: node.port,
-            users: [
-              {
-                id: node.id,
-                encryption: "none",
-                ...(node.flow ? { flow: node.flow } : {}),
-              },
-            ],
-          },
-        ],
-      },
-      streamSettings: buildStreamSettings(node),
-    };
-  }
-
-  if (node.protocol === "vmess") {
-    return {
-      ...(tag ? { tag } : {}),
-      protocol: "vmess",
-      settings: {
-        vnext: [
-          {
-            address: node.address,
-            port: node.port,
-            users: [
-              { id: node.id, alterId: node.alterId || 0, security: "auto" },
-            ],
-          },
-        ],
-      },
-      streamSettings: buildStreamSettings({
-        ...node,
-        security: node.tls === "tls" ? "tls" : "",
-        host_header: node.host,
-      }),
-    };
-  }
-
-  if (node.protocol === "trojan") {
-    return {
-      ...(tag ? { tag } : {}),
-      protocol: "trojan",
-      settings: {
-        servers: [
-          { address: node.address, port: node.port, password: node.id },
-        ],
-      },
-      streamSettings: buildStreamSettings({
-        ...node,
-        security: node.security || "tls",
-      }),
-    };
-  }
-
-  if (node.protocol === "shadowsocks") {
-    if (node.xrayVariant === "shadowsocks2022") {
-      return {
-        ...(tag ? { tag } : {}),
-        protocol: "shadowsocks2022",
-        settings: {
-          address: node.address,
-          port: node.port,
-          method: node.method,
-          psk: node.password,
-          ...(node.ipsk ? { ipsk: node.ipsk.split(",") } : {}),
-        },
-      };
-    }
-    return {
-      ...(tag ? { tag } : {}),
-      protocol: "shadowsocks",
-      settings: {
-        servers: [
-          {
-            address: node.address,
-            port: node.port,
-            method: node.method,
-            password: node.password,
-          },
-        ],
-      },
-    };
-  }
-
-  if (node.protocol === "wireguard") {
-    return {
-      ...(tag ? { tag } : {}),
-      protocol: "wireguard",
-      settings: {
-        secretKey: node.privateKey,
-        address: node.localAddress ? node.localAddress.split(",") : [],
-        peers: [
-          {
-            publicKey: node.publicKey,
-            endpoint: `${node.address}:${node.port}`,
-            ...(node.presharedKey ? { preSharedKey: node.presharedKey } : {}),
-            allowedIPs: node.allowedIPs
-              ? node.allowedIPs.split(",")
-              : ["0.0.0.0/0"],
-          },
-        ],
-        ...(node.mtu ? { mtu: Number(node.mtu) } : {}),
-        ...(node.reserved
-          ? { reserved: node.reserved.split(",").map(Number) }
-          : {}),
-      },
-    };
-  }
-
-  if (node.protocol === "socks") {
-    return {
-      ...(tag ? { tag } : {}),
-      protocol: "socks",
-      settings: {
-        servers: [
-          {
-            address: node.address,
-            port: node.port,
-            ...(node.username
-              ? { users: [{ user: node.username, pass: node.password || "" }] }
-              : {}),
-          },
-        ],
-      },
-    };
-  }
-
-  if (node.protocol === "http") {
-    return {
-      ...(tag ? { tag } : {}),
-      protocol: "http",
-      settings: {
-        servers: [
-          {
-            address: node.address,
-            port: node.port,
-            ...(node.username
-              ? { users: [{ user: node.username, pass: node.password || "" }] }
-              : {}),
-          },
-        ],
-      },
-    };
-  }
-
-  throw new Error("unsupported_protocol_for_generation");
-}
-
-// Pulls the proxy outbounds out of one Xray/V2Ray-shaped object: either a
-// full config (with an "outbounds" array) or a single bare outbound object.
-// `configRemark` is a full config's own "remarks"/"ps" field — e.g. BPB
-// Panel labels each exported config "VLESS - Domain : 443" while its single
-// outbound just gets a generic tag like "proxy". The human-meaningful
-// config-level label is what a client would actually display, so it takes
-// priority over a generic per-outbound tag; a config with several proxy
-// outbounds (a "URL test" / best-ping style config bundling multiple
-// servers) still gets each outbound's own distinguishing tag appended so
-// entries from that config don't all collapse to one identical name.
 const GENERIC_TAG_RE = /^(proxy|out|outbound)(-\d+)?$/i;
 function extractOutboundsFromConfig(data, configRemark) {
   const outbounds = Array.isArray(data.outbounds)
@@ -498,14 +279,7 @@ function extractOutboundsFromConfig(data, configRemark) {
   });
 }
 
-// Accepts any of:
-//   - a single bare outbound object: { protocol, settings, ... }
-//   - a full Xray config.json:       { outbounds: [...], ... }
-//   - an array of either of the above (e.g. BPB Panel's multi-config export,
-//     where each array entry is a complete client config with its own
-//     "remarks" label and a single proxy outbound)
-// and returns an array of parsed nodes, skipping entries it can't parse
-// rather than failing the whole import.
+
 export function parseXrayJsonSource(jsonText) {
   let data;
   try {
