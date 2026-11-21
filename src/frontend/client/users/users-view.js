@@ -28,13 +28,41 @@ function sortHeader(key, label) {
 // animation once (class rows-sorted); other redraws (Enable / Disable, loads) leave it off.
 let animateSortRows = false;
 
+// Set while the old rows of a sort click are fading out; a click during that time only changes the sort state.
+let sortExitPending = false;
+
+// Redraws the table after a sort click (state.usersSort or state.nodesSort is already changed). The old rows first
+// fade out while still in place, with the enter motion backwards (fade and 6px slide, 160ms); when they have
+// finished, the table is rendered in the new order and its rows play the enter motion (rows-sorted). With no rows,
+// no Web Animations API or reduced motion the redraw is immediate. A click during the exit only changes the
+// state: the pending redraw renders the latest order.
+function renderSorted() {
+  if (sortExitPending) return;
+  const rows = [...document.querySelectorAll("#view .data-table tbody tr[data-row-id]")];
+  const noMotion = !rows.length || !rows[0].animate || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const redraw = () => {
+    sortExitPending = false;
+    animateSortRows = true;
+    render();
+    animateSortRows = false;
+  };
+  if (noMotion) { redraw(); return; }
+  sortExitPending = true;
+  Promise.allSettled(rows.map(row => {
+    // A row that is still fading in starts from its current opacity, so it does not pop.
+    const from = Number(getComputedStyle(row).opacity);
+    return row.animate(
+      [{ opacity: isNaN(from) ? 1 : from, transform: "none" }, { opacity: 0, transform: "translateY(6px)" }],
+      { duration: 160, easing: "ease-in", fill: "forwards" }
+    ).finished;
+  })).then(redraw);
+}
+
 // A new column starts ascending; the same column flips its direction.
 function setUsersSort(key) {
   const current = state.usersSort;
   state.usersSort = { key, dir: current.key === key && current.dir === "asc" ? "desc" : "asc" };
-  animateSortRows = true;
-  render();
-  animateSortRows = false;
+  renderSorted();
 }
 
 // Date cell: the date text is a focusable span; hover or focus (a tap on a phone) opens, after a short delay, the one
@@ -72,6 +100,7 @@ function showDateTip(target) {
     if (parts.length === 3 && index === 0) part.className = "date-tip-day";
     tip.appendChild(part);
   });
+  tip.classList.remove("closing");
   tip.classList.add("open");
   const rect = target.getBoundingClientRect();
   const width = tip.offsetWidth;
@@ -88,11 +117,27 @@ function showDateTip(target) {
   tip.classList.toggle("below", below);
 }
 
-// Closing is instant (no exit animation), because the tooltip follows the pointer between dates.
+// Closing plays the exit animation: .open becomes .closing, which keeps the tooltip (and its .below) on
+// screen while the CSS fades it out, then both are removed. With no animation (reduced motion) it hides at
+// once. A tooltip that is not open is left alone, because this also runs on every scroll event. A new
+// tooltip cancels a running exit (showDateTip() removes .closing), so it opens at once.
 function hideDateTip() {
   clearTimeout(dateTipTimer); // also cancels a tooltip that is still waiting to open
   const tip = document.getElementById("dateTip");
-  if (tip) tip.classList.remove("open", "below");
+  if (!tip || !tip.classList.contains("open")) return;
+  tip.classList.remove("open");
+  tip.classList.add("closing");
+  if (getComputedStyle(tip).animationName === "none") {
+    tip.classList.remove("closing", "below");
+    return;
+  }
+  const finish = e => {
+    if (e.target !== tip) return;
+    tip.removeEventListener("animationend", finish);
+    // Skipped when a tooltip opened again meanwhile (showDateTip() already removed .closing).
+    if (tip.classList.contains("closing")) tip.classList.remove("closing", "below");
+  };
+  tip.addEventListener("animationend", finish);
 }
 
 // Any scroll (the page, .main or the table) closes the tooltip; scroll does not bubble, so capture.
@@ -139,11 +184,9 @@ function renderUsersView() {
 
   const rows = ordered.map(renderUserRow).join("");
 
-  // While the data loads the table body is empty and the user count is left
-  // out, as in the reference (no skeleton, R80); a failed load is shown as a
-  // toast by navigate().
+  // While the data loads the table body is empty, as in the reference (no
+  // skeleton, R80); a failed load is shown as a toast by navigate().
   const emptyRow = state.loading ? "" : '<tr><td colspan="5">No users yet. Add your first user.</td></tr>';
-  const countLine = state.loading ? "" : \`<div class="helper-text table-count">\${ordered.length} \${ordered.length === 1 ? "user" : "users"}</div>\`;
 
   return \`
     <div class="toolbar">
@@ -166,7 +209,6 @@ function renderUsersView() {
       </table>
       </div>
       <div class="date-tip" id="dateTip" role="tooltip"></div>
-      \${countLine}
     </div>
   \`;
 }

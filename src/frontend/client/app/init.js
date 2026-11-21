@@ -11,13 +11,15 @@ export const INIT_SCRIPT = `
   applyTheme(savedTheme);
 
   // Escape closes an open modal, the More menu, the account menus and the
-  // growth range dropdown.
+  // growth range dropdown. In the UUID confirm popup it goes back to the User
+  // editor instead, so the editor's typed data is not lost.
   document.addEventListener("keydown", e => {
     if (e.key !== "Escape") return;
     closeMoreMenu();
     closeAccountMenus();
     closeGrowthMenu();
-    if (state.modal) closeModal();
+    if (state.modal === "confirmUuid") cancelUuidConfirm();
+    else if (state.modal) closeModal();
   });
 
   // A click outside the More menu and its button closes the menu; the same

@@ -11,7 +11,7 @@ export const ACTIVITY_CSS = `
 .activity-icon {
   width: 38px; height: 38px; border-radius: var(--radius-md); flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  background: var(--color-primary-soft); color: var(--color-primary);
+  background: var(--color-primary-faint); color: var(--color-primary);
 }
 .activity-icon .ui-icon { width: 18px; height: 18px; }
 .activity-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }

@@ -1,1 +1,1 @@
-export const VEXA_VERSION = "4.2.0";
+export const VEXA_VERSION = "4.2.1";

@@ -35,19 +35,22 @@ export async function getUserGrowth(env, days = 7) {
   for (let i = days - 1; i >= 0; i--) {
     dayList.push(utcDayString(now - i * MS_PER_DAY));
   }
-  // The newest row before the window seeds the carry-forward value.
-  const seedRow = await env.DB
-    .prepare(
-      `SELECT total_users FROM user_growth WHERE day < ? ORDER BY day DESC LIMIT 1`,
-    )
-    .bind(dayList[0])
-    .first();
-  const { results } = await env.DB
-    .prepare(
-      `SELECT day, total_users FROM user_growth WHERE day >= ? ORDER BY day ASC`,
-    )
-    .bind(dayList[0])
-    .all();
+  // The newest row before the window seeds the carry-forward value. Both
+  // reads are independent, so they run in parallel (one D1 round trip of wait).
+  const [seedRow, { results }] = await Promise.all([
+    env.DB
+      .prepare(
+        `SELECT total_users FROM user_growth WHERE day < ? ORDER BY day DESC LIMIT 1`,
+      )
+      .bind(dayList[0])
+      .first(),
+    env.DB
+      .prepare(
+        `SELECT day, total_users FROM user_growth WHERE day >= ? ORDER BY day ASC`,
+      )
+      .bind(dayList[0])
+      .all(),
+  ]);
   const byDay = new Map(results.map((r) => [r.day, r.total_users]));
   let last = seedRow ? seedRow.total_users : null;
   const series = [];

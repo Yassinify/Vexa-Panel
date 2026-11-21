@@ -25,23 +25,32 @@ export const APP_SHELL_CSS = `
 /* The popup looks and behaves like the date tooltip (.date-tip, styles/tables.js): the same surface, 12px radius,
    padding, caption font in normal weight, 10px arrow and 12px gap to the label. It waits 500 ms before it opens
    (the same as DATE_TIP_DELAY_MS in client/users/users-view.js), then fades in while sliding 6px, as the other
-   popups do; closing is instant. The wait is an animation delay with a backwards fill, so the popup stays invisible
-   until then. Reduced motion keeps the wait but plays no motion. */
+   popups do, and closes with the same motion backwards at once. It is always laid out and shown through
+   opacity, so it can fade out as well as in (it is CSS only, so no script can keep it on screen while it closes);
+   visibility switches after the fade, so a hidden popup is not exposed. The wait is the delay of the opening
+   transition. Reduced motion keeps the wait but plays no motion: the global rule in styles/reduced-motion.js
+   removes the transitions, and the animation in the reduced-motion block below holds the popup invisible until then. */
 .version-pop {
-  display: none; align-items: center; gap: var(--space-sm); position: absolute; z-index: 10; top: calc(100% + 12px); left: 50%;
+  display: flex; align-items: center; gap: var(--space-sm); position: absolute; z-index: 10; top: calc(100% + 12px); left: 50%;
   padding: var(--space-sm) var(--space-md); white-space: nowrap; pointer-events: none;
   background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   color: var(--color-text); font-size: var(--text-caption); font-weight: 400; line-height: 1.5; font-variant-numeric: tabular-nums;
-  transform: translateX(-50%);
+  /* Closed: invisible and 6px up, centered under the label (translateX(-50%)); the exit transition is here. */
+  opacity: 0; visibility: hidden; transform: translate(-50%, -6px);
+  transition: opacity .16s ease-in, transform .16s ease-in, visibility 0s linear .16s;
 }
 .brand-version:hover .version-pop, .brand-version:focus-visible .version-pop {
-  display: flex; animation: version-pop-in .16s ease-out .5s backwards;
+  opacity: 1; visibility: visible; transform: translate(-50%, 0);
+  transition: opacity .16s ease-out .5s, transform .16s ease-out .5s, visibility 0s linear .5s;
 }
-/* Like account-menu-in, but keeps the popup centered under the label (translateX(-50%)). */
-@keyframes version-pop-in {
-  from { opacity: 0; transform: translate(-50%, -6px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
+/* Clicking the label (dismissVersionPop() in client/shell.js) adds .pop-off: the popup leaves at once with the same exit
+   as a normal leave (no 500 ms wait) and stays hidden while the pointer or focus is still on the label. It has the
+   specificity of the hover and focus rules above and comes after them, and sets its own transition (their wait would
+   otherwise delay the exit). */
+.brand-version.pop-off .version-pop {
+  opacity: 0; visibility: hidden; transform: translate(-50%, -6px);
+  transition: opacity .16s ease-in, transform .16s ease-in, visibility 0s linear .16s;
 }
 @keyframes version-pop-wait { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
@@ -56,6 +65,7 @@ export const APP_SHELL_CSS = `
 }
 /* Nav items are real buttons, so the button defaults are reset here. */
 .sidebar-link {
+  position: relative; z-index: 1;
   display: flex; align-items: center; gap: var(--space-md); min-height: 44px; padding: 0 14px;
   border: 0; background: none; text-align: left;
   border-radius: var(--radius-lg);
@@ -63,9 +73,27 @@ export const APP_SHELL_CSS = `
   transition: background .15s ease, color .15s ease;
 }
 .sidebar-link:hover { background: var(--color-surface-alt); color: var(--color-text); }
-.sidebar-link.active { background: var(--color-primary-hover); color: #fff; }
+/* The highlight of the active item is the .nav-indicator behind it, so the link itself has no fill. */
+.sidebar-link.active { background: transparent; color: #fff; }
 .sidebar-link .nav-icon { display: inline-flex; }
 .sidebar-link.active .nav-icon { color: #fff; }
+/* Active item indicator: one decorative element that client/shell.js moves and sizes (transform, width, height)
+   behind the active link. It is hidden until the script has placed it; the links sit above it (z-index 1). */
+.nav-indicator {
+  position: absolute; top: 0; left: 0; z-index: 0; pointer-events: none;
+  border-radius: var(--radius-lg); background: var(--color-primary-hover);
+  opacity: 0;
+}
+.nav-indicator.on { opacity: 1; }
+/* A real move between two items (.slide, set by placeNavIndicator() in client/shell.js) glides on the --spring-soft
+   curve, the same as the view enter (styles/tokens.js). Without linear() support the indicator jumps instead; the
+   first placement and a layout change carry no .slide and snap. */
+@supports (animation-timing-function: linear(0, 1)) {
+  .nav-indicator.slide { transition: transform .45s var(--spring-soft), width .45s var(--spring-soft), height .45s var(--spring-soft); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-indicator.slide { transition: none; }
+}
 .sidebar-footer { margin-top: auto; }
 /* More menu: only used by the compact bottom bar; hidden on desktop, where
    Logs and Settings are normal sidebar links. */
@@ -181,6 +209,17 @@ export const APP_SHELL_CSS = `
 .account-wrap-top .account-menu::after { top: -6px; right: 12px; border-width: 1px 0 0 1px; }
 /* Content area: full width, the header and the view share the side padding. */
 .main { flex: 1; min-width: 0; margin-left: 232px; padding: 0 28px 32px; }
+/* View stack (div.view-stack around #view, client/shell.js): the current view and, for the 200ms after a view
+   change, the exiting copy of the old one share one grid cell, so they overlap in normal flow (no absolute
+   positioning, no scroll offsets) and the cell is as tall as the taller of the two. The column is minmax(0, 1fr)
+   so wide content (a table) cannot widen the stack. */
+.view-stack { display: grid; grid-template-columns: minmax(0, 1fr); }
+.view-stack > * { grid-area: 1 / 1; min-width: 0; }
+/* The exiting copy (playViewExit() in client/app/root-render.js) is decoration: it ignores the pointer and runs
+   no CSS animation of its own, so a clone of a view that was still animating (sorted rows, the Enable / Disable
+   border) does not replay it. Its fade-out is driven by script. */
+.view-exit { pointer-events: none; user-select: none; }
+.view-exit, .view-exit * { animation: none !important; }
 /* Header: search, Theme and avatar; no background or border. */
 .topbar { display: flex; align-items: center; gap: 14px; height: 72px; }
 .topbar-search { max-width: 420px; }
@@ -206,7 +245,7 @@ export const APP_SHELL_CSS = `
     height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
   }
   .sidebar {
-    position: static; order: 2; flex: none; width: auto; flex-direction: row; justify-content: space-around;
+    position: relative; order: 2; flex: none; width: auto; flex-direction: row; justify-content: space-around;
     padding: 6px 8px;
     border-right: 0; border-top: 1px solid var(--color-border);
   }

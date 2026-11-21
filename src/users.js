@@ -6,6 +6,7 @@ import {
   getNodeCountOlderThan,
   getUserCount,
   getActiveUserCount,
+  getActiveNodeCount,
   getUserGrowth,
   recordUserGrowthSnapshot,
   getRecentActivity,
@@ -19,6 +20,7 @@ import {
   deleteUserRow,
   getNodeRowById,
   getUserNodeIds,
+  replaceUserId,
   rowToUser,
 } from "./backend/database/d1.js";
 import { normalizeSources } from "./backend/protocols/sources.js";
@@ -36,14 +38,27 @@ async function snapshotUserGrowth(env) {
 }
 
 export async function getStats(env) {
-  const stats = await getStatsRow(env);
-  const activity = await getRecentActivity(env);
-  // Live COUNT(*) values (src/d1.js) for the Dashboard cards.
-  const totalNodes = await getNodeCount(env);
-  // Nodes created 30+ days ago: baseline for the Total nodes change line.
-  const previousTotalNodes = await getNodeCountOlderThan(env, 30);
-  const totalUsers = await getUserCount(env);
-  const activeUsers = await getActiveUserCount(env);
+  // The seven reads are independent, so they run in parallel. They are live
+  // COUNT(*) values (src/d1.js) for the Dashboard cards, plus the stats row
+  // and the recent activity. Any failure still propagates, as before.
+  const [
+    stats,
+    activity,
+    totalNodes,
+    // Nodes created 30+ days ago: baseline for the Total nodes change line.
+    previousTotalNodes,
+    totalUsers,
+    activeUsers,
+    activeNodes,
+  ] = await Promise.all([
+    getStatsRow(env),
+    getRecentActivity(env),
+    getNodeCount(env),
+    getNodeCountOlderThan(env, 30),
+    getUserCount(env),
+    getActiveUserCount(env),
+    getActiveNodeCount(env),
+  ]);
   // Record today's point first so the series below includes it.
   await recordUserGrowthSnapshot(env, totalUsers);
   let userGrowth = [];
@@ -61,6 +76,7 @@ export async function getStats(env) {
       totalNodes,
       previousTotalNodes,
       activeUsers,
+      activeNodes,
     },
     activity,
     userGrowth,
@@ -94,11 +110,23 @@ export async function createUser(request, env) {
   }
   const { sources, invalid } = normalizeSources(body.sources || []);
   const nodeIds = await resolveValidNodeIds(env, body.nodeIds);
+  const name = body.name.trim();
+  // Random UUID by default; uuidRandom: false uses the username as the id.
+  const uuidRandom = body.uuidRandom !== false;
+  let id = crypto.randomUUID();
+  if (!uuidRandom) {
+    id = usernameToId(name);
+    if (!id) return json({ error: "invalid_username_id" }, 400);
+    if (await getUserRowById(env, id)) {
+      return json({ error: "uuid_taken" }, 409);
+    }
+  }
   const now = Date.now();
   const user = {
-    id: crypto.randomUUID(),
-    name: body.name.trim(),
+    id,
+    name,
     enabled: true,
+    uuidRandom,
     sources,
     nodeIds,
     createdAt: now,
@@ -162,6 +190,15 @@ export async function updateUser(id, request, env) {
     current.name = body.name.trim();
     renamed = true;
   }
+  // In username mode the id follows the name, so a rename needs a valid, free id.
+  let newId = id;
+  if (renamed && !current.uuidRandom) {
+    newId = usernameToId(current.name);
+    if (!newId) return json({ error: "invalid_username_id" }, 400);
+    if (newId !== id && (await getUserRowById(env, newId))) {
+      return json({ error: "uuid_taken" }, 409);
+    }
+  }
   if (
     body &&
     typeof body.enabled === "boolean" &&
@@ -217,7 +254,12 @@ export async function updateUser(id, request, env) {
   // updateUserWithNodes() (src/d1.js) runs both in one env.DB.batch()
   // transaction. Otherwise only the User row is written with the plain
   // updateUserRow() call and the existing assignment is left untouched.
-  if (nodeIdsChanged) {
+  if (newId !== id) {
+    // Username mode rename: the id (link) changes with the name, so the row is replaced.
+    current.id = newId;
+    current.nodeIds = nodeIdsChanged ? nodeIds : existingNodeIds;
+    await replaceUserId(env, id, current, current.nodeIds);
+  } else if (nodeIdsChanged) {
     current.nodeIds = nodeIds;
     await updateUserWithNodes(env, current, nodeIds);
   } else {
@@ -274,6 +316,66 @@ export async function deleteUser(id, env) {
   await snapshotUserGrowth(env);
   await recordActivity(env, `Deleted user "${row.name}"`);
   return json({ success: true });
+}
+
+// ---------------------------------------------------------------------
+// USER ID (UUID)
+// The User id is also the public link id. In random mode it is a UUID; in
+// username mode it is the name with spaces replaced by underscores.
+// ---------------------------------------------------------------------
+
+// Username mode id: spaces become underscores, and only English letters, digits,
+// dashes and underscores are allowed. Returns null when the name cannot be an id.
+function usernameToId(name) {
+  const id = String(name).trim().replace(/\s/g, "_");
+  return /^[A-Za-z0-9_-]+$/.test(id) ? id : null;
+}
+
+// Gives the User a new random UUID. The old id is removed from the database.
+export async function regenerateUserUuid(id, env) {
+  const row = await getUserRowById(env, id);
+  if (!row) return json({ error: "not_found" }, 404);
+  // Regenerating makes no sense in username mode: the id is the name.
+  if (row.uuid_random === 0) return json({ error: "uuid_not_random" }, 400);
+  const nodeIds = await getUserNodeIds(env, id);
+  const user = rowToUser(row, nodeIds);
+  user.id = crypto.randomUUID();
+  user.editedAt = Date.now();
+  await replaceUserId(env, id, user, nodeIds);
+  await recordActivity(env, `Regenerated UUID for user "${user.name}"`);
+  return json({ user });
+}
+
+// Switches the User between a random UUID and the username as the id.
+// Either way the id changes, so the old link stops working.
+export async function setUserUuidMode(id, request, env) {
+  const body = await safeJson(request);
+  if (!body || typeof body.uuidRandom !== "boolean") {
+    return json({ error: "uuid_mode_required" }, 400);
+  }
+  const row = await getUserRowById(env, id);
+  if (!row) return json({ error: "not_found" }, 404);
+  const nodeIds = await getUserNodeIds(env, id);
+  const user = rowToUser(row, nodeIds);
+  // Same mode: nothing to change, no write, no log entry.
+  if (user.uuidRandom === body.uuidRandom) return json({ user });
+  let newId = crypto.randomUUID();
+  if (!body.uuidRandom) {
+    newId = usernameToId(user.name);
+    if (!newId) return json({ error: "invalid_username_id" }, 400);
+    if (await getUserRowById(env, newId)) {
+      return json({ error: "uuid_taken" }, 409);
+    }
+  }
+  user.id = newId;
+  user.uuidRandom = body.uuidRandom;
+  user.editedAt = Date.now();
+  await replaceUserId(env, id, user, nodeIds);
+  await recordActivity(
+    env,
+    `${body.uuidRandom ? "Enabled" : "Disabled"} random UUID for user "${user.name}"`,
+  );
+  return json({ user });
 }
 
 // ---------------------------------------------------------------------

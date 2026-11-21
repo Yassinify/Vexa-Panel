@@ -13,25 +13,95 @@ export const SHELL_SCRIPT = `
 // pages/app-shell.js reads the same key), applied as data-theme on <html>.
 function applyTheme(theme) {
   const root = document.documentElement;
-  const change = () => { root.dataset.theme = theme; };
+  const changed = root.dataset.theme !== theme;
   // A changed theme crossfades through the browser's view transition (about
   // 0.25s). The startup call (theme already applied by the inline script),
   // browsers without the API and reduced motion switch at once.
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (document.startViewTransition && !reduceMotion && root.dataset.theme !== theme) document.startViewTransition(change);
+  // The toggle's look follows data-theme through CSS. The script only keeps aria-checked in
+  // step and squashes the knob on a real change, inside the same step as the theme itself.
+  const change = () => {
+    root.dataset.theme = theme;
+    syncThemeToggle(changed && !reduceMotion);
+  };
+  if (document.startViewTransition && !reduceMotion && changed) document.startViewTransition(change);
   else change();
   try { localStorage.setItem("vexa_theme", theme); } catch (e) {}
 }
+// Keeps the toggle in step with the theme. The button does not exist yet when the startup
+// call runs; themeToggleMarkup() reads the theme itself when the frame is mounted.
+function syncThemeToggle(squash) {
+  const btn = document.getElementById("themeBtn");
+  if (!btn) return;
+  btn.setAttribute("aria-checked", document.documentElement.dataset.theme === "light" ? "false" : "true");
+  const knob = btn.querySelector(".tt-knob");
+  // Squash and stretch while the knob travels (the slide itself is a CSS transition on .tt-knob-track).
+  if (squash && knob && knob.animate) {
+    knob.animate(
+      [
+        { transform: "scale(1, 1)" },
+        { transform: "scale(1.14, .88)", offset: .25 },
+        { transform: "scale(.94, 1.06)", offset: .55 },
+        { transform: "scale(1.02, .98)", offset: .75 },
+        { transform: "scale(1, 1)" }
+      ],
+      { duration: 800, easing: "ease-out" }
+    );
+  }
+}
 function toggleTheme() {
+  // .tt-touched lets the halo ripple play (styles/theme-toggle.js), so it never plays on page load.
+  document.getElementById("themeBtn")?.classList.add("tt-touched");
   applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light");
+}
+
+// Day/night toggle markup for the topbar (the CSS is in styles/theme-toggle.js). Built with the frame;
+// the look follows data-theme through CSS. The star shapes are about twice the reference size,
+// which would be sub-pixel at this width.
+function themeToggleMarkup() {
+  const night = document.documentElement.dataset.theme !== "light";
+  const sparkle = '<path d="M0 -1 Q0.12 -0.12 1 0 Q0.12 0.12 0 1 Q-0.12 0.12 -1 0 Q-0.12 -0.12 0 -1Z"/>';
+  // x, y, scale, twinkle seconds
+  const sparkles = [[70, 70, 14, 3.2], [160, 92, 10, 2.6], [232, 72, 12, 3.8], [250, 160, 16, 3.1], [120, 175, 10, 2.9]];
+  // x, y, radius, twinkle seconds
+  const dots = [[48, 130, 4.8, 2.2], [110, 40, 3.6, 2.7], [200, 130, 4.4, 3.4], [296, 108, 3.2, 2.4], [180, 205, 3.6, 3], [82, 205, 3.2, 2.5], [288, 45, 2.8, 3.6]];
+  // --i staggers the entry of each star, --t sets its twinkle speed.
+  const star = (x, y, scale, i, t, shape) => '<g transform="translate(' + x + " " + y + ") scale(" + scale + ')"><g class="tt-star" style="--i:' + i + ";--t:" + t + 's">' + shape + "</g></g>";
+  const stars = sparkles.map((s, i) => star(s[0], s[1], s[2], i, s[3], sparkle)).join("") +
+    dots.map((d, i) => star(d[0], d[1], 1, i + sparkles.length, d[3], '<circle r="' + d[2] + '"/>')).join("");
+  // Cloud layers from back to front: a cluster of circles each (cx, cy, r).
+  const cloud = (n, circles) => '<svg class="tt-cloud tt-cloud-' + n + '" viewBox="0 0 530 243" aria-hidden="true"><g fill="var(--tt-cloud-' + n + ')">' +
+    circles.map(c => '<circle cx="' + c[0] + '" cy="' + c[1] + '" r="' + c[2] + '"/>').join("") + "</g></svg>";
+  const clouds =
+    cloud(1, [[230, 232, 42], [310, 205, 48], [388, 172, 54], [462, 110, 70], [528, 48, 72], [480, 262, 100], [540, 150, 60]]) +
+    cloud(2, [[180, 248, 40], [262, 228, 44], [345, 212, 46], [428, 180, 54], [505, 118, 66], [548, 62, 58], [500, 252, 90]]) +
+    cloud(3, [[118, 268, 42], [200, 254, 42], [285, 246, 44], [370, 238, 46], [452, 208, 52], [530, 150, 66], [510, 262, 85]]);
+  return '<button type="button" class="theme-toggle" id="themeBtn" role="switch" aria-checked="' + night + '" aria-label="Dark mode" onclick="toggleTheme()">' +
+    '<span class="tt-pill"><span class="tt-layer tt-sky-night"></span>' +
+    '<svg class="tt-layer tt-stars" viewBox="0 0 530 243" aria-hidden="true">' + stars + "</svg>" +
+    '<span class="tt-knob-track"><span class="tt-halo"></span><span class="tt-knob"><span class="tt-sun"></span>' +
+    '<span class="tt-moon"><span class="tt-crater tt-c1"></span><span class="tt-crater tt-c2"></span><span class="tt-crater tt-c3"></span></span></span></span>' +
+    clouds + "</span></button>";
 }
 
 // Version label: a link to the project's GitHub page. Hovering or focusing it
 // shows a small popup with the GitHub mark and the project name (CSS only, see
 // .version-pop in styles/app-shell.js). Used in the sidebar and the compact topbar.
 function versionLink() {
-  return '<a class="brand-version" href="${GITHUB_REPO_URL}" target="_blank" rel="noopener noreferrer" aria-label="Vexa Panel v${VEXA_VERSION} on GitHub">v${VEXA_VERSION}' +
+  return '<a class="brand-version" href="${GITHUB_REPO_URL}" target="_blank" rel="noopener noreferrer" onclick="dismissVersionPop(this)" onmouseleave="restoreVersionPop(this)" onblur="restoreVersionPop(this, true)" aria-label="Vexa Panel v${VEXA_VERSION} on GitHub">v${VEXA_VERSION}' +
     '<span class="version-pop" role="tooltip"><svg class="version-pop-logo" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">${GITHUB_MARK_PATH}</svg>${GITHUB_REPO_NAME}</span></a>';
+}
+
+// Version popup after a click: the link opens in a new window while the pointer is still over the label, so :hover
+// would keep the popup on screen. A click adds .pop-off (styles/app-shell.js hides the popup at once); the class is
+// removed when the pointer or focus leaves the label. A blur caused by the window losing focus (the new window
+// opens) is ignored, so the popup does not come back when the user returns with the pointer still over the label.
+function dismissVersionPop(link) {
+  link.classList.add("pop-off");
+}
+function restoreVersionPop(link, fromBlur) {
+  if (fromBlur && !document.hasFocus()) return;
+  link.classList.remove("pop-off");
 }
 
 function navigate(view) {
@@ -138,6 +208,7 @@ function renderSidebar() {
   // .sidebar-link, .nav-icon, navigate()).
   return \`
     <div class="sidebar" id="sidebar">
+      <span class="nav-indicator" id="navIndicator" aria-hidden="true"></span>
       <div class="sidebar-brand">
         \${logoMark()}<span class="brand">Vexa Panel</span>\${versionLink()}
       </div>
@@ -197,10 +268,11 @@ function renderSettingsView() {
 
 // The persistent frame (sidebar, header, #view, #md). render() mounts it
 // once; later renders only rewrite #view and the modal layer, and
-// syncShellFrame() updates the parts that depend on state.
+// syncShellFrame() updates the parts that depend on state. #view sits in
+// .view-stack so the exiting copy of the old view can overlap it (render()).
 function renderShellFrame() {
   // Header follows reference/reference.html: a search field (no behavior, as
-  // in the reference), a flexible spacer, the Theme button and the Admin
+  // in the reference), a flexible spacer, the day/night theme toggle and the Admin
   // avatar (compact layout only). Sign out lives in the account menus: the
   // avatar opens one here, the sidebar Admin card opens the other. Page
   // titles are drawn inside each view, so the header carries none, and
@@ -215,7 +287,7 @@ function renderShellFrame() {
           </div>
           <input class="topbar-search" type="text" placeholder="Search…" aria-label="Search">
           <span class="topbar-spacer" style="flex:1;"></span>
-          <button type="button" class="btn-secondary btn-sm" id="themeBtn" aria-label="Toggle light or dark theme" onclick="toggleTheme()">Theme</button>
+          \${themeToggleMarkup()}
           <div class="account-wrap account-wrap-top">
             <button type="button" class="topbar-avatar" id="avatarBtn" aria-label="Account menu" aria-haspopup="menu" aria-expanded="false" onclick="toggleAccountMenu('avatar')">A</button>
             <div class="account-menu" id="avatarMenu" role="menu">
@@ -224,11 +296,35 @@ function renderShellFrame() {
             <div class="account-backdrop" onclick="closeAccountMenus()"></div>
           </div>
         </div>
-        <div class="container" id="view"></div>
+        <div class="view-stack">
+          <div class="container" id="view"></div>
+        </div>
       </div>
       <div id="md"></div>
     </div>
   \`;
+}
+
+// Active item indicator (styles/app-shell.js): one element placed behind the active sidebar link. Its size and
+// position come from the link's rectangle, so the same code serves the desktop column and the phone bottom bar
+// (offsetLeft would be wrong for the More button, whose offset parent is .more-wrap). A link hidden by the layout
+// has no width and cannot be the target; with none visible the indicator hides. The class .slide is set only for a
+// real move between two items, so the first placement and a layout change (resize, font load) snap into place.
+let navIndicatorBound = false;
+function placeNavIndicator(slide) {
+  const bar = document.getElementById("navIndicator");
+  const sidebar = document.getElementById("sidebar");
+  if (!bar || !sidebar) return;
+  const target = Array.from(sidebar.querySelectorAll(".sidebar-link.active")).find(el => el.getBoundingClientRect().width > 0);
+  if (!target) { bar.classList.remove("on", "slide"); return; }
+  const box = sidebar.getBoundingClientRect();
+  const rect = target.getBoundingClientRect();
+  const wasOn = bar.classList.contains("on");
+  bar.classList.toggle("slide", Boolean(slide) && wasOn);
+  bar.style.width = rect.width + "px";
+  bar.style.height = rect.height + "px";
+  bar.style.transform = "translate(" + (rect.left - box.left - sidebar.clientLeft) + "px, " + (rect.top - box.top - sidebar.clientTop) + "px)";
+  bar.classList.add("on");
 }
 
 // In-place update of the persistent frame after a view change: the active
@@ -248,5 +344,11 @@ function syncShellFrame() {
     if (isActive) el.setAttribute("aria-current", "page");
     else el.removeAttribute("aria-current");
   });
+  placeNavIndicator(true);
+  if (!navIndicatorBound) {
+    navIndicatorBound = true;
+    window.addEventListener("resize", () => placeNavIndicator(false));
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => placeNavIndicator(false));
+  }
 }
 `;

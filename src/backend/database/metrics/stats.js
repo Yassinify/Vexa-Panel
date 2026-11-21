@@ -80,3 +80,11 @@ export async function getActiveUserCount(env) {
     .first();
   return row ? row.c : 0;
 }
+
+// Active nodes card: counts Nodes with enabled = 1 (live, like the user counts).
+export async function getActiveNodeCount(env) {
+  const row = await env.DB
+    .prepare(`SELECT COUNT(*) AS c FROM nodes WHERE enabled = 1`)
+    .first();
+  return row ? row.c : 0;
+}

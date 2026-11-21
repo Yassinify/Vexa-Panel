@@ -6,9 +6,11 @@ export const USER_GROWTH_SCRIPT = `
 // gridlines, the y and x labels, the area and the line. The card header is
 // the title plus a range dropdown (Last week / Last month / Last year =
 // the last 7 / 30 / 365 days, state.growthRange). The slots are
-// right-aligned, so today is the right edge and the left slots stay empty
-// while history is still being recorded; nothing is invented before the
-// first snapshot. With fewer than 2 points no line or area is drawn. The
+// right-aligned, so today is the right edge. Slots before the first
+// recorded day count as 0 users, so the line and the area start at zero
+// across the whole range, and they are drawn as one smooth curve (monotone
+// cubic segments: no corners, no overshoot). With no recorded day at all no
+// line or area is drawn. The
 // x axis always has 7 date labels spread evenly over the range. Classes
 // live in styles/dashboard.js (.growth-*).
 // ---------------------------------------------------------------------
@@ -47,12 +49,54 @@ function growthYMax(maxValue) {
   }
 }
 
+// Smooth SVG path through the points ([[x, y], ...], x increasing) as cubic Bezier segments (monotone
+// cubic interpolation, Fritsch-Carlson). The curve passes through every point and never overshoots, so it
+// stays between the lowest and the highest value: it cannot dip below 0 or above the maximum.
+function growthSmoothPath(pts) {
+  const n = pts.length;
+  if (n < 2) return "";
+  const f = (v) => +v.toFixed(2);
+  const dx = [];
+  const slope = [];
+  for (let i = 0; i < n - 1; i++) {
+    dx.push(pts[i + 1][0] - pts[i][0]);
+    slope.push((pts[i + 1][1] - pts[i][1]) / dx[i]);
+  }
+  // Tangent at each point: the mean of the two neighbouring slopes, flat at a peak, a valley or a flat run.
+  const tan = [slope[0]];
+  for (let i = 1; i < n - 1; i++) tan.push(slope[i - 1] * slope[i] <= 0 ? 0 : (slope[i - 1] + slope[i]) / 2);
+  tan.push(slope[n - 2]);
+  // Limit the tangents so a segment never bends past its own end points.
+  for (let i = 0; i < n - 1; i++) {
+    if (slope[i] === 0) { tan[i] = 0; tan[i + 1] = 0; continue; }
+    const a = tan[i] / slope[i];
+    const b = tan[i + 1] / slope[i];
+    const s = a * a + b * b;
+    if (s > 9) {
+      const t = 3 / Math.sqrt(s);
+      tan[i] = t * a * slope[i];
+      tan[i + 1] = t * b * slope[i];
+    }
+  }
+  let d = "M" + f(pts[0][0]) + "," + f(pts[0][1]);
+  for (let i = 0; i < n - 1; i++) {
+    const h = dx[i] / 3;
+    d += " C" + f(pts[i][0] + h) + "," + f(pts[i][1] + tan[i] * h) +
+      " " + f(pts[i + 1][0] - h) + "," + f(pts[i + 1][1] - tan[i + 1] * h) +
+      " " + f(pts[i + 1][0]) + "," + f(pts[i + 1][1]);
+  }
+  return d;
+}
+
 function renderGrowthChart(series) {
   const range = GROWTH_RANGES[state.growthRange] || GROWTH_RANGES.week;
   const slots = range.days;
   const all = Array.isArray(series) ? series : [];
   const points = all.slice(-slots);
   const offset = slots - points.length;
+  // One value per slot: the slots before the first recorded day count as 0 users.
+  const values = [];
+  for (let i = 0; i < slots; i++) values.push(i < offset ? 0 : points[i - offset].totalUsers);
   const lastSlotMs = points.length
     ? Date.parse(points[points.length - 1].day + "T00:00:00Z")
     : Date.now();
@@ -78,13 +122,14 @@ function renderGrowthChart(series) {
     xLabels += '<text class="growth-label" fill="currentColor" font-size="10" text-anchor="middle" x="' + px(slot) + '" y="' + (GROWTH_H + 4) + '">' + text + '</text>';
   }
 
-  // A line and area need two points; with fewer only the grid and labels show.
+  // The line and the area need at least one recorded day; with none only the grid and labels show.
+  // Both use the same smooth path; the area closes along the baseline.
   let shapes = "";
-  if (points.length >= 2) {
-    const coords = points.map((p, i) => px(offset + i) + "," + py(p.totalUsers)).join(" ");
+  if (points.length >= 1) {
+    const line = growthSmoothPath(values.map((v, i) => [px(i), py(v)]));
     shapes =
-      '<polygon points="' + px(offset) + ',' + baseY + ' ' + coords + ' ' + px(slots - 1) + ',' + baseY + '" fill="url(#growthFill)" stroke="none"/>' +
-      '<polyline class="growth-line" points="' + coords + '"/>';
+      '<path d="' + line + ' L' + px(slots - 1) + ',' + baseY + ' L' + px(0) + ',' + baseY + ' Z" fill="url(#growthFill)" stroke="none"/>' +
+      '<path class="growth-line" d="' + line + '"/>';
   }
   const summary = "User growth over the last " + slots + " days" +
     (points.length ? ": " + points[points.length - 1].totalUsers + " users" : "");

@@ -16,6 +16,8 @@ export function rowToUser(row, nodeIds) {
     updatedAt: row.updated_at,
     // NULL (never edited) reads as the creation time.
     editedAt: row.edited_at ?? row.created_at,
+    // 1 = the id is a random UUID; 0 = the id is the username (a missing value reads as random).
+    uuidRandom: row.uuid_random !== 0,
   };
 }
 

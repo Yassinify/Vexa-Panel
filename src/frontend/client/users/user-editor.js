@@ -5,6 +5,9 @@ async function openUserEditor() {
   state.editingUserSources = [""];
   state.editingUserSourcesAdded = [false];
   state.editingUserNodeIds = [];
+  // A new User starts with a random UUID; the toggle in the UUID section can change it before Create.
+  state.editingUserUuidRandom = true;
+  state.confirmUuid = null;
   state.modal = "userEditor";
   // Opens at once from the cached Node list (the picker says Loading nodes if it was never loaded).
   render();
@@ -119,6 +122,85 @@ function showUserEditorError(msg) {
   if (el) el.textContent = msg;
 }
 
+// ---------------------------------------------------------------------
+// UUID SECTION of the User editor. A new User has no id yet, so the toggle only stores the choice and
+// Create sends it. An existing User changes its id at once: the toggle and Regenerate first open the
+// confirm popup (modals.js), because the old link stops working as soon as the server answers.
+// The editor's typed data lives in state, so it survives the trip to the popup and back.
+// ---------------------------------------------------------------------
+// True while a UUID request runs, so a repeated click on Confirm sends one request.
+let uuidChangePending = false;
+
+// Readable text for the UUID error codes of the server (users.js); null for any other code.
+function uuidErrorText(code) {
+  if (code === "invalid_username_id") return "The name can use only English letters, digits, - and _ (spaces become _).";
+  if (code === "uuid_taken") return "Another user already has this UUID.";
+  return null;
+}
+
+// Writes into the confirm popup's error line; the popup stays open.
+function showUuidConfirmError(msg) {
+  const el = document.getElementById("uuidConfirmError");
+  if (el) el.textContent = msg;
+}
+
+// The "Use the username as UUID" switch.
+function toggleUuidMode() {
+  const next = !state.editingUserUuidRandom;
+  if (!(state.editingUser && state.editingUser.id)) {
+    state.editingUserUuidRandom = next;
+    render();
+    return;
+  }
+  state.confirmUuid = { kind: "mode", uuidRandom: next };
+  state.modal = "confirmUuid";
+  render();
+}
+
+// The Regenerate button (disabled in the markup for a new User and in username mode).
+function askRegenerateUuid() {
+  if (!(state.editingUser && state.editingUser.id) || !state.editingUserUuidRandom) return;
+  state.confirmUuid = { kind: "regenerate" };
+  state.modal = "confirmUuid";
+  render();
+}
+
+// Cancel and Escape in the confirm popup go back to the editor without closing it.
+function cancelUuidConfirm() {
+  state.confirmUuid = null;
+  state.modal = "userEditor";
+  render();
+}
+
+// Confirm: waits for the server with the popup open. On success the editor and the Users list take the
+// new id (the User's link changed) and the editor opens again; a failure shows its message in the popup.
+async function performUuidChange() {
+  const action = state.confirmUuid;
+  const user = state.editingUser;
+  if (!action || !user || !user.id || uuidChangePending) return;
+  uuidChangePending = true;
+  try {
+    const result = action.kind === "mode"
+      ? await apiFetch("/api/users/" + user.id + "/uuid-mode", { method: "PUT", body: JSON.stringify({ uuidRandom: action.uuidRandom }) })
+      : await apiFetch("/api/users/" + user.id + "/uuid/regenerate", { method: "POST" });
+    if (result.error) throw new Error(result.error);
+    const u = result.user;
+    const idx = state.users.findIndex(x => x.id === user.id);
+    if (idx !== -1) state.users[idx] = { ...state.users[idx], id: u.id, editedAt: u.editedAt };
+    state.editingUser = { ...user, id: u.id, uuidRandom: u.uuidRandom, editedAt: u.editedAt };
+    state.editingUserUuidRandom = u.uuidRandom !== false;
+    state.confirmUuid = null;
+    state.modal = "userEditor";
+    render();
+    showToast(action.kind === "regenerate" ? "UUID regenerated" : action.uuidRandom ? "Random UUID enabled" : "Random UUID disabled");
+  } catch (e) {
+    // A 401 already switched to the login view inside apiFetch().
+    if (e.message !== "unauthorized") showUuidConfirmError(uuidErrorText(e.message) || e.message);
+  } finally {
+    uuidChangePending = false;
+  }
+}
+
 // Waits for the server with the modal open; the modal closes only on success.
 async function saveUser() {
   const isEdit = state.editingUser && state.editingUser.id;
@@ -126,21 +208,25 @@ async function saveUser() {
   const name = document.getElementById("userNameInput").value.trim();
   if (!name) { showUserEditorError("Enter a user name."); return; }
   const sources = state.editingUserSources.map(s => s.trim()).filter(Boolean);
-  const body = JSON.stringify({ name, sources, nodeIds: state.editingUserNodeIds });
+  // A new User also sends its UUID mode; an edited one keeps its mode (it changes only through the confirmed toggle).
+  const body = JSON.stringify(isEdit
+    ? { name, sources, nodeIds: state.editingUserNodeIds }
+    : { name, sources, nodeIds: state.editingUserNodeIds, uuidRandom: state.editingUserUuidRandom });
   showUserEditorError("");
   try {
     const result = await apiFetch(isEdit ? "/api/users/" + id : "/api/users", { method: isEdit ? "PUT" : "POST", body });
     if (result.error) throw new Error(result.error);
     const u = result.user;
+    // The id is part of the row: a rename in username mode changes it.
     const row = {
-      name: u.name, enabled: u.enabled !== false,
+      id: u.id, name: u.name, enabled: u.enabled !== false,
       subCount: u.sources.filter(s => s.type === "subscription").length,
       rawCount: u.sources.filter(s => s.type !== "subscription").length,
       updatedAt: u.updatedAt, editedAt: u.editedAt
     };
     const idx = isEdit ? state.users.findIndex(x => x.id === id) : -1;
     if (idx !== -1) state.users[idx] = { ...state.users[idx], ...row };
-    else if (!isEdit) state.users.push({ id: u.id, createdAt: u.createdAt, ...row });
+    else if (!isEdit) state.users.push({ createdAt: u.createdAt, ...row });
     closeModal();
     if (result.invalidSources && result.invalidSources.length) {
       showToast(result.invalidSources.length + " line(s) skipped — invalid format");
@@ -148,7 +234,7 @@ async function saveUser() {
       showToast(isEdit ? "User saved" : "User added");
     }
   } catch (e) {
-    showUserEditorError(e.message === "name_required" ? "Enter a user name." : e.message);
+    showUserEditorError(e.message === "name_required" ? "Enter a user name." : uuidErrorText(e.message) || e.message);
   }
 }
 
@@ -180,6 +266,8 @@ async function openUser(id) {
     state.editingUserNodeIds = (data.user.nodeIds || []).filter(nid =>
       state.nodes.some(n => n.id === nid && n.enabled !== false)
     );
+    state.editingUserUuidRandom = data.user.uuidRandom !== false;
+    state.confirmUuid = null;
     state.modal = "userEditor";
     render();
     recheckEditorNodes();

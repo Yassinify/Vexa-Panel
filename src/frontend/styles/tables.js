@@ -13,45 +13,30 @@ export const TABLES_CSS = `/* Scrolls sideways when the table is narrow, never v
 /* Status dot left of the name: green = Active, red = Inactive. */
 .status-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--color-error); }
 .status-dot.ok { background: var(--color-success); }
-/* Enable / Disable feedback (toggleRow() in client/helpers.js). A span.row-spin is put in the row's first cell and
-   is positioned against the row (a table row can neither take a rounded border nor a pseudo-element reliably).
-   While the server answers, a 2px border spins around the whole row in the color of the target state: green for
-   Enable (.to-on), red for Disable (.to-off). The angle of the gradient is animated through an @property custom
-   property; a browser without @property shows the same border without the spin. */
-@property --row-spin-angle { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
 .data-table tr { position: relative; }
-.row-spin {
-  --row-spin-color: var(--color-success);
-  position: absolute; inset: 0; z-index: 1; pointer-events: none; padding: 2px; border-radius: var(--radius-md);
-  background: conic-gradient(from var(--row-spin-angle), transparent 0 55%, var(--row-spin-color) 100%);
-  /* Only the 2px frame stays visible: the content box is cut out of the full box. */
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  animation: row-spin 1s linear infinite;
+/* Status dot. The motion is the one of the day/night theme toggle (the knob squash and stretch in
+   syncThemeToggle(), client/shell.js). While the server answers the dot keeps its old color and squashes and
+   stretches in a loop (dot-squash); when the row is redrawn the new dot starts from the old color and changes to
+   the new one in a single pass with the same squash (dot-recolor). The color uses ease-out, not the spring curve,
+   which overshoots and would push the blend past the target color. The busy and turn states also give the dot a
+   little depth: a soft drop shadow below and a thin light edge inside at the top. */
+.status-dot.busy-on, .status-dot.busy-off { --dot-depth: 0 1px 3px rgba(0, 0, 0, .55), inset 0 1px 1px rgba(255, 255, 255, .35); box-shadow: var(--dot-depth); animation: dot-squash .8s ease-out infinite; }
+/* The knob keyframes of syncThemeToggle() (client/shell.js). */
+@keyframes dot-squash {
+  0% { transform: scale(1, 1); }
+  25% { transform: scale(1.14, .88); }
+  55% { transform: scale(.94, 1.06); }
+  75% { transform: scale(1.02, .98); }
+  100% { transform: scale(1, 1); }
 }
-.row-spin.to-off { --row-spin-color: var(--color-error); }
-@keyframes row-spin { to { --row-spin-angle: 360deg; } }
-/* After the row is redrawn the border is a full ring in the same color that fades out once. */
-.row-spin.settle { background: var(--row-spin-color); animation: row-spin-settle .6s ease-out forwards; }
-@keyframes row-spin-settle { from { opacity: 1; } to { opacity: 0; } }
-/* Status dot. While the server answers it pulses in the target color; when the row is redrawn it turns from the
-   old color to the new one with a short pop and one ring that spreads and fades. */
-.status-dot.busy-on { background: var(--color-success); animation: dot-busy .8s ease-in-out infinite; }
-.status-dot.busy-off { background: var(--color-error); animation: dot-busy .8s ease-in-out infinite; }
-@keyframes dot-busy { 50% { transform: scale(1.5); opacity: .55; } }
-.status-dot.turn-on { --dot-from: var(--color-error); --dot-to: var(--color-success); animation: dot-turn .6s ease-out; }
-.status-dot.turn-off { --dot-from: var(--color-success); --dot-to: var(--color-error); animation: dot-turn .6s ease-out; }
-@keyframes dot-turn {
-  0% { background: var(--dot-from); transform: scale(1); box-shadow: 0 0 0 0 transparent; }
-  40% { background: var(--dot-to); transform: scale(1.7); box-shadow: 0 0 0 0 var(--dot-to); }
-  100% { background: var(--dot-to); transform: scale(1); box-shadow: 0 0 0 10px transparent; }
+.status-dot.turn-on { --dot-from: var(--color-error); --dot-to: var(--color-success); --dot-depth: 0 1px 3px rgba(0, 0, 0, .55), inset 0 1px 1px rgba(255, 255, 255, .35); box-shadow: var(--dot-depth); animation: dot-recolor .7s ease-out, dot-squash .7s ease-out; }
+.status-dot.turn-off { --dot-from: var(--color-success); --dot-to: var(--color-error); --dot-depth: 0 1px 3px rgba(0, 0, 0, .55), inset 0 1px 1px rgba(255, 255, 255, .35); box-shadow: var(--dot-depth); animation: dot-recolor .7s ease-out, dot-squash .7s ease-out; }
+@keyframes dot-recolor {
+  from { background: var(--dot-from); }
+  to { background: var(--dot-to); }
 }
-/* Reduced motion: the border is a still ring (gone at once after the redraw) and the dot does not move. */
+/* Reduced motion: the dot does not move. */
 @media (prefers-reduced-motion: reduce) {
-  .row-spin { animation: none; background: var(--row-spin-color); }
-  .row-spin.settle { animation: none; opacity: 0; }
   .status-dot.busy-on, .status-dot.busy-off, .status-dot.turn-on, .status-dot.turn-off { animation: none; }
 }
 /* Users and Nodes Actions: the Link button (Users only) and a ⋯ button that opens the row menu. Link is
@@ -74,10 +59,13 @@ export const TABLES_CSS = `/* Scrolls sideways when the table is narrow, never v
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   --account-menu-shift: -6px;
 }
-/* Same fade and 6px slide as the other popups (account-menu-in, styles/app-shell.js); closing is instant. */
+/* Same fade and 6px slide as the other popups (account-menu-in, styles/app-shell.js). Closing plays the same
+   motion backwards; .closing is set by closeRowMenus() (client/helpers.js) while it runs, then removed. A closing
+   popup ignores the pointer, so it cannot be clicked while it fades out. */
 .row-menu-popup.open { display: flex; animation: account-menu-in .16s ease-out; }
+.row-menu-popup.closing { display: flex; pointer-events: none; animation: account-menu-out .16s ease-in forwards; }
 .row-menu-popup.above { --account-menu-shift: 6px; }
-@media (prefers-reduced-motion: reduce) { .row-menu-popup.open { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .row-menu-popup.open, .row-menu-popup.closing { animation: none; } }
 /* Items look like the Dashboard range items, each with its icon before the label. */
 .row-menu-item {
   display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 var(--space-md);
@@ -126,8 +114,11 @@ export const TABLES_CSS = `/* Scrolls sideways when the table is narrow, never v
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   --account-menu-shift: 6px;
 }
-/* Same fade and 6px slide as the popups; closing is instant (display: none). */
+/* Same fade and 6px slide as the popups. Closing plays the same motion backwards; .closing is set by
+   hideDateTip() (client/users/users-view.js) while it runs, then removed. A new tooltip cancels a running
+   exit: showDateTip() removes .closing and opens at once. */
 .date-tip.open { display: flex; animation: account-menu-in .16s ease-out; }
+.date-tip.closing { display: flex; animation: account-menu-out .16s ease-in forwards; }
 /* The weekday is the label: muted and medium weight; the date and the time keep the text color. */
 .date-tip-day { color: var(--color-muted); font-weight: 500; }
 .date-tip.below { --account-menu-shift: -6px; }
@@ -139,7 +130,7 @@ export const TABLES_CSS = `/* Scrolls sideways when the table is narrow, never v
 .date-tip.below::after { top: -6px; bottom: auto; border-width: 1px 0 0 1px; }
 /* The focusable date text inside a date cell: keyboard focus and a tap open the tooltip. */
 .date-target { cursor: default; border-radius: var(--radius-sm); }
-@media (prefers-reduced-motion: reduce) { .date-tip.open { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .date-tip.open, .date-tip.closing { animation: none; } }
 /* Phone width: the Users and Nodes tables become a list of cards (reference/Vexa Panel User Management.png).
    Each row is a card: status dot and name, then Created at (Users) or Type (Nodes), then the actions
    row: the Link button (Users) and the ⋯ button. The other date columns are hidden (Updated at and Edited at on
@@ -168,8 +159,6 @@ export const TABLES_CSS = `/* Scrolls sideways when the table is narrow, never v
   .data-table td.timestamp:nth-child(4),
   .data-table td.timestamp:nth-child(5) { display: none; }
   .data-table tr { position: relative; }
-  /* On a card the Enable / Disable border follows the card's corners. */
-  .row-spin { border-radius: var(--radius-xl); }
   .row-actions { gap: var(--space-sm); margin-top: var(--space-sm); }
   /* The Link button (Users) keeps its natural width, left-aligned: a stretched button next to the small ⋯ looks out of proportion. */
   .row-actions .btn-sm { flex: none; width: auto; min-width: 0; min-height: 32px; padding: 0 var(--space-md); font-size: 13px; }

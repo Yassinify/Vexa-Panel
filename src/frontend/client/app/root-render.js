@@ -45,6 +45,38 @@ function closeModalLayer(layer) {
   layer.addEventListener("animationend", finish);
 }
 
+// Easing of the view enter: the --spring-soft curve from styles/tokens.js, shared with the theme toggle.
+// A browser without linear() support falls back to ease-out.
+function viewEnterEasing() {
+  const spring = getComputedStyle(document.documentElement).getPropertyValue("--spring-soft").trim();
+  return spring && window.CSS && CSS.supports("animation-timing-function", spring) ? spring : "ease-out";
+}
+
+// View change exit. The old view is copied into an inert clone that sits over #view in the same grid cell
+// (.view-stack, styles/app-shell.js) and plays a quick fade-out with a 6px slide down (200ms), then is
+// removed. The new view is rendered at once, so nothing waits for the exit: data loads and the modal layer are
+// not delayed. The clone starts at the view's current opacity and position, so a view that is still entering does not pop.
+// Only the clone's root id is dropped. Inner ids stay: the clone comes after #view in the DOM, so
+// getElementById still finds the real elements first, and SVG references such as the growth chart gradient
+// keep resolving. Nothing plays under reduced motion.
+function playViewExit(view) {
+  if (!view.animate || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const style = getComputedStyle(view);
+  const from = Number(style.opacity);
+  const fromTransform = style.transform;
+  const ghost = view.cloneNode(true);
+  ghost.removeAttribute("id");
+  ghost.classList.add("view-exit");
+  ghost.setAttribute("aria-hidden", "true");
+  ghost.inert = true;
+  view.after(ghost);
+  const exit = ghost.animate(
+    [{ opacity: isNaN(from) ? 1 : from, transform: fromTransform || "none" }, { opacity: 0, transform: "translateY(6px)" }],
+    { duration: 200, easing: "ease-in", fill: "forwards" }
+  );
+  exit.onfinish = exit.oncancel = () => ghost.remove();
+}
+
 function render() {
   const app = document.getElementById("app");
   if (state.view === "login") {
@@ -62,20 +94,32 @@ function render() {
   if (!document.getElementById("view")) app.innerHTML = renderShellFrame();
   syncShellFrame();
   const view = document.getElementById("view");
-  if (state.view === "dashboard") { view.innerHTML = renderDashboardView(); }
+  // A view change (not the first render after login or page load, where #view is new) copies the old
+  // content into an exit clone before it is replaced below.
+  if (view._shown !== undefined && view._shown !== state.view) playViewExit(view);
+  if (state.view === "dashboard") {
+    view.innerHTML = renderDashboardView();
+    // Count the stat numbers up once per newly loaded state.stats (each load stores a new
+    // object); a re-render of the same data does not replay it. The cards exist only when
+    // the data is loaded, as in renderDashboardView().
+    if (!state.loading && state.stats && view._countedStats !== state.stats) {
+      view._countedStats = state.stats;
+      animateStatNumbers();
+    }
+  }
   else if (state.view === "users") { view.innerHTML = renderUsersView(); }
   else if (state.view === "nodes") { view.innerHTML = renderNodesView(); }
   else if (state.view === "log") { view.innerHTML = renderLogView(); }
   else if (state.view === "settings") { view.innerHTML = renderSettingsView(); }
   // A view change (a tab change, or the first render after login or page load) fades the
-  // new view in with a 6px slide up, once. Re-renders of the same view do not replay it.
-  // Nothing plays under reduced motion.
+  // new view in with a 16px slide up on the spring curve (450ms), once; the old view fades out (playViewExit). Re-renders of
+  // the same view do not replay it. Nothing plays under reduced motion.
   if (view._shown !== state.view) {
     view._shown = state.view;
     if (view.animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       view.animate(
-        [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }],
-        { duration: 200, easing: "ease-out" }
+        [{ opacity: 0, transform: "translateY(16px)" }, { opacity: 1, transform: "none" }],
+        { duration: 450, easing: viewEnterEasing() }
       );
     }
   }
@@ -98,8 +142,7 @@ function render() {
       modalLayer._html = modalHtml;
     }
     openModalLayer(modalLayer, wasOpen);
-    // Focus the first field only when the modal opens, not on every re-render.
-    if (!wasOpen) modalLayer.querySelector("input")?.focus();
+    // No field is focused when a modal opens: on a phone that would open the keyboard at once.
   }
 
   // Every render of a view starts at the top of the page. Below 760px the page does not scroll

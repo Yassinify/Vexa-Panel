@@ -112,15 +112,23 @@ const MIGRATED_USERS_BUCKET_ID = "00000000-0000-4000-8000-000000000001";
 const MIGRATION_IN_PROGRESS = 1;
 const MIGRATION_COMPLETED = 2;
 
+// Set once this isolate has seen the migration completed. The flag only ever moves to
+// completed and never back, so later requests can skip the D1 reads below.
+let migrationKnownCompleted = false;
+
 export async function ensureD1Migrated(env) {
   if (!d1Bound(env)) return; // nothing to migrate into if D1 isn't bound yet
+  if (migrationKnownCompleted) return;
 
   await ensureD1Ready(env);
 
   const flagRow = await env.DB
     .prepare(`SELECT kv_migrated FROM migration_flags WHERE id = 1`)
     .first();
-  if (flagRow && flagRow.kv_migrated === MIGRATION_COMPLETED) return;
+  if (flagRow && flagRow.kv_migrated === MIGRATION_COMPLETED) {
+    migrationKnownCompleted = true;
+    return;
+  }
 
   // Atomic D1-native claim, replacing withMigrationLock(): a single
   // UPDATE whose WHERE clause matches unless the migration is already
@@ -144,7 +152,10 @@ export async function ensureD1Migrated(env) {
   // No row matched: kv_migrated was already 2 by the time this statement
   // ran (another isolate finished between the SELECT above and this
   // UPDATE). Nothing left for this invocation to do.
-  if (claim.meta.changes === 0) return;
+  if (claim.meta.changes === 0) {
+    migrationKnownCompleted = true;
+    return;
+  }
 
   // Re-check after claiming: another isolate's own claim may have already
   // run the whole body and completed (1->2) in the moment between this
@@ -152,7 +163,10 @@ export async function ensureD1Migrated(env) {
   const recheck = await env.DB
     .prepare(`SELECT kv_migrated FROM migration_flags WHERE id = 1`)
     .first();
-  if (recheck && recheck.kv_migrated === MIGRATION_COMPLETED) return;
+  if (recheck && recheck.kv_migrated === MIGRATION_COMPLETED) {
+    migrationKnownCompleted = true;
+    return;
+  }
 
   // Isolates the ENTIRE legacy-KV compatibility path behind one guard:
   // if env.STORAGE isn't bound (a genuinely fresh deployment, the
@@ -328,4 +342,5 @@ export async function ensureD1Migrated(env) {
     .prepare(`UPDATE migration_flags SET kv_migrated = ? WHERE id = 1`)
     .bind(MIGRATION_COMPLETED)
     .run();
+  migrationKnownCompleted = true;
 }

@@ -3,10 +3,12 @@ export const DASHBOARD_SCRIPT = `
 // DASHBOARD — visually rebuilt from the reference board's Desktop/
 // Tablet/Mobile Dashboard panels: each stat card now leads with a small
 // colored icon badge (.stat-card-icon, styles.js), matching the board's
-// icon-in-rounded-square treatment. The 2 cards (Total Users, Total Nodes)
-// read state.stats (totalUsers/totalNodes, from getStats() in
-// src/users.js) and each shows its change versus last month (statDelta());
-// there is no Active Subscriptions or Total Traffic card. Below the stat
+// icon-in-rounded-square treatment. The 4 cards (Total users, Active users,
+// Total nodes, Active nodes) read state.stats (totalUsers/activeUsers/
+// totalNodes/activeNodes, from getStats() in src/users.js). The two Total
+// cards show their change versus last month (statDelta()); the Active cards
+// have no history to compare with and show no change line. There is no
+// Active Subscriptions or Total Traffic card. Below the stat
 // cards, .dash-row holds the User Growth
 // card (renderGrowthChart()) and the Recent Activity card
 // (renderRecentActivity()) side by side, stacking to one column at
@@ -42,10 +44,13 @@ function renderDashboardView() {
   // Total users compares with the total one month ago from the growth series.
   // Total nodes compares with the count of nodes created 30+ days ago, sent by
   // the API as stats.previousTotalNodes (see statDelta() for the 0% cases).
+  // The Active cards carry no prev, so they get no change line.
   const cards = [
     { label: "Total users", num: s.totalUsers, icon: "users", prev: usersOneMonthAgo(state.userGrowth) },
-    { label: "Total nodes", num: s.totalNodes, icon: "globe", prev: s.previousTotalNodes }
-  ].map(c => ({ ...c, delta: statDelta(c.num, c.prev) }));
+    { label: "Active users", num: s.activeUsers, icon: "checkCircle" },
+    { label: "Total nodes", num: s.totalNodes, icon: "globe", prev: s.previousTotalNodes },
+    { label: "Active nodes", num: s.activeNodes, icon: "checkCircle" }
+  ].map(c => ({ ...c, delta: "prev" in c ? statDelta(c.num, c.prev) : null }));
   return \`
     \${header}
     <div class="stat-grid">
@@ -55,7 +60,7 @@ function renderDashboardView() {
           <div>
             <div class="stat-card-label">\${c.label}</div>
             <div class="stat-card-num">\${c.num}</div>
-            <div class="stat-card-delta \${c.delta.kind}">\${c.delta.text} vs. last month</div>
+            \${c.delta ? '<div class="stat-card-delta ' + c.delta.kind + '">' + c.delta.text + ' vs. last month</div>' : ""}
           </div>
         </div>
       \`).join("")}

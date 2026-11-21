@@ -10,9 +10,11 @@ function closeModal() {
   state.editingUserSourcesAdded = null;
   state.editingUserNodeIds = null;
   state.editingUserName = "";
+  state.editingUserUuidRandom = true;
   state.editingNode = null;
   state.editingNodeSource = "";
   state.confirmDelete = null;
+  state.confirmUuid = null;
   state.changePwValues = null;
   render();
 }
@@ -34,6 +36,18 @@ function renderModal() {
         <div class="modal-title">\${isEdit ? "Edit user" : "Add user"}</div>
         <div class="field-group">
           <label><span class="field-label">Name</span><input id="userNameInput" placeholder="User name" value="\${escapeHtml(state.editingUserName)}" oninput="updateUserName(this.value)" /></label>
+        </div>
+        <div class="field-group">
+          <div class="field-head">
+            <span class="field-label" id="uuidLabel">UUID</span>
+            <button type="button" class="btn-secondary btn-sm" \${isEdit && state.editingUserUuidRandom ? "" : "disabled"} onclick="askRegenerateUuid()">\${icon("arrowPath")}Regenerate</button>
+          </div>
+          <input id="userUuidInput" readonly aria-labelledby="uuidLabel" placeholder="\${state.editingUserUuidRandom ? "Generated when you save" : "Set from the name when you save"}" value="\${isEdit ? escapeHtml(u.id) : ""}" />
+          <div class="switch-row">
+            <span class="switch-label" id="uuidSwitchLabel">Use the username as UUID</span>
+            <button type="button" class="switch" role="switch" aria-checked="\${state.editingUserUuidRandom ? "false" : "true"}" aria-labelledby="uuidSwitchLabel" onclick="toggleUuidMode()"><span class="switch-knob"></span></button>
+          </div>
+          <div class="field-hint">\${state.editingUserUuidRandom ? "A random id in the link. Regenerate it to replace the link." : "The id in the link is the name, with spaces turned into _. Letters, digits, - and _ only."}</div>
         </div>
         \${renderNodePicker()}
         <div class="field-group">
@@ -74,6 +88,30 @@ function renderModal() {
     \`;
   }
 
+  // The UUID confirm popup: opened from the User editor's UUID section, because the change takes effect at
+  // once and the old link stops working. Cancel (and Escape, init.js) return to the editor; its data is still in state.
+  if (state.modal === "confirmUuid") {
+    const c = state.confirmUuid;
+    if (!c) return "";
+    const isRegenerate = c.kind === "regenerate";
+    const toUsername = !isRegenerate && !c.uuidRandom;
+    const title = isRegenerate ? "Regenerate the UUID?" : toUsername ? "Use the username as UUID?" : "Switch to a random UUID?";
+    const text = toUsername
+      ? "The link changes to the username at once. The old link stops working."
+      : "The user gets a new random link at once. The old link stops working.";
+    return \`
+      <div class="card modal-card" role="dialog" aria-modal="true" aria-label="\${title}">
+        <div class="modal-title">\${title}</div>
+        <div class="helper-text">\${text}</div>
+        <div class="error-text" id="uuidConfirmError" role="alert"></div>
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick="cancelUuidConfirm()">Cancel</button>
+          <button class="btn-primary" onclick="performUuidChange()">\${isRegenerate ? icon("arrowPath") : ""}\${isRegenerate ? "Regenerate" : "Switch"}</button>
+        </div>
+      </div>
+    \`;
+  }
+
   if (state.modal === "nodeEditor") {
     const n = state.editingNode;
     const isEdit = n && n.id;
@@ -98,23 +136,47 @@ function renderModal() {
 
   if (state.modal === "merge") {
     const r = state.mergeResult;
-    // The one link and QR modal: title, QR, hint, copy row and Download. It has no
-    // lead, counts or Close button; a click outside the card or Escape closes it
-    // (init.js), and .modal-card-static (styles/modals.js) turns off scrolling.
+    // The link and QR modal: a title and the blocks that apply. The Normal block (QR, hint,
+    // link field, Copy) shows when the output has links or no JSON; the JSON block (JSON heading,
+    // QR, hint, link field, Copy, Download) shows when it has JSON configs; a plus icon sits between
+    // them when both show. It has no lead, counts or
+    // Close button; a click outside the card or Escape closes it (init.js), and
+    // .modal-card-static (styles/modals.js) turns off scrolling.
     const header = \`
       <h2 style="font-size:var(--text-h3);margin-bottom:var(--space-lg);">Subscription</h2>
     \`;
     const fullUrl = location.origin + r.subUrl;
+    const hasJson = r.jsonCount > 0;
+    // Both blocks show: each gets a title of the same height (.sub-block-title) so the QR codes line up.
+    const bothBlocks = r.totalNodes > 0 && hasJson;
+    const normalBlock = (r.totalNodes > 0 || !hasJson) ? \`
+        <div class="sub-block">
+          \${bothBlocks ? '<h3 class="sub-block-title">Normal</h3>' : ""}
+          <div class="qr-box" id="qrContainer"></div>
+          <small style="color:var(--color-muted);">Scan the QR code or copy the link below</small>
+          <div class="link-row">
+            <input id="subLinkInput" readonly value="\${fullUrl}" />
+            <button class="btn-secondary" onclick="copyLink('subLinkInput')">Copy</button>
+          </div>
+        </div>
+    \` : "";
+    const jsonBlock = hasJson ? \`
+        <div class="sub-block">
+          <h3 class="sub-block-title">JSON</h3>
+          <div class="qr-box" id="qrContainerJson"></div>
+          <small style="color:var(--color-muted);">Scan the QR code or copy the link below</small>
+          <div class="link-row">
+            <input id="subLinkInputJson" readonly value="\${location.origin + r.jsonUrl}" />
+            <button class="btn-secondary" onclick="copyLink('subLinkInputJson')">Copy</button>
+          </div>
+          <button class="btn-primary btn-full" onclick="downloadLink()">Download</button>
+        </div>
+    \` : "";
+    const plusIcon = (normalBlock && jsonBlock) ? \`<div class="sub-plus" aria-hidden="true">\${icon("plus")}</div>\` : "";
     return \`
       <div class="card modal-card modal-card-static" role="dialog" aria-modal="true" aria-label="Subscription" style="text-align:center;">
         \${header}
-        <div class="qr-box" id="qrContainer"></div>
-        <small style="color:var(--color-muted);">Scan the QR code or copy the link below</small>
-        <div class="link-row">
-          <input id="subLinkInput" readonly value="\${fullUrl}" />
-          <button class="btn-secondary" onclick="copyLink()">Copy</button>
-        </div>
-        <button class="btn-primary btn-full" onclick="downloadLink()">Download</button>
+        <div class="sub-blocks">\${normalBlock}\${plusIcon}\${jsonBlock}</div>
       </div>
     \`;
   }

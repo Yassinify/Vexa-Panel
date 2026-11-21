@@ -20,7 +20,7 @@ async function performDeleteUser(id) {
   }
 }
 
-// Enable / Disable from the row menu. toggleRow() (helpers.js) spins a border around the row while the
+// Enable / Disable from the row menu. toggleRow() (helpers.js) animates the status dot while the
 // server answers (nothing is optimistic) and then redraws only that row from renderUserRow(), so
 // the page keeps its scroll position. A failed request shows its message as a toast and leaves the row.
 async function toggleUserEnabled(id) {

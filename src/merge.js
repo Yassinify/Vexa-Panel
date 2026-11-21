@@ -234,9 +234,11 @@ export async function mergePreviewHandler(request, env) {
 
   return json({
     totalNodes: result.nodes.length,
+    jsonCount: result.jsonConfigs.length,
     totalFetched: result.totalFetched,
     duplicatesRemoved: result.duplicatesRemoved,
     sourceErrors: result.sourceErrors,
     subUrl: `/sub/user/${user.id}`,
+    jsonUrl: `/sub/user/${user.id}?format=json`,
   });
 }

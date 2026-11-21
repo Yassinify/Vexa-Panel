@@ -7,6 +7,8 @@ import {
   getUser,
   updateUser,
   deleteUser,
+  regenerateUserUuid,
+  setUserUuidMode,
 } from "./users.js";
 import { mergePreviewHandler } from "./merge.js";
 import {
@@ -31,7 +33,8 @@ export async function handleApi(pathname, method, request, env, authPayload) {
   if (pathname === "/api/users" && method === "POST")
     return createUser(request, env);
 
-  const userMatch = pathname.match(/^\/api\/users\/([a-f0-9-]{36})$/);
+  // A user id is a UUID or, in username mode, the name (letters, digits, - and _).
+  const userMatch = pathname.match(/^\/api\/users\/([A-Za-z0-9_-]+)$/);
   if (userMatch) {
     const id = userMatch[1];
     if (method === "GET") return getUser(id, env);
@@ -41,6 +44,17 @@ export async function handleApi(pathname, method, request, env, authPayload) {
     // resource to address anymore.
     if (method === "PUT") return updateUser(id, request, env);
     if (method === "DELETE") return deleteUser(id, env);
+  }
+
+  const uuidMatch = pathname.match(
+    /^\/api\/users\/([A-Za-z0-9_-]+)\/(uuid\/regenerate|uuid-mode)$/,
+  );
+  if (uuidMatch) {
+    const id = uuidMatch[1];
+    if (uuidMatch[2] === "uuid/regenerate" && method === "POST")
+      return regenerateUserUuid(id, env);
+    if (uuidMatch[2] === "uuid-mode" && method === "PUT")
+      return setUserUuidMode(id, request, env);
   }
 
   if (pathname === "/api/merge-preview" && method === "POST") {

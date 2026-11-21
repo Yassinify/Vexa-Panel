@@ -29,9 +29,11 @@ function isBrowserRequest(request) {
 // links, and stops serving nodes the moment the user is disabled.
 // JSON configs are never converted or deduplicated: they are returned as
 // the original text (see buildJsonConfigResponse()), either on this same
-// link when the user has no links, or with ?format=json.
+// link when the user has no links, or with ?format=json. A user with both
+// kinds has two links: this one (links only) and ?format=json.
 export async function handlePublicUserSub(id, request, env, url) {
-  if (!id || !/^[a-f0-9-]{36}$/.test(id)) {
+  // A link id is a random UUID or a username id (English letters, digits, - and _).
+  if (!id || !/^[A-Za-z0-9_-]+$/.test(id)) {
     return new Response("Not found", { status: 404 });
   }
 
@@ -41,6 +43,16 @@ export async function handlePublicUserSub(id, request, env, url) {
   // A disabled user's link stops serving nodes immediately.
   if (row.enabled === 0) {
     return new Response("Not found", { status: 404 });
+  }
+
+  // A browser page visit to ?format=json is sent to the normal link, before the merge runs. Only a
+  // navigation is redirected (Sec-Fetch-Mode: navigate); the panel's Download is a fetch and still gets the JSON.
+  if (
+    isBrowserRequest(request) &&
+    url.searchParams.get("format") === "json" &&
+    request.headers.get("Sec-Fetch-Mode") === "navigate"
+  ) {
+    return Response.redirect(`${url.origin}/sub/user/${id}`, 302);
   }
 
   const nodeIds = await getUserNodeIds(env, id);
@@ -85,10 +97,10 @@ export async function handlePublicUserSub(id, request, env, url) {
   }
 
   // A user with JSON configs and no links gets the JSON on the normal link.
-  // An explicit sing-box or Clash request still converts links only.
-  const wantsConvertedLinks =
+  // An explicit sing-box or Clash request never returns the JSON.
+  const wantsLinksOnly =
     explicitFormat === "singbox" || explicitFormat === "clash";
-  if (!wantsConvertedLinks && nodes.length === 0 && jsonConfigs.length > 0) {
+  if (!wantsLinksOnly && nodes.length === 0 && jsonConfigs.length > 0) {
     return buildJsonConfigResponse(jsonConfigs, subtitle);
   }
 

@@ -2,7 +2,8 @@ export const SETUP_STEPS_CSS = `
 /* --- D1 setup guide: wide card, horizontal stepper, detail panel, footer --- */
 .setup-card { width: 100%; max-width: 920px; padding: var(--space-xl); }
 .setup-brand { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 500; margin-bottom: var(--space-lg); }
-.setup-inner { background: var(--color-surface-alt); border: 1px solid var(--color-border); border-radius: var(--radius-xl); padding: 28px; }
+/* --setup-pad is the inner padding; the phone layout reuses it for the sticky Back/Next bar. */
+.setup-inner { --setup-pad: 28px; background: var(--color-surface-alt); border: 1px solid var(--color-border); border-radius: var(--radius-xl); padding: var(--setup-pad); }
 
 /* Header: icon tile, title and subtitle. */
 .setup-head { display: flex; align-items: center; gap: var(--space-lg); padding-bottom: 22px; border-bottom: 1px solid var(--color-border); }
@@ -16,7 +17,7 @@ export const SETUP_STEPS_CSS = `
 .setup-sub { color: var(--color-muted); font-size: var(--text-body-lg); margin-top: var(--space-xs); }
 .setup-intro { margin: 22px 0 var(--space-lg); }
 
-/* Stepper: numbered circles joined by a line; never scrolls sideways (labels hide and circles shrink on narrow screens). */
+/* Stepper: numbered circles joined by a line; never scrolls sideways (labels hide below 961px, it becomes a progress bar at 760px and below). */
 .setup-stepper { --setup-num: 44px; list-style: none; padding: 0; display: flex; }
 .setup-stepper li { position: relative; flex: 1 1 0; min-width: 0; }
 /* Connector: runs from this circle to the next one (circle size is --setup-num). */
@@ -41,10 +42,15 @@ export const SETUP_STEPS_CSS = `
 .is-active .setup-step-num { background: var(--color-primary); border-color: transparent; color: #fff; box-shadow: 0 0 0 4px var(--color-primary-soft); }
 .is-active .setup-step-label { color: var(--color-text); }
 
-/* Detail panel: dashboard mock on the left, step text on the right. */
-.setup-detail { margin-top: 22px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-xl); padding: 20px; }
+/* Detail panel: dashboard mock on the left, step text on the right. It is a one-column grid so that the exiting copy of the
+   old step (page script in pages/d1-setup.js) shares the cell of the new one for the 200ms the exit plays: they overlap in normal
+   flow, and the cell is as tall as the taller of the two. Hidden panes are display: none, so they take no part in the grid. */
+.setup-detail { margin-top: 22px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-xl); padding: 20px; display: grid; grid-template-columns: minmax(0, 1fr); }
+.setup-detail > * { grid-area: 1 / 1; min-width: 0; }
 .setup-pane { display: none; grid-template-columns: 240px minmax(0, 1fr); gap: 28px; align-items: start; }
 .setup-pane.is-active { display: grid; }
+/* The exiting copy is decoration: it ignores the pointer. Its fade-out is driven by the page script. */
+.setup-pane-exit { pointer-events: none; user-select: none; }
 .setup-mock { background: var(--color-surface-alt); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 14px; }
 .setup-mock-brand { color: var(--color-warning); font-size: var(--text-caption); font-weight: 700; letter-spacing: .12em; padding: 4px 6px 12px; border-bottom: 1px solid var(--color-border); margin-bottom: var(--space-sm); }
 /* Platform brand headers: logo left of the name, in that platform's font and colors (GitHub: Primer's system font stack; Cloudflare: Inter, its brand typeface, with the orange cloud; Vexa Panel: the panel's own font and theme text color, with the V mark). */
@@ -82,28 +88,69 @@ export const SETUP_STEPS_CSS = `
   .is-active .setup-step-num { box-shadow: 0 0 0 3px var(--color-primary-soft); }
 }
 
+/* Phone layout, one step at a time: the stepper becomes a progress bar, the step text comes before the mock,
+   and Back/Next stick to the bottom of the screen within thumb reach. .setup-inner turns into a flex column so
+   that the order property can move the detail panel above the Back/Next row (the DOM order stays for desktop). */
 @media (max-width: 760px) {
+  .login-wrap:has(.setup-card) { padding: var(--space-lg); }
   .setup-card { padding: var(--space-lg); }
-  .setup-inner { padding: var(--space-lg); }
+  .setup-inner { --setup-pad: var(--space-lg); display: flex; flex-direction: column; }
   .setup-head h1 { font-size: var(--text-h2); }
+
+  /* Progress bar: ten segments, done filled, active taller (shape, not only color, marks the current step). */
+  .setup-stepper { gap: 4px; }
+  .setup-stepper li:not(:last-child)::after { display: none; }
+  .setup-step-btn { height: 32px; justify-content: center; gap: 0; }
+  .setup-step-num { width: 100%; height: 6px; border: 0; border-radius: 3px; background: var(--color-border-input); font-size: 0; }
+  .setup-stepper .is-done .setup-step-num { background: var(--color-primary-hover); }
+  .setup-stepper .is-active .setup-step-num { height: 10px; background: var(--color-primary); box-shadow: none; }
+
+  /* The detail panel loses its own box; the step text comes first and the mock follows as a visual aid. */
+  .setup-detail { order: 3; padding: 0; background: none; border: 0; }
+  .setup-actions-nav + .setup-detail { margin-top: var(--space-lg); }
   .setup-pane { grid-template-columns: minmax(0, 1fr); gap: var(--space-lg); }
-  .setup-footer { flex-direction: column; align-items: stretch; }
+  .setup-mock { order: 2; }
+  .setup-body code { overflow-wrap: anywhere; }
+
+  /* Back/Next: full-width bar stuck to the bottom of the screen; it bleeds to the edges of .setup-inner. A hidden button leaves the other one full width. */
+  .setup-actions-nav {
+    order: 4; position: sticky; bottom: 0; z-index: 2; flex-wrap: nowrap;
+    margin: var(--space-lg) calc(var(--setup-pad) * -1) 0;
+    padding: var(--space-md) var(--setup-pad) calc(var(--space-md) + env(safe-area-inset-bottom, 0px));
+    background: var(--color-surface-alt); border-top: 1px solid var(--color-border);
+  }
+  .setup-actions-nav .btn-secondary { flex: 1 1 0; min-height: 48px; }
+
+  .setup-footer { order: 5; flex-direction: column; align-items: stretch; }
   .setup-footer .btn-primary { width: 100%; }
 }
 
-/* Smaller circles keep all 10 steps on one row (a slot is about a tenth of the stepper width). */
-@media (max-width: 600px) {
-  .setup-stepper { --setup-num: 28px; }
-}
-
-/* Very narrow screens: smaller circles and padding so all 10 steps fit without scrolling. */
+/* Small phones: one surface instead of two (the outer card turns transparent), tighter header and mock. */
 @media (max-width: 480px) {
-  .setup-card, .setup-inner { padding: var(--space-md); }
-  .setup-stepper { --setup-num: 22px; }
-  .setup-step-num { font-size: var(--text-caption); }
+  .login-wrap:has(.setup-card) { padding: var(--space-md); }
+  .setup-card { padding: 0; background: transparent; border: 0; }
+  .setup-brand { margin-bottom: var(--space-md); }
+  .setup-inner { border-radius: var(--radius-lg); }
+  .setup-head { gap: var(--space-md); padding-bottom: var(--space-lg); }
+  .setup-head-icon { width: 44px; height: 44px; }
+  .setup-head-icon svg { width: 22px; height: 22px; }
+  .setup-head h1 { font-size: 20px; }
+  .setup-sub { font-size: var(--text-body); }
+  .setup-intro { margin: var(--space-lg) 0 var(--space-md); }
+  .setup-mock { padding: 10px; }
+  .setup-mock-item { padding: 6px 8px; }
+  .setup-mock-sub { padding-left: var(--space-md); }
 }
 
-@media (max-width: 360px) {
-  .setup-stepper { --setup-num: 20px; }
+/* Smallest phones (320px): minimal margins and padding; the progress segments stay about 25px wide. */
+@media (max-width: 320px) {
+  .login-wrap:has(.setup-card) { padding: var(--space-sm); }
+  .setup-inner { --setup-pad: var(--space-md); }
+  .setup-stepper { gap: 3px; }
+  .setup-head-icon { width: 36px; height: 36px; }
+  .setup-head-icon svg { width: 18px; height: 18px; }
+  .setup-head h1 { font-size: var(--text-h3); }
+  .setup-actions-nav .btn-secondary { min-height: 44px; padding: 0 var(--space-md); }
+  .setup-footer .btn-primary { padding: 0 var(--space-md); }
 }
 `;

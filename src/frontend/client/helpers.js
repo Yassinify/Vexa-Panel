@@ -50,7 +50,8 @@ function showToast(msg) {
 // position: fixed (styles/tables.js), so the table's scrolling area does not clip it; the script
 // places it under the button, or above it when there is no room below. Only one menu is open at a
 // time. The open state lives in the DOM (class .open and aria-expanded), so a redraw of the view
-// closes the menu, as it does for the date tooltip.
+// closes the menu, as it does for the date tooltip. Closing swaps .open for .closing while the CSS
+// plays the fade-out (the same pattern as setPopupOpen() in client/shell.js), then removes it.
 
 // Markup of the three-dot button and its popup. items is [{ label, icon, onclick, danger }]; label and
 // onclick are fixed text (an onclick only carries an id, never user text), so they are not escaped.
@@ -64,12 +65,26 @@ function rowMenu(items) {
   '</div>';
 }
 
-// Closes every open row menu (there is at most one).
+// Closes every open row menu (there is at most one). .above stays on the popup until the exit animation
+// ends, so the fade-out slides the same way the opening did. With no animation (reduced motion) the popup
+// is hidden at once.
 function closeRowMenus() {
   document.querySelectorAll(".row-menu-popup.open").forEach(popup => {
-    popup.classList.remove("open", "above");
+    popup.classList.remove("open");
+    popup.classList.add("closing");
     const button = popup.parentElement.querySelector(".row-menu-btn");
     if (button) button.setAttribute("aria-expanded", "false");
+    if (getComputedStyle(popup).animationName === "none") {
+      popup.classList.remove("closing", "above");
+      return;
+    }
+    const finish = e => {
+      if (e.target !== popup) return;
+      popup.removeEventListener("animationend", finish);
+      // Skipped when the menu was opened again meanwhile (openRowMenu() already removed .closing).
+      if (popup.classList.contains("closing")) popup.classList.remove("closing", "above");
+    };
+    popup.addEventListener("animationend", finish);
   });
 }
 
@@ -77,6 +92,7 @@ function closeRowMenus() {
 // with the button's right edge and it stays inside the screen sideways. It opens below the button, or
 // above when it would not fit below (the compact layout's bottom bar counts as the bottom edge).
 function openRowMenu(button, popup) {
+  popup.classList.remove("closing");
   popup.classList.add("open");
   button.setAttribute("aria-expanded", "true");
   const rect = button.getBoundingClientRect();
@@ -117,29 +133,20 @@ window.addEventListener("resize", closeRowMenus);
 // ---------------------------------------------------------------------
 // ROW TOGGLE (Users and Nodes Enable / Disable)
 // ---------------------------------------------------------------------
-// While the server changes a row's enabled state, a border spins around the row and the status dot pulses
-// in the color of the target state (styles/tables.js). Nothing is optimistic: the row keeps its old look
-// until the server answers, then only that row is redrawn in place, so the page does not jump to the top
-// as a full render() would.
+// While the server changes a row's enabled state, the status dot squashes and stretches in a loop, keeping its
+// old color (styles/tables.js). Nothing is optimistic: the row keeps its old look until the server answers, then
+// only that row is redrawn in place, so the page does not jump to the top as a full render() would.
 
-// The border spins at least this long, so a fast answer still shows it.
-const ROW_TOGGLE_MIN_MS = 800;
-// How long the settle ring and the dot turn last; the same as the .6s of their CSS animations.
-const ROW_SETTLE_MS = 600;
+// The dot animation runs at least this long, so a fast answer still shows it.
+const ROW_TOGGLE_MIN_MS = 1000;
+// How long the dot turn lasts; the same as the .7s of the dot turn animation.
+const ROW_SETTLE_MS = 700;
 // Ids of the rows that are waiting for the server; a second click on such a row is ignored.
 const rowsToggling = new Set();
 
 // The table row whose data-row-id is id, or null. Compared in script, so no id is put into a selector.
 function findTableRow(id) {
   return Array.from(document.querySelectorAll("tr[data-row-id]")).find(tr => tr.dataset.rowId === id) || null;
-}
-
-// The spinning border element, put in the row's first cell and positioned against the row by the CSS.
-function rowSpinner(className, target) {
-  const ring = document.createElement("span");
-  ring.className = className + " to-" + target;
-  ring.setAttribute("aria-hidden", "true");
-  return ring;
 }
 
 // Runs one Enable / Disable. id is the row's data-row-id, nextEnabled the state the row is going to,
@@ -151,7 +158,6 @@ async function toggleRow(id, nextEnabled, request, renderRow) {
   const target = nextEnabled ? "on" : "off";
   const startRow = findTableRow(id);
   if (startRow) {
-    startRow.cells[0].appendChild(rowSpinner("row-spin", target));
     const dot = startRow.querySelector(".status-dot");
     if (dot) dot.classList.add("busy-" + target);
   }
@@ -162,10 +168,9 @@ async function toggleRow(id, nextEnabled, request, renderRow) {
     if (startRow && wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
     redrawToggledRow(id, target, renderRow);
   } catch (e) {
-    // A failed request leaves the row as it was: the border and the pulse stop, and the error shows as a toast.
+    // A failed request leaves the row as it was: the dot animation stops, and the error shows as a toast.
     const row = findTableRow(id);
     if (row) {
-      row.querySelectorAll(".row-spin").forEach(ring => ring.remove());
       row.querySelectorAll(".status-dot").forEach(dot => dot.classList.remove("busy-on", "busy-off"));
     }
     showToast(e.message);
@@ -174,7 +179,7 @@ async function toggleRow(id, nextEnabled, request, renderRow) {
   }
 }
 
-// Replaces the row with its new markup, then plays the settle ring and the dot turn once. When the row is
+// Replaces the row with its new markup, then plays the dot turn once. When the row is
 // not on the page any more (the view changed during the wait) the whole view is redrawn from the state.
 function redrawToggledRow(id, target, renderRow) {
   const row = findTableRow(id);
@@ -184,13 +189,9 @@ function redrawToggledRow(id, target, renderRow) {
   holder.innerHTML = html.trim();
   const fresh = holder.content.firstElementChild;
   row.replaceWith(fresh);
-  const ring = rowSpinner("row-spin settle", target);
-  fresh.cells[0].appendChild(ring);
   const dot = fresh.querySelector(".status-dot");
-  if (dot) dot.classList.add("turn-" + target);
-  setTimeout(() => {
-    ring.remove();
-    if (dot) dot.classList.remove("turn-" + target);
-  }, ROW_SETTLE_MS);
+  if (!dot) return;
+  dot.classList.add("turn-" + target);
+  setTimeout(() => dot.classList.remove("turn-" + target), ROW_SETTLE_MS);
 }
 `;

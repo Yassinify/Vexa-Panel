@@ -41,6 +41,42 @@ export async function updateUserWithNodes(env, user, nodeIds) {
   await env.DB.batch(stmts);
 }
 
+// Changes a User's id (the public link id) in one env.DB.batch(). user.id is the new
+// id and oldId the current one. user_nodes has no ON UPDATE CASCADE, so the primary key
+// cannot be updated in place: the new row is inserted first, then the Node links under the
+// new id, then the old links and the old row are removed. created_at and updated_at are
+// copied from the old row inside the batch, so a subscription fetch that touched updated_at
+// is not overwritten with an older value. The old links are deleted explicitly, so no
+// orphan rows remain even if the cascade is not enforced. The caller must check that
+// user.id is free and pass the validated nodeIds; this function only persists. A taken id
+// makes the INSERT fail and the whole batch rolls back.
+export async function replaceUserId(env, oldId, user, nodeIds) {
+  const stmts = [
+    env.DB
+      .prepare(
+        `INSERT INTO users (id, name, enabled, sources, created_at, updated_at, edited_at, uuid_random)
+         SELECT ?, ?, ?, ?, created_at, updated_at, ?, ? FROM users WHERE id = ?`,
+      )
+      .bind(
+        user.id,
+        user.name,
+        user.enabled !== false ? 1 : 0,
+        JSON.stringify(user.sources || []),
+        user.editedAt ?? null,
+        user.uuidRandom !== false ? 1 : 0,
+        oldId,
+      ),
+    ...nodeIds.map((nodeId, i) =>
+      env.DB
+        .prepare(`INSERT INTO user_nodes (user_id, node_id, position) VALUES (?, ?, ?)`)
+        .bind(user.id, nodeId, i),
+    ),
+    env.DB.prepare(`DELETE FROM user_nodes WHERE user_id = ?`).bind(oldId),
+    env.DB.prepare(`DELETE FROM users WHERE id = ?`).bind(oldId),
+  ];
+  await env.DB.batch(stmts);
+}
+
 // DK-20: inserts a new User row and its initial Node links in one
 // env.DB.batch(), so the row and its links commit together or neither
 // does. Unlike updateUserWithNodes(), no DELETE FROM user_nodes is needed:
@@ -53,8 +89,8 @@ export async function insertUserWithNodes(env, user, nodeIds) {
   const stmts = [
     env.DB
       .prepare(
-        `INSERT INTO users (id, name, enabled, sources, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO users (id, name, enabled, sources, created_at, updated_at, uuid_random)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         user.id,
@@ -63,6 +99,7 @@ export async function insertUserWithNodes(env, user, nodeIds) {
         JSON.stringify(user.sources || []),
         user.createdAt,
         user.updatedAt,
+        user.uuidRandom !== false ? 1 : 0,
       ),
     ...nodeIds.map((nodeId, i) =>
       env.DB

@@ -18,6 +18,8 @@ button, input, select { font: inherit; color: inherit; }
 h2 { font-size: var(--text-h2); font-weight: 600; line-height: 1.2; }
 /* Muted line under a page title (reference .lead). */
 .lead { color: var(--color-muted); margin: 4px 0 22px; }
+/* No default (blue) tap flash on phones. */
+* { -webkit-tap-highlight-color: transparent; }
 /* Scrollbars use the theme tokens: standard properties first, then a WebKit/Blink fallback. */
 * { scrollbar-width: thin; scrollbar-color: var(--color-border-input) transparent; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }

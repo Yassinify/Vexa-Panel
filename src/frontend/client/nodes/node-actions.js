@@ -73,8 +73,8 @@ async function performDeleteNode(id) {
   }
 }
 
-// Enable / Disable from the row menu, as for users (R123). toggleRow() (helpers.js) spins a border around the
-// row while the server answers (nothing is optimistic) and then redraws only that row from renderNodeRow(),
+// Enable / Disable from the row menu, as for users (R123). toggleRow() (helpers.js) animates the status dot
+// while the server answers (nothing is optimistic) and then redraws only that row from renderNodeRow(),
 // so the page keeps its scroll position. A failed request shows its message as a toast and leaves the row.
 async function toggleNodeEnabled(id) {
   const node = state.nodes.find(n => n.id === id);

@@ -35,14 +35,12 @@ function nodeSortHeader(key, label) {
   return \`<th aria-sort="\${ariaSort}"><button type="button" class="sort-btn" onclick="setNodesSort('\${key}')">\${label}<span class="sort-arrows">\${icon("arrowUp", active && dir === "asc" ? "on" : "")}\${icon("arrowDown", active && dir === "desc" ? "on" : "")}</span></button></th>\`;
 }
 
-// A new column starts ascending; the same column flips its direction. animateSortRows (users-view.js)
-// plays the row entrance animation once for the render that follows the click.
+// A new column starts ascending; the same column flips its direction. renderSorted() (users-view.js) fades the old
+// rows out, then redraws the table and plays the row entrance animation once.
 function setNodesSort(key) {
   const current = state.nodesSort;
   state.nodesSort = { key, dir: current.key === key && current.dir === "asc" ? "desc" : "asc" };
-  animateSortRows = true;
-  render();
-  animateSortRows = false;
+  renderSorted();
 }
 
 // One Nodes table row. The row carries data-row-id, so toggleRow() (helpers.js) can find it and redraw

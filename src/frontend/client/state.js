@@ -43,12 +43,18 @@ const state = {
   editingUserNodeIds: null,
   // The Name field of the open User editor, kept here so a redraw of the modal does not reset it.
   editingUserName: "",
+  // UUID mode of the open User editor: true = random UUID, false = username as UUID. A new User sends it with Create;
+  // an edited User takes it from the server and changes it only through the confirmed toggle (user-editor.js).
+  editingUserUuidRandom: true,
   editingNode: null,
   editingNodeSource: "",
   mergeResult: null,
   // Item waiting for delete confirmation, {kind: "user" | "node", id}, or null.
   // Used by the delete popup (state.modal === "confirmDelete").
   confirmDelete: null,
+  // UUID change waiting for confirmation in the User editor, {kind: "mode", uuidRandom: boolean} or {kind: "regenerate"},
+  // or null. Used by the UUID confirm popup (state.modal === "confirmUuid"); the editor's typed data stays in state meanwhile.
+  confirmUuid: null,
   // Secrets-backed Change Password result ({ADMIN_PASSWORD_HASH}), shown in the
   // Change Password popup until it closes; null while the form is shown.
   changePwValues: null

@@ -73,8 +73,7 @@ const STEPS = [
     label: "Create D1",
     title: "Create the D1 database",
     text: "<p>Go to <strong>Storage &amp; Databases</strong> → <strong>D1 SQL Database</strong> → <strong>Create</strong>.</p>" +
-      "<p>The database name is yours to choose, for example <code>vexa-panel-db</code>. Creating the database does not connect it to your Worker; that is the next step.</p>" +
-      "<p><strong>Two different names:</strong> <code>vexa-panel-db</code> is the database name, only a label for you. <code>DB</code> is the binding name, fixed by Vexa Panel, and it is entered in step 5.</p>",
+      "<p>The database name is yours to choose, for example <code>vexa-panel-db</code>. Creating the database does not connect it to your Worker; that is the next step.</p>",
     mock: mock("CLOUDFLARE", [["Account Home", ""], ["Storage &amp; Databases", "is-current"], ["D1 SQL Database", "setup-mock-sub"], ["Create", "setup-mock-sub is-target"]]),
     extra: '<div class="setup-actions"><a class="btn-secondary" href="https://dash.cloudflare.com/" target="_blank" rel="noopener noreferrer">Open Cloudflare Dashboard <svg ' + ICON_ATTRS + ' width="16" height="16"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a></div>'
   },
@@ -191,8 +190,30 @@ ${FAVICON_LINK}
   var next = document.getElementById("setup-next");
   var current = 0;
   var ready = false;
+  var detail = document.querySelector(".setup-detail");
+  // Step change exit: the old panel is copied into an inert clone that shares the grid cell of the new one
+  // (.setup-detail, styles/setup-steps.js) and plays the enter motion backwards (fade and 6px slide, 200ms),
+  // then is removed. The new panel shows at once. The clone starts at the old panel's current opacity, so a
+  // panel that is still fading in does not pop.
+  function playExit(pane) {
+    var from = Number(getComputedStyle(pane).opacity);
+    var ghost = pane.cloneNode(true);
+    ghost.classList.add("setup-pane-exit");
+    ghost.setAttribute("aria-hidden", "true");
+    ghost.inert = true;
+    detail.appendChild(ghost);
+    var exit = ghost.animate(
+      [{ opacity: isNaN(from) ? 1 : from, transform: "none" }, { opacity: 0, transform: "translateY(6px)" }],
+      { duration: 200, easing: "ease-in", fill: "forwards" }
+    );
+    exit.onfinish = exit.oncancel = function () { ghost.remove(); };
+  }
   function show(index) {
     var changed = index !== current;
+    // Motion plays only on a real step change after the first call, and not under reduced motion.
+    var motion = ready && changed && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // The old panel is copied before its class changes below.
+    if (motion && panes[current].animate) playExit(panes[current]);
     current = index;
     for (var k = 0; k < steps.length; k++) {
       steps[k].classList.toggle("is-active", k === index);
@@ -204,8 +225,8 @@ ${FAVICON_LINK}
     back.style.display = index === 0 ? "none" : "";
     next.style.display = index === steps.length - 1 ? "none" : "";
     // A step change fades the new panel in with a 6px slide up (the same motion as the panel's
-    // tabs and popups). Not on the first call, for the same step, or under reduced motion.
-    if (ready && changed && panes[index].animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    // tabs and popups); the old panel fades out through playExit().
+    if (motion && panes[index].animate) {
       panes[index].animate(
         [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }],
         { duration: 200, easing: "ease-out" }

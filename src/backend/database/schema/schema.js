@@ -10,7 +10,8 @@ const SCHEMA_STATEMENTS = [
     sources TEXT NOT NULL DEFAULT '[]',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
-    edited_at INTEGER
+    edited_at INTEGER,
+    uuid_random INTEGER NOT NULL DEFAULT 1
   )`,
   `CREATE TABLE IF NOT EXISTS nodes (
     id TEXT PRIMARY KEY,
@@ -121,6 +122,21 @@ async function ensureUsersEditedAtColumn(env) {
   }
 }
 
+// Same for users.uuid_random: 1 = the id is a random UUID (default, so existing users stay random),
+// 0 = the id is the username.
+async function ensureUsersUuidRandomColumn(env) {
+  const { results } = await env.DB.prepare(`PRAGMA table_info(users)`).all();
+  if (results.some((col) => col.name === "uuid_random")) return;
+  try {
+    await env.DB
+      .prepare(`ALTER TABLE users ADD COLUMN uuid_random INTEGER NOT NULL DEFAULT 1`)
+      .run();
+  } catch (err) {
+    // Another isolate may have added it between the check and the ALTER.
+    if (!/duplicate column/i.test(String(err && err.message))) throw err;
+  }
+}
+
 // Same for nodes.edited_at: databases created before it existed get the column added here.
 // NULL means the node was never edited.
 async function ensureNodesEditedAtColumn(env) {
@@ -146,6 +162,7 @@ export function ensureD1Ready(env) {
         await env.DB.prepare(stmt).run();
       }
       await ensureUsersEditedAtColumn(env);
+      await ensureUsersUuidRandomColumn(env);
       await ensureNodesEditedAtColumn(env);
     })().catch((err) => {
       schemaReadyPromise = null;

@@ -7,27 +7,56 @@ export const USER_LINKS_SCRIPT = `
 // ---------------------------------------------------------------------
 // LINK, QR AND MERGE PREVIEW — one combined modal (R111)
 // ---------------------------------------------------------------------
-function openMerge(id) {
-  // The popup only needs the link, which is built from the user id, so it opens
-  // at once. No request is made: /api/merge-preview runs a full merge that
-  // fetches every source, and nothing from that result is shown here.
-  const subUrl = "/sub/user/" + id;
+// True while an openMerge() request runs, so another click on a Link button is ignored.
+let openMergePending = false;
+
+async function openMerge(id) {
+  if (openMergePending) return;
+  openMergePending = true;
+  // The popup shows what the user's output contains, so it opens only after
+  // /api/merge-preview succeeds. The preview runs a full merge that fetches every
+  // source, so the answer can take a while. A failed request shows a toast and opens nothing.
+  let result;
+  try {
+    result = await apiFetch("/api/merge-preview", { method: "POST", body: JSON.stringify({ userId: id }) });
+  } catch (e) {
+    // A 401 already switched to the login view inside apiFetch().
+    if (e.message !== "unauthorized") showToast("Could not load the link - try again");
+    return;
+  } finally {
+    openMergePending = false;
+  }
+  if (!result || result.error) {
+    showToast("Could not load the link - try again");
+    return;
+  }
   state.modal = "merge";
-  state.mergeResult = { subUrl };
+  state.mergeResult = result;
   render();
   setTimeout(() => {
-    const qrEl = document.getElementById("qrContainer");
-    if (qrEl && window.qrcodegen) {
-      const qr = qrcodegen.QrCode.encodeText(location.origin + subUrl, qrcodegen.QrCode.Ecc.MEDIUM);
+    if (!window.qrcodegen) return;
+    // One QR code per block the popup shows: the Normal block when the output has
+    // links or no JSON, the JSON block when it has JSON configs (same rule as the markup).
+    const hasJson = result.jsonCount > 0;
+    const blocks = [];
+    if (result.totalNodes > 0 || !hasJson) blocks.push({ boxId: "qrContainer", path: result.subUrl });
+    if (hasJson) blocks.push({ boxId: "qrContainerJson", path: result.jsonUrl });
+    for (const block of blocks) {
+      const qrEl = document.getElementById(block.boxId);
+      if (!qrEl) continue;
+      const qr = qrcodegen.QrCode.encodeText(location.origin + block.path, qrcodegen.QrCode.Ecc.MEDIUM);
       qrEl.innerHTML = qr.toSvgString(4);
     }
   }, 0);
 }
 
-// Selects the link field and copies it. The Clipboard API is tried first; if it is missing or refuses,
+// Selects a link field and copies it. inputId is the field of the block whose Copy button was
+// pressed ("subLinkInput" for the Normal block, "subLinkInputJson" for the JSON block).
+// The Clipboard API is tried first; if it is missing or refuses,
 // execCommand("copy") on the selected field is the fallback. The toast reports the real result.
-async function copyLink() {
-  const input = document.getElementById("subLinkInput");
+async function copyLink(inputId = "subLinkInput") {
+  const input = document.getElementById(inputId);
+  if (!input) return;
   input.select();
   let copied = false;
   try {
@@ -39,13 +68,13 @@ async function copyLink() {
   showToast(copied ? "Link copied" : "Could not copy - select the link and copy it");
 }
 
-// Downloads the user's JSON configs (the ?format=json content of the public link) as a .json file.
+// Downloads the user's JSON configs as a .json file, from the JSON link the merge preview returned (jsonUrl).
 // The server answers 404 when the user has no JSON configs.
 async function downloadLink() {
-  const subUrl = state.mergeResult && state.mergeResult.subUrl;
-  if (!subUrl) return;
+  const jsonUrl = state.mergeResult && state.mergeResult.jsonUrl;
+  if (!jsonUrl) return;
   try {
-    const res = await fetch(subUrl + "?format=json");
+    const res = await fetch(jsonUrl);
     if (res.status === 404) {
       showToast("No JSON configs to download");
       return;

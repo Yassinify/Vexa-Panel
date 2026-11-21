@@ -1,6 +1,8 @@
 const DASHBOARD_CSS = String.raw`
 /* --- Stat cards --- */
-/* Two cards: two equal columns; one column at 760px and below (see the media rule below). */
+/* Four cards: two columns by default, four at 1201px and above (the 232px sidebar leaves each card enough
+   width). At 760px and below they stay two per row and wrap onto a second row; at 480px and below they are one
+   per row (see the media rules below). */
 .stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-lg); margin-bottom: var(--space-lg); }
 /* Icon tile on the left; label, value and change line on the right (reference .stat). */
 .stat-card { display: flex; gap: 14px; align-items: flex-start; padding: 18px; }
@@ -14,17 +16,23 @@ const DASHBOARD_CSS = String.raw`
 .stat-card-icon {
   width: 38px; height: 38px; border-radius: var(--radius-md); flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  background: var(--color-primary-soft); color: var(--color-primary);
+  background: var(--color-primary-faint); color: var(--color-primary);
 }
 .stat-card-icon .ui-icon { width: 18px; height: 18px; }
-/* Above 1000px the two cards are wider than the reference card, so the icon tile and the number scale up with them. */
+/* Above 1000px the cards are wider than the reference card, so the icon tile and the number scale up with them. */
 @media (min-width: 1001px) {
   .stat-card-icon { width: 46px; height: 46px; }
   .stat-card-icon .ui-icon { width: 22px; height: 22px; }
   .stat-card-num { font-size: 30px; }
 }
+@media (min-width: 1201px) {
+  .stat-grid { grid-template-columns: repeat(4, 1fr); }
+}
 @media (max-width: 760px) {
-  .stat-grid { grid-template-columns: 1fr; }
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 480px) {
+  .stat-grid { grid-template-columns: minmax(0, 1fr); }
 }
 /* --- User Growth card (Dashboard), per the reference. The chart is one SVG
    (client/user-growth.js) that scales with the card width. --- */

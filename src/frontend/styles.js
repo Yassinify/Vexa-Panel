@@ -20,6 +20,7 @@ import { ICONS_CSS } from "./styles/icons.js";
 import { INPUTS_CSS } from "./styles/inputs.js";
 import { REDUCED_MOTION_CSS } from "./styles/reduced-motion.js";
 import { SETTINGS_CSS } from "./styles/settings.js";
+import { THEME_TOGGLE_CSS } from "./styles/theme-toggle.js";
 
 export const STYLES = `
 /* =====================================================================
@@ -44,6 +45,9 @@ ${INPUTS_CSS}
 ${LOGIN_CSS}
 
 ${APP_SHELL_CSS}
+
+/* --- Theme toggle (topbar) --- */
+${THEME_TOGGLE_CSS}
 
 ${DASHBOARD_CSS}
 ${ACTIVITY_CSS}
