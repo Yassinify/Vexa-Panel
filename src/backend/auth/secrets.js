@@ -11,7 +11,7 @@ import { checkLoginRateLimit, recordActivity } from "../database/d1.js";
 // Required Variables/Secrets for the panel to function at all. ADMIN_SALT
 // and ADMIN_PASSWORD_HASH gate login, JWT_SECRET signs/verifies sessions.
 //
-// This checks Cloudflare Secrets ONLY — it is NOT "is authentication
+// This checks Cloudflare Secrets ONLY - it is NOT "is authentication
 // configured" in general (a D1-backed deployment can be fully configured
 // with zero Secrets bound; see resolveAuthConfig() in
 // src/backend/auth/auth.js). It stays Secret-only because src/router.js's
@@ -24,13 +24,13 @@ export function secretsConfigured(env) {
 
 // Rotates the admin password. Behavior depends on which source
 // resolveAuthConfig() reports the effective configuration came from:
-//   - "secrets": unchanged from before DK-18 — the Worker cannot write
+//   - "secrets": unchanged from before DK-18 - the Worker cannot write
 //     its own Cloudflare Secret, so the new hash is returned for the
 //     admin to paste into the Dashboard themselves.
 //   - "d1": the Worker CAN write D1 itself, so the new hash is persisted
 //     directly via updateAuthConfigPasswordHash() and nothing is returned
 //     for manual copying. adminSalt and jwtSecret are left untouched in
-//     both cases — rotating only the password hash keeps existing JWT
+//     both cases: rotating only the password hash keeps existing JWT
 //     sessions valid, same guarantee the Secret-backed path always had.
 export async function handleChangePassword(request, env) {
   const config = await resolveAuthConfig(env);
@@ -51,7 +51,7 @@ export async function handleChangePassword(request, env) {
     // a value for the admin to paste in manually, so nothing is
     // "changed" yet from this Worker's point of view). recordActivity()
     // is the existing non-fatal bookkeeping call
-    // (src/backend/database/d1.js) — same convention as every other
+    // (src/backend/database/d1.js) - same convention as every other
     // activity write in this project, so a logging failure here cannot
     // turn this already-successful password change into a failed
     // request.
@@ -71,7 +71,7 @@ export async function handleChangePassword(request, env) {
 // candidate salt/hash/JWT secret and returns them for the admin to paste
 // into Cloudflare Dashboard Secrets. src/router.js calls this with just
 // `request` (no env) today, for both first-time setup and authenticated
-// regeneration — see that file's /api/secret/generate handler.
+// regeneration - see that file's /api/secret/generate handler.
 //
 // D1-backed initial setup is intentionally a SEPARATE function
 // (handleInitializeD1Auth, below) rather than a branch inside this one:
@@ -97,7 +97,7 @@ export async function handleGenerateSecrets(request) {
 }
 
 // DK-18: D1-backed initial-setup path, used only when a deployment has no
-// complete Secret configuration. This is a NEW export — src/router.js
+// complete Secret configuration. This is a NEW export - src/router.js
 // does not call it yet, since wiring a route to it is a router-gating
 // decision that belongs to router.js's own checkpoint (see this task's
 // "Important bootstrap constraint" note). It is implemented here now so
@@ -111,7 +111,7 @@ export async function handleInitializeD1Auth(request, env) {
   if (secretsConfigured(env)) {
     // Secret-backed deployment already has a complete, authoritative
     // configuration. D1 must never be silently seeded from Secret values
-    // (no auto-migration) — see resolveAuthConfig()'s precedence rule.
+    // (no auto-migration) - see resolveAuthConfig()'s precedence rule.
     return json({ error: "secrets_configured" }, 400);
   }
 
@@ -119,7 +119,7 @@ export async function handleInitializeD1Auth(request, env) {
   if (existing) {
     // auth_config already initialized. Re-running setup must not
     // silently regenerate salt/JWT secret out from under an existing
-    // installation — a real password change goes through
+    // installation - a real password change goes through
     // handleChangePassword() instead.
     return json({ error: "already_configured" }, 400);
   }
@@ -134,7 +134,7 @@ export async function handleInitializeD1Auth(request, env) {
 
   // initAuthConfigIfAbsent() re-reads after its atomic INSERT OR IGNORE,
   // so if a concurrent first-setup request won the race instead, this
-  // call still returns without error — it just means this candidate
+  // call still returns without error - it just means this candidate
   // wasn't the one persisted. Either way, the persisted configuration
   // (not necessarily this request's own candidate) is what every future
   // login must use, which is exactly what resolveAuthConfig() reads.

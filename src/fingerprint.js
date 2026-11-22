@@ -1,7 +1,7 @@
 import { splitOnce, robustAtob } from "./backend/protocols/uri-helpers.js";
 
 // ---------------------------------------------------------------------
-// FINGERPRINTING — used to dedup nodes across merged sources
+// FINGERPRINTING - used to dedup nodes across merged sources
 // ---------------------------------------------------------------------
 
 // Query params that actually change the transport/identity of a node and so
@@ -68,7 +68,7 @@ export function fingerprintNode(uri) {
       const [creds, rest] = splitOnce(beforeHash, "@");
       const [hostPortRaw, search] = splitOnce(rest, "?");
       // A bare "/" (RFC3986 authority terminator) commonly precedes the query
-      // string, e.g. "host:443/?security=tls" — strip it before fingerprinting.
+      // string, e.g. "host:443/?security=tls" - strip it before fingerprinting.
       const hostPort = hostPortRaw.split("/")[0];
       const protocol = uri.startsWith("vless://") ? "vless" : "trojan";
       const queryFp = normalizeQueryForFingerprint(search);
@@ -109,8 +109,8 @@ export function fingerprintNode(uri) {
       return `tuic:${hostPort}:${creds}:${queryFp}`;
     }
     if (uri.startsWith("hysteria://")) {
-      // Hysteria v1 has no userinfo in the authority — auth is a query
-      // param ("auth=...") rather than "auth@host" — so the fingerprint
+      // Hysteria v1 has no userinfo in the authority - auth is a query
+      // param ("auth=...") rather than "auth@host" - so the fingerprint
       // is just host:port plus the normalized query (auth included).
       const withoutProto = uri.slice("hysteria://".length).split("#")[0];
       const [hostPort, search] = splitOnce(withoutProto, "?");

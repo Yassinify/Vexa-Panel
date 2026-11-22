@@ -17,7 +17,7 @@ import { renderD1SetupGuide } from "./pages/d1-setup.js";
 import { renderApp } from "./pages/app-shell.js";
 import { handleApi } from "./api-router.js";
 
-// DK-18: whether authentication is usable right now, from EITHER source —
+// DK-18: whether authentication is usable right now, from EITHER source:
 // unlike secretsConfigured(env) (Cloudflare Secrets only), this is true
 // for a D1-backed installation with no Secret bindings at all. Delegates
 // entirely to resolveAuthConfig() (src/d1.js) so the Secret-vs-D1
@@ -36,7 +36,7 @@ export async function route(request, env, ctx) {
     return withCors(request, new Response(null, { status: 204 }), env);
   }
 
-  // Reachable before KV/secrets are configured — the favicon has no
+  // Reachable before KV/secrets are configured: the favicon has no
   // dependency on storage or auth.
   if (pathname === FAVICON_PATH && method === "GET") {
     return svgResponse(FAVICON_SVG);
@@ -59,24 +59,24 @@ export async function route(request, env, ctx) {
   // DK-18: schema bootstrap (including the auth_config table) must exist
   // before ANY of the auth-resolution calls below (authInitialized(),
   // handleLogin(), requireAuth(), handleInitializeD1Auth(), etc.) query
-  // it — every one of those now touches D1 via resolveAuthConfig(),
+  // it: every one of those now touches D1 via resolveAuthConfig(),
   // unlike before DK-18 when auth never read D1 at all. Previously
   // ensureD1Migrated() only ran deep inside api-router.js's handleApi(),
   // reached solely by already-authenticated /api/* calls; that ordering
   // is preserved (this call is idempotent and memoizes schema readiness
-  // per isolate — see ensureD1Ready() in src/d1.js), it is simply also
+  // per isolate, see ensureD1Ready() in src/d1.js), it is simply also
   // invoked here, earlier, so every route below it has a guaranteed-ready
   // auth_config table. Legacy KV migration logic itself is unchanged.
   await ensureD1Migrated(env);
 
-  // Per-user combined subscription link — merges every source attached
+  // Per-user combined subscription link: merges every source attached
   // directly to the user into a single output.
   if (pathname.startsWith("/sub/user/") && method === "GET") {
     return handlePublicUserSub(pathname.split("/sub/user/")[1], request, env, url);
   }
 
   // The app shell (login screen + full panel) is served unconditionally
-  // for these paths regardless of auth-initialized state — there is no
+  // for these paths regardless of auth-initialized state, there is no
   // separate first-run setup page to redirect to. The client script
   // (src/frontend/client-script.js) checks /api/version's
   // `authInitialized` flag and renders the first-run "choose a password"
@@ -98,7 +98,7 @@ export async function route(request, env, ctx) {
   // Two independent flows share this path, distinguished by the current
   // auth state:
   //   - Secret-backed (secretsConfigured(env) true): UNCHANGED legacy
-  //     compatibility behavior — a stateless generator whose values the
+  //     compatibility behavior: a stateless generator whose values the
   //     admin pastes into Cloudflare Dashboard Secrets. Regenerating
   //     requires an existing admin session (no user-facing page links to
   //     this anymore, but the endpoint itself is left intact for any
@@ -106,13 +106,13 @@ export async function route(request, env, ctx) {
   //   - D1-backed (no complete Secrets): this is what the normal Login
   //     page's first-run "Create Account" form calls. If auth_config
   //     already exists,
-  //     there is nothing to (re)generate here — D1-backed password
+  //     there is nothing to (re)generate here, D1-backed password
   //     rotation is /api/secret/change-password, not this endpoint, so
   //     this returns an error rather than silently no-op'ing or
   //     re-initializing. If auth_config does NOT exist yet, this is
   //     genuinely first-run setup: unauthenticated on purpose (no admin
   //     session could exist yet), and reaches handleInitializeD1Auth()
-  //     instead of the legacy generator — it persists the generated
+  //     instead of the legacy generator: it persists the generated
   //     salt/hash/JWT secret into D1 itself and never returns JWT_SECRET
   //     for manual copying.
   if (pathname === "/api/secret/generate" && method === "POST") {
@@ -130,12 +130,12 @@ export async function route(request, env, ctx) {
     return withCors(request, await handleInitializeD1Auth(request, env), env);
   }
 
-  // Rotates only the password hash, reusing the existing salt — a
+  // Rotates only the password hash, reusing the existing salt: a
   // day-to-day "change my password" action that doesn't touch the JWT
   // secret or (for Secret-backed installs) force every other secret to
   // be re-pasted into Cloudflare. Gated on authInitialized(env) rather
   // than secretsConfigured(env) so this also works for D1-backed
-  // installations — handleChangePassword() (src/secrets.js) already
+  // installations: handleChangePassword() (src/secrets.js) already
   // branches on the resolved config's source and persists directly to D1
   // when appropriate. Requires a valid admin session either way.
   if (pathname === "/api/secret/change-password" && method === "POST") {
@@ -152,13 +152,13 @@ export async function route(request, env, ctx) {
     return withCors(request, await handleLogin(request, env), env);
   }
 
-  // Public and unauthenticated on purpose — a version string isn't
+  // Public and unauthenticated on purpose: a version string isn't
   // sensitive, and this lets the deployed build be checked with curl
   // (or a monitoring probe) without needing to load the UI or log in.
   // `authInitialized` is included so the login page (src/frontend/
   // client-script.js) can tell first-run (no auth_config yet, neither
   // D1-backed nor a complete Secret set) apart from normal login without
-  // a dedicated endpoint — also not sensitive, just a boolean.
+  // a dedicated endpoint, also not sensitive, just a boolean.
   if (pathname === "/api/version" && method === "GET") {
     return withCors(
       request,

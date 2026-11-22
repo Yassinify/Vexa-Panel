@@ -1,13 +1,47 @@
 export const NODE_ACTIONS_SCRIPT = `
-// Opens the editor at once from the Node already in the list; the list holds the full source,
-// so nothing is requested and nothing fills in later.
-function openNode(id) {
+// Loads what the editor's User Selection needs: the enabled Users to show and, for an existing Node, the ids of the
+// Users it is linked to. It never rejects. When the Users or the links cannot be loaded, or the Node is disabled (it
+// cannot be turned on for a User, as in the User editor), the section is not available: state.editingNodeUsers and
+// state.editingNodeUserIds are null, the section is not drawn and Save sends no userIds, so no link changes. Only a
+// full load fills them, so a failed load can never make Save remove links. Returns false when a load failed.
+async function loadNodeUserSelection(nodeId, nodeEnabled) {
+  state.editingNodeUsers = null;
+  state.editingNodeUserIds = null;
+  if (nodeEnabled === false) return true;
+  try {
+    const [usersData, linkData] = await Promise.all([
+      apiFetch("/api/users"),
+      nodeId ? apiFetch("/api/nodes/" + nodeId + "/users") : Promise.resolve({ userIds: [] })
+    ]);
+    if (!Array.isArray(usersData.users) || !Array.isArray(linkData.userIds)) return false;
+    const enabledUsers = usersData.users.filter(u => u.enabled !== false);
+    state.editingNodeUserIds = linkData.userIds.filter(uid => enabledUsers.some(u => u.id === uid));
+    // othersCount: the User's enabled Nodes without this one (nodeCount comes from the database, see listUsers()). This
+    // Node is enabled here (a disabled Node has no section) and counts in nodeCount only when it is already linked.
+    state.editingNodeUsers = enabledUsers.map(u => ({
+      ...u,
+      othersCount: Math.max(0, (u.nodeCount || 0) - (state.editingNodeUserIds.includes(u.id) ? 1 : 0))
+    }));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Opens the editor from the Node already in the list (the list holds the full source), after the User Selection data
+// is loaded, so the modal opens once with complete data and never fills in later. If that data cannot be loaded the
+// editor still opens, without the User Selection, and a toast says so.
+async function openNode(id) {
   const node = state.nodes.find(n => n.id === id);
   if (!node) return;
+  const ok = await loadNodeUserSelection(node.id, node.enabled);
+  // A 401 during the load signed the admin out (apiFetch()): the login page shows, so no editor opens over it.
+  if (!state.token) return;
   state.editingNode = node;
   state.editingNodeSource = (node.source && (node.source.value || node.source.url)) || "";
   state.modal = "nodeEditor";
   render();
+  if (!ok) showToast("Users could not be loaded");
 }
 
 // Writes into the modal's error line (R129); typed data stays in the open modal.
@@ -24,17 +58,20 @@ async function saveNode() {
   const source = document.getElementById("nodeSourceInput").value.trim();
   if (!source) { showNodeEditorError("Enter a node source."); return; }
   showNodeEditorError("");
+  // userIds is sent only when the User Selection was loaded (a null list means it was not available), so a Save can
+  // never remove links it did not show.
+  const payload = { name, source, ...(state.editingNodeUserIds ? { userIds: state.editingNodeUserIds } : {}) };
   try {
     const result = isEdit
-      ? await apiFetch("/api/nodes/" + state.editingNode.id, { method: "PUT", body: JSON.stringify({ name, source }) })
-      : await apiFetch("/api/nodes", { method: "POST", body: JSON.stringify({ name, source }) });
+      ? await apiFetch("/api/nodes/" + state.editingNode.id, { method: "PUT", body: JSON.stringify(payload) })
+      : await apiFetch("/api/nodes", { method: "POST", body: JSON.stringify(payload) });
 
     if (result.error === "duplicate_name") {
       showNodeEditorError("A node with this name already exists.");
       return;
     }
     if (result.error) {
-      showNodeEditorError("Could not save node — check the source format.");
+      showNodeEditorError("Could not save node - check the source format.");
       return;
     }
 

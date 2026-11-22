@@ -22,10 +22,11 @@ const ICONS = {
   // Heroicons arrow-up and arrow-down outline (MIT, Tailwind Labs): sort arrows in the Users table header.
   arrowUp: '<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18" />',
   arrowDown: '<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 13.5 12 21m0 0-7.5-7.5M12 21V3" />',
-  // Heroicons outline (MIT, Tailwind Labs, @heroicons/react 2.2.0): the Link, Edit, Enable, Disable
-  // and Delete buttons in the Users and Nodes tables.
+  // Heroicons outline (MIT, Tailwind Labs, @heroicons/react 2.2.0): the Link, Enable, Disable and
+  // Delete buttons in the Users and Nodes tables. The Edit icon (pencil) is an original drawing on the
+  // same 24px grid and stroke style, not from Heroicons.
   link: '<path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />',
-  pencilSquare: '<path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />',
+  pencil: '<path stroke-linecap="round" stroke-linejoin="round" d="M4 20l1.2-4.3L16 4.9a2.12 2.12 0 0 1 3 3L8.3 18.8 4 20z" /><path stroke-linecap="round" stroke-linejoin="round" d="M14 7l3 3" />',
   checkCircle: '<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />',
   noSymbol: '<path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />',
   trash: '<path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />',
@@ -35,10 +36,18 @@ const ICONS = {
   xMark: '<path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />',
   // Heroicons outline arrow-path (MIT, Tailwind Labs, @heroicons/react 2.2.0): the Regenerate button of the User editor's UUID section.
   arrowPath: '<path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.992 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />',
+  // Heroicons outline information-circle (MIT, Tailwind Labs, @heroicons/react 2.2.0): a lowercase i in a circle, for infoTip().
+  info: '<path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />',
 };
 function icon(name, extraClass) {
   const paths = ICONS[name] || "";
   return '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="ui-icon' + (extraClass ? " " + extraClass : "") + '" aria-hidden="true">' + paths + '</svg>';
+}
+// Info tip: the i-in-a-circle icon that shows its text on hover or keyboard focus (styles/modals.js). The text goes
+// into data-tip, which the CSS shows, and into aria-label for screen readers. extraClass can be "below" or "end".
+function infoTip(text, extraClass) {
+  const safe = escapeHtml(text);
+  return '<span class="info-tip' + (extraClass ? " " + extraClass : "") + '" tabindex="0" role="img" aria-label="' + safe + '" data-tip="' + safe + '">' + icon("info") + '</span>';
 }
 // The V logo mark from the reference, drawn at 30x26. The two filled paths
 // come from favicon-assets.js, the only place they are defined.

@@ -142,6 +142,9 @@ function render() {
       modalLayer._html = modalHtml;
     }
     openModalLayer(modalLayer, wasOpen);
+    // The layer is on screen now, so the source boxes can be sized to their text (autoGrowAll() in modals.js): a box that
+    // opens with text, or was rebuilt by this render, starts at its rows height until then.
+    autoGrowAll();
     // No field is focused when a modal opens: on a phone that would open the keyboard at once.
   }
 

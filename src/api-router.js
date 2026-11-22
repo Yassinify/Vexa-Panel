@@ -7,8 +7,6 @@ import {
   getUser,
   updateUser,
   deleteUser,
-  regenerateUserUuid,
-  setUserUuidMode,
 } from "./users.js";
 import { mergePreviewHandler } from "./merge.js";
 import {
@@ -16,6 +14,7 @@ import {
   createNode,
   updateNode,
   deleteNode,
+  getNodeUsers,
 } from "./nodes.js";
 
 export async function handleApi(pathname, method, request, env, authPayload) {
@@ -40,21 +39,10 @@ export async function handleApi(pathname, method, request, env, authPayload) {
     if (method === "GET") return getUser(id, env);
     // Sources now live directly on the user, so updating a user's source
     // list (raw links, subscriptions, JSON, YAML) goes through this same
-    // PUT alongside the enabled toggle — there's no separate profile
+    // PUT alongside the enabled toggle - there's no separate profile
     // resource to address anymore.
     if (method === "PUT") return updateUser(id, request, env);
     if (method === "DELETE") return deleteUser(id, env);
-  }
-
-  const uuidMatch = pathname.match(
-    /^\/api\/users\/([A-Za-z0-9_-]+)\/(uuid\/regenerate|uuid-mode)$/,
-  );
-  if (uuidMatch) {
-    const id = uuidMatch[1];
-    if (uuidMatch[2] === "uuid/regenerate" && method === "POST")
-      return regenerateUserUuid(id, env);
-    if (uuidMatch[2] === "uuid-mode" && method === "PUT")
-      return setUserUuidMode(id, request, env);
   }
 
   if (pathname === "/api/merge-preview" && method === "POST") {
@@ -64,6 +52,10 @@ export async function handleApi(pathname, method, request, env, authPayload) {
   if (pathname === "/api/nodes" && method === "GET") return listNodes(env);
   if (pathname === "/api/nodes" && method === "POST")
     return createNode(request, env);
+
+  // The Users a Node is linked to, for the Node editor's User Selection.
+  const nodeUsersMatch = pathname.match(/^\/api\/nodes\/([a-f0-9-]{36})\/users$/);
+  if (nodeUsersMatch && method === "GET") return getNodeUsers(nodeUsersMatch[1], env);
 
   const nodeMatch = pathname.match(/^\/api\/nodes\/([a-f0-9-]{36})$/);
   if (nodeMatch) {

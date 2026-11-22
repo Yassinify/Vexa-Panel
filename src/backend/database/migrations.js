@@ -3,7 +3,7 @@ import { d1Bound, ensureD1Ready } from "./d1.js";
 // ---------------------------------------------------------------------
 // LEGACY KV COMPATIBILITY READER (upgrade path only)
 // Self-contained here (not imported from src/kv.js) so this file has no
-// dependency on src/kv.js at all — per docs/problem.md's corrected DK-16
+// dependency on src/kv.js at all - per docs/problem.md's corrected DK-16
 // scope, a fresh deployment must have zero KV code path, and importing
 // from src/kv.js (even just for a read helper) would keep that file a
 // live dependency of the normal migration path instead of an isolated
@@ -21,19 +21,19 @@ async function legacyKvGetJson(env, key, fallback) {
 }
 
 // ---------------------------------------------------------------------
-// ONE-TIME MIGRATION (idempotent, resumable) — D1 is authoritative; this
+// ONE-TIME MIGRATION (idempotent, resumable) - D1 is authoritative; this
 // function does NOT depend on any prior KV-only migration having run.
 //
 // Two independent cases, both handled by this single function:
 //   1. FRESH DEPLOYMENT (no env.STORAGE bound at all, or bound but empty):
-//      the `if (!env.STORAGE)` guard below skips every KV read entirely —
+//      the `if (!env.STORAGE)` guard below skips every KV read entirely -
 //      no runtime code path touches KV. This is the normal case per the
 //      corrected DK-16 scope ("a fresh deployment requires one D1
 //      database and does not require Cloudflare KV at all").
 //   2. UPGRADE FROM A PRE-D1 DEPLOYMENT (env.STORAGE bound with legacy
 //      data): this function reads legacy profile:{uuid}/user:{uuid}/
 //      node:{uuid}/idx:users/idx:nodes/meta:stats/meta:activity records
-//      directly and folds them into D1 in one pass — it performs the old
+//      directly and folds them into D1 in one pass - it performs the old
 //      src/kv.js ensureMigrated()'s profile->user merge ITSELF, inline,
 //      instead of depending on that function having already run. This is
 //      the "isolate the compatibility path" requirement: every KV read in
@@ -327,7 +327,7 @@ export async function ensureD1Migrated(env) {
       }
     }
     // Legacy profile:*/user:*/node:*/idx:*/meta:* KV records are
-    // intentionally left in place, unmodified and undeleted — see this
+    // intentionally left in place, unmodified and undeleted - see this
     // function's header comment.
   }
 

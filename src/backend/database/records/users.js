@@ -2,7 +2,7 @@
 // ROW <-> APPLICATION OBJECT MAPPING
 // Keeps users.js/nodes.js/merge.js/public-sub.js working with the exact
 // same {id, name, enabled, sources/source, nodeIds, createdAt, updatedAt}
-// shapes they used against KV — only the storage calls change.
+// shapes they used against KV - only the storage calls change.
 // ---------------------------------------------------------------------
 export function rowToUser(row, nodeIds) {
   if (!row) return null;
@@ -22,7 +22,7 @@ export function rowToUser(row, nodeIds) {
 }
 
 // ---------------------------------------------------------------------
-// USERS — thin SQL wrappers. nodeIds[] lives in user_nodes and is handled
+// USERS - thin SQL wrappers. nodeIds[] lives in user_nodes and is handled
 // in user-nodes.js (see USER<->NODE RELATIONSHIP there).
 // ---------------------------------------------------------------------
 export async function getUserRowById(env, id) {
@@ -36,7 +36,7 @@ export async function listUserRows(env) {
   return results;
 }
 
-// Full-record replace (name, enabled, sources, edited_at) — mirrors the
+// Full-record replace (name, enabled, sources, edited_at) - mirrors the
 // old KV pattern of writing the whole user:{uuid} record back on every
 // update, since D1's per-statement atomicity makes a partial-field UPDATE
 // no safer than a full one here. updated_at is not written here: it is the
@@ -66,7 +66,7 @@ export async function touchUserUpdatedAt(env, id, ts) {
 }
 
 // ON DELETE CASCADE on user_nodes.user_id removes this User's relationship
-// rows automatically — no separate cleanup call needed here.
+// rows automatically - no separate cleanup call needed here.
 export async function deleteUserRow(env, id) {
   await env.DB.prepare(`DELETE FROM users WHERE id = ?`).bind(id).run();
 }

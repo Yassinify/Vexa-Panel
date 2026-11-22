@@ -44,7 +44,7 @@ export function parseNodeUri(uri) {
       const [creds, rest] = splitOnce(beforeHash, "@");
       const [hostPortRaw, search] = splitOnce(rest, "?");
       // A bare "/" (RFC3986 authority terminator) commonly precedes the query
-      // string, e.g. "host:443/?security=tls" — strip it before splitting port.
+      // string, e.g. "host:443/?security=tls" - strip it before splitting port.
       const [host, port] = splitOnce(hostPortRaw.split("/")[0], ":");
       const params = new URLSearchParams(search);
       return {
@@ -237,7 +237,7 @@ export function parseNodeUri(uri) {
       const params = new URLSearchParams(query);
       return {
         protocol: "naiveproxy",
-        transport: scheme, // "https" or "quic" — which naive+ variant this is
+        transport: scheme, // "https" or "quic" - which naive+ variant this is
         address: host,
         port: Number(port),
         username,
@@ -320,7 +320,7 @@ export function generateNodeUri(node) {
   }
 
   if (node.protocol === "shadowsocks") {
-    // SIP022 (AEAD-2022 ciphers) requires plain "method:password" userinfo —
+    // SIP022 (AEAD-2022 ciphers) requires plain "method:password" userinfo -
     // the spec explicitly forbids Base64URL-encoding it, unlike legacy/AEAD
     // Shadowsocks where Base64 is the conventional SIP002 form.
     const is2022 = (node.method || "").startsWith("2022-");
@@ -397,7 +397,7 @@ export function generateNodeUri(node) {
 
   if (node.protocol === "naiveproxy") {
     // NaiveProxy has no official URI spec (klzgrad/naiveproxy#86 was never
-    // adopted upstream) — this follows the de facto convention used by
+    // adopted upstream) - this follows the de facto convention used by
     // NaiveSharp/Qv2ray-plugin-NaiveProxy: plain (non-base64) user:pass
     // userinfo, percent-encoded like vless/trojan rather than base64 like
     // socks. "quic" is naive's alternate QUIC transport variant.

@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------
-// STATS — replaces src/kv.js's recomputeStats()/adjustStats(). A plain
+// STATS - replaces src/kv.js's recomputeStats()/adjustStats(). A plain
 // UPDATE ... SET x = x + ? is one atomic SQLite statement, so the DK-10
 // lost-update race the old withStatsLock() existed to close cannot occur
-// here — no application-level lock is used or needed.
+// here - no application-level lock is used or needed.
 // ---------------------------------------------------------------------
 const STATS_COLUMNS = {
   totalUsers: "total_users",
@@ -43,10 +43,10 @@ export async function adjustStats(env, delta) {
 }
 
 // ---------------------------------------------------------------------
-// LIVE COUNTS (Dashboard) — plain SELECT COUNT(*) queries rather than
+// LIVE COUNTS (Dashboard) - plain SELECT COUNT(*) queries rather than
 // more stats-table columns kept in sync via adjustStats(). The Dashboard
 // is a low-traffic, admin-only read, so a live count per request is cheap
-// and always exactly correct — no extra write-path bookkeeping (node
+// and always exactly correct - no extra write-path bookkeeping (node
 // create/delete, user enable/disable) needed to keep a cached counter
 // from drifting.
 // ---------------------------------------------------------------------

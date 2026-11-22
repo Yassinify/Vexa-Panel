@@ -11,15 +11,13 @@ export const INIT_SCRIPT = `
   applyTheme(savedTheme);
 
   // Escape closes an open modal, the More menu, the account menus and the
-  // growth range dropdown. In the UUID confirm popup it goes back to the User
-  // editor instead, so the editor's typed data is not lost.
+  // growth range dropdown.
   document.addEventListener("keydown", e => {
     if (e.key !== "Escape") return;
     closeMoreMenu();
     closeAccountMenus();
     closeGrowthMenu();
-    if (state.modal === "confirmUuid") cancelUuidConfirm();
-    else if (state.modal) closeModal();
+    if (state.modal) closeModal();
   });
 
   // A click outside the More menu and its button closes the menu; the same
@@ -63,7 +61,7 @@ export const INIT_SCRIPT = `
 
   // No valid session at this point (either no token was stored, or the
   // token was rejected above). Before showing the login form, check
-  // whether authentication has even been initialized yet — this is what
+  // whether authentication has even been initialized yet: this is what
   // decides between the normal login form and the first-run "choose a
   // password" form (see renderLoginView()). /api/version is public and
   // unauthenticated, so this call works even on a completely fresh
@@ -74,7 +72,7 @@ export const INIT_SCRIPT = `
     state.authInitialized = typeof data.authInitialized === "boolean" ? data.authInitialized : true;
   } catch (e) {
     // Connection error: fall back to the normal login form rather than
-    // guessing first-run — doLogin()'s own error handling already covers
+    // guessing first-run: doLogin()'s own error handling already covers
     // a subsequent connection failure on submit.
     state.authInitialized = true;
   }

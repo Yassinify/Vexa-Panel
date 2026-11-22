@@ -1,5 +1,5 @@
 // =====================================================================
-// VEXA — /D1 SETUP GUIDE page: shown for every route when the D1
+// VEXA - /D1 SETUP GUIDE page: shown for every route when the D1
 // database isn't bound yet. Nothing in this Worker (sessions, users,
 // their subscription sources, secrets, rate limiting) can function
 // without it, so this takes priority over every other page, including
@@ -144,7 +144,7 @@ export function renderD1SetupGuide() {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Vexa Panel — D1 Database Setup Required</title>
+<title>Vexa Panel - D1 Database Setup Required</title>
 ${FAVICON_LINK}
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
 <!-- Apply the saved theme before first paint so the page does not flash dark. -->

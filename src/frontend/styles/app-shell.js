@@ -23,8 +23,8 @@ export const APP_SHELL_CSS = `
 .brand-version:hover { color: var(--color-text); border-color: var(--color-muted); }
 .brand-version:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 /* The popup looks and behaves like the date tooltip (.date-tip, styles/tables.js): the same surface, 12px radius,
-   padding, caption font in normal weight, 10px arrow and 12px gap to the label. It waits 500 ms before it opens
-   (the same as DATE_TIP_DELAY_MS in client/users/users-view.js), then fades in while sliding 6px, as the other
+   padding, caption font in normal weight, 10px arrow and 12px gap to the label. It waits --tip-delay before it opens
+   (500 ms, or 350 ms at 760px and below, as DATE_TIP_DELAY_MS in client/users/users-view.js), then fades in while sliding 6px, as the other
    popups do, and closes with the same motion backwards at once. It is always laid out and shown through
    opacity, so it can fade out as well as in (it is CSS only, so no script can keep it on screen while it closes);
    visibility switches after the fade, so a hidden popup is not exposed. The wait is the delay of the opening
@@ -42,10 +42,10 @@ export const APP_SHELL_CSS = `
 }
 .brand-version:hover .version-pop, .brand-version:focus-visible .version-pop {
   opacity: 1; visibility: visible; transform: translate(-50%, 0);
-  transition: opacity .16s ease-out .5s, transform .16s ease-out .5s, visibility 0s linear .5s;
+  transition: opacity .16s ease-out var(--tip-delay), transform .16s ease-out var(--tip-delay), visibility 0s linear var(--tip-delay);
 }
 /* Clicking the label (dismissVersionPop() in client/shell.js) adds .pop-off: the popup leaves at once with the same exit
-   as a normal leave (no 500 ms wait) and stays hidden while the pointer or focus is still on the label. It has the
+   as a normal leave (no wait) and stays hidden while the pointer or focus is still on the label. It has the
    specificity of the hover and focus rules above and comes after them, and sets its own transition (their wait would
    otherwise delay the exit). */
 .brand-version.pop-off .version-pop {
@@ -54,7 +54,7 @@ export const APP_SHELL_CSS = `
 }
 @keyframes version-pop-wait { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
-  .brand-version:hover .version-pop, .brand-version:focus-visible .version-pop { animation: version-pop-wait 0s linear .5s backwards; }
+  .brand-version:hover .version-pop, .brand-version:focus-visible .version-pop { animation: version-pop-wait 0s linear var(--tip-delay) backwards; }
 }
 .version-pop-logo { flex: none; }
 /* Arrow pointing up at the version label. */

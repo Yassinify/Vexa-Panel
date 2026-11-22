@@ -91,7 +91,7 @@ export async function fetchSubscriptionNodes(url) {
 
   // Plain-text / base64 line-list subscription: keep only lines that are
   // themselves a proxy link (start with a known scheme), not just any line
-  // that happens to contain "://" somewhere in its value — a body that
+  // that happens to contain "://" somewhere in its value - a body that
   // isn't actually a URI list (stray prose, a misformatted JSON fragment,
   // an HTML error page, etc.) could otherwise leak non-link text through.
   const KNOWN_NODE_SCHEMES =
@@ -126,7 +126,7 @@ function fromCacheEntry(entry) {
 // that list: they are kept as text, unchanged, in `jsonConfigs`.
 // ---------------------------------------------------------------------
 // Resolves a User's Node references (ordered) to their current, enabled
-// Node Source objects. Missing or disabled Nodes are skipped silently —
+// Node Source objects. Missing or disabled Nodes are skipped silently -
 // same tolerant behavior as an unavailable Exclusive Source, just resolved
 // one step earlier (before the per-type fetch loop below even sees it).
 async function resolveNodeSources(user, env) {

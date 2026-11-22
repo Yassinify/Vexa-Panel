@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------
-// ACTIVITY — replaces src/kv.js's recordActivity(). Same DK-9 non-fatal
+// ACTIVITY - replaces src/kv.js's recordActivity(). Same DK-9 non-fatal
 // handling; capped at ACTIVITY_CAP rows via an explicit DELETE instead of
 // the old array-slice(0, 20).
 // ---------------------------------------------------------------------

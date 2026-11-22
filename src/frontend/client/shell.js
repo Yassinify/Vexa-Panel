@@ -249,7 +249,7 @@ function renderSidebar() {
 }
 
 // Routed Settings view (/settings); reuses the content of the former
-// Settings modal.
+// Settings modal. The lead line is visible text; the row description is the text of an info icon.
 function renderSettingsView() {
   return \`
     <h2>Settings</h2>
@@ -257,8 +257,7 @@ function renderSettingsView() {
     <div class="card settings-card">
       <div class="setting-row">
         <div class="setting-text">
-          <span class="setting-title">Change Password</span>
-          <span class="setting-desc">Rotates your admin password. Sessions and subscription links keep working.</span>
+          <span class="setting-title">Change Password \${infoTip("Rotates your admin password. Sessions and subscription links keep working. You will be signed out and must sign in again with the new password.", "below")}</span>
         </div>
         <button class="btn-secondary btn-sm" onclick="openChangePasswordModal()">Change</button>
       </div>

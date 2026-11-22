@@ -1,6 +1,6 @@
 export const DASHBOARD_SCRIPT = `
 // ---------------------------------------------------------------------
-// DASHBOARD — visually rebuilt from the reference board's Desktop/
+// DASHBOARD: visually rebuilt from the reference board's Desktop/
 // Tablet/Mobile Dashboard panels: each stat card now leads with a small
 // colored icon badge (.stat-card-icon, styles.js), matching the board's
 // icon-in-rounded-square treatment. The 4 cards (Total users, Active users,
@@ -29,14 +29,13 @@ function usersOneMonthAgo(series) {
 }
 
 function renderDashboardView() {
-  // Page title and lead line, as in the reference (R90). The text does not
+  // Page title and its lead line. The text does not
   // depend on loaded data, so the loading and the loaded view share it.
   const header = \`
     <h2>Dashboard</h2>
     <p class="lead">Welcome back, Admin! Here's what's happening with your panel.</p>
   \`;
-  // While the data loads only the title and lead line show, as in Users, Nodes
-  // and Logs (no loading placeholders, R80).
+  // While the data loads, or if a load failed, there is no data to show, so only the title shows.
   if (state.loading || !state.stats) {
     return header;
   }

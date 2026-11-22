@@ -13,7 +13,7 @@ export function rowToNode(row) {
 }
 
 // ---------------------------------------------------------------------
-// NODES — thin SQL wrappers. The nodes.name UNIQUE constraint (schema
+// NODES - thin SQL wrappers. The nodes.name UNIQUE constraint (schema
 // above) is what now enforces DK-15's duplicate-name guarantee; callers
 // should catch a constraint-violation error from insertNodeRow()/
 // renameNodeRow() and translate it to the existing 409 duplicate_name
@@ -30,8 +30,12 @@ export async function listNodeRows(env) {
   return results;
 }
 
-export async function insertNodeRow(env, node) {
-  await env.DB
+// extraStmts (optional): more prepared statements, for example the User links of the Node editor's User
+// Selection (nodeUserStatements() in user-nodes.js). With any, the INSERT and the extras run in one
+// env.DB.batch(), which D1 runs as a single all-or-nothing transaction, so a failed INSERT (a duplicate name)
+// leaves no link behind and a failed link leaves no Node behind. Without any it is the plain single statement.
+export async function insertNodeRow(env, node, extraStmts = []) {
+  const stmt = env.DB
     .prepare(
       `INSERT INTO nodes (id, name, source, enabled, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
@@ -43,14 +47,16 @@ export async function insertNodeRow(env, node) {
       node.enabled !== false ? 1 : 0,
       node.createdAt,
       node.updatedAt,
-    )
-    .run();
+    );
+  if (extraStmts.length === 0) await stmt.run();
+  else await env.DB.batch([stmt, ...extraStmts]);
 }
 
 // updated_at is left alone: it is the last subscription fetch that used this Node, see
 // touchNodesUpdatedAt(), so a panel edit cannot overwrite a newer fetch time read earlier.
-export async function updateNodeRow(env, node) {
-  await env.DB
+// extraStmts: as for insertNodeRow() (one all-or-nothing batch when there are any).
+export async function updateNodeRow(env, node, extraStmts = []) {
+  const stmt = env.DB
     .prepare(
       `UPDATE nodes SET name = ?, source = ?, enabled = ?, edited_at = ? WHERE id = ?`,
     )
@@ -60,8 +66,16 @@ export async function updateNodeRow(env, node) {
       node.enabled !== false ? 1 : 0,
       node.editedAt ?? null,
       node.id,
-    )
-    .run();
+    );
+  if (extraStmts.length === 0) await stmt.run();
+  else await env.DB.batch([stmt, ...extraStmts]);
+}
+
+// Runs prepared statements alone (no Node row change) as one all-or-nothing batch: a Save of the Node editor
+// that changed only the User Selection. An empty list does nothing.
+export async function runNodeStatements(env, stmts) {
+  if (!Array.isArray(stmts) || stmts.length === 0) return;
+  await env.DB.batch(stmts);
 }
 
 // Sets updated_at for several Nodes in one batch (one round trip). An unknown id changes nothing.
@@ -75,7 +89,7 @@ export async function touchNodesUpdatedAt(env, ids, ts) {
 }
 
 // ON DELETE CASCADE on user_nodes.node_id removes every User's reference
-// to this Node automatically — this is what replaces deleteNode()'s old
+// to this Node automatically - this is what replaces deleteNode()'s old
 // per-user cascade loop (and the withUserLock() it needed) entirely.
 export async function deleteNodeRow(env, id) {
   await env.DB.prepare(`DELETE FROM nodes WHERE id = ?`).bind(id).run();

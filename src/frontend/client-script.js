@@ -2,6 +2,7 @@ import { ICONS_SCRIPT } from "./icons.js";
 import { STATE_SCRIPT } from "./client/state.js";
 import { API_SCRIPT } from "./client/api.js";
 import { HELPERS_SCRIPT } from "./client/helpers.js";
+import { SPINNER_SCRIPT } from "./client/spinner.js";
 import { AUTH_SCRIPT } from "./client/auth.js";
 import { SHELL_SCRIPT } from "./client/shell.js";
 import { USER_GROWTH_SCRIPT } from "./client/user-growth.js";
@@ -21,7 +22,7 @@ import { ROOT_RENDER_SCRIPT } from "./client/app/root-render.js";
 import { INIT_SCRIPT } from "./client/app/init.js";
 
 export const CLIENT_SCRIPT = `
-${ICONS_SCRIPT}${STATE_SCRIPT}${API_SCRIPT}${HELPERS_SCRIPT}${AUTH_SCRIPT}${SHELL_SCRIPT}${USER_GROWTH_SCRIPT}${RECENT_ACTIVITY_SCRIPT}${STAT_CARD_SCRIPT}${DASHBOARD_SCRIPT}
+${ICONS_SCRIPT}${STATE_SCRIPT}${API_SCRIPT}${HELPERS_SCRIPT}${SPINNER_SCRIPT}${AUTH_SCRIPT}${SHELL_SCRIPT}${USER_GROWTH_SCRIPT}${RECENT_ACTIVITY_SCRIPT}${STAT_CARD_SCRIPT}${DASHBOARD_SCRIPT}
 ${LOG_VIEW_SCRIPT}${USERS_VIEW_SCRIPT}${USER_EDITOR_SCRIPT}${USER_ACTIONS_SCRIPT}${USER_LINKS_SCRIPT}
 ${NODES_VIEW_SCRIPT}${NODE_ACTIONS_SCRIPT}${NODE_PICKER_SCRIPT}
 ${MODALS_SCRIPT}${ROOT_RENDER_SCRIPT}

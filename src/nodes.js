@@ -7,11 +7,15 @@ import {
   updateNodeRow,
   deleteNodeRow,
   rowToNode,
+  getUserRowById,
+  getNodeUserIds,
+  nodeUserStatements,
+  runNodeStatements,
 } from "./backend/database/d1.js";
 import { normalizeSources } from "./backend/protocols/sources.js";
 
 // D1's SQLite driver reports a UNIQUE-constraint violation with this
-// substring in the thrown error's message — used below to translate the
+// substring in the thrown error's message, used below to translate the
 // nodes.name UNIQUE constraint (src/d1.js) into the existing
 // 409 duplicate_name response instead of a generic 500.
 function isUniqueConstraintError(err) {
@@ -34,9 +38,35 @@ function normalizeSingleSource(sourceStr) {
   return { source: sources[0], error: null };
 }
 
+// The Node editor's User Selection: keeps the ids of Users that exist and are enabled, without duplicates and in
+// the order given. A disabled or unknown User is left out, so a request can never link a Node to one. The links
+// that already exist for a disabled User are not touched by a Save (updateNode() compares only enabled Users).
+async function resolveValidUserIds(env, userIds) {
+  if (!Array.isArray(userIds)) return [];
+  const seen = new Set();
+  const result = [];
+  for (const id of userIds) {
+    if (typeof id !== "string" || seen.has(id)) continue;
+    const row = await getUserRowById(env, id);
+    if (row && row.enabled !== 0) {
+      seen.add(id);
+      result.push(id);
+    }
+  }
+  return result;
+}
+
 export async function listNodes(env) {
   const rows = await listNodeRows(env);
   return json({ nodes: rows.map((row) => rowToNode(row)) });
+}
+
+// The ids of the Users this Node is linked to (all Users, enabled or not): the Node editor ticks the cards of
+// the enabled ones.
+export async function getNodeUsers(id, env) {
+  const row = await getNodeRowById(env, id);
+  if (!row) return json({ error: "not_found" }, 404);
+  return json({ userIds: await getNodeUserIds(env, id) });
 }
 
 export async function createNode(request, env) {
@@ -49,6 +79,9 @@ export async function createNode(request, env) {
 
   const { source, error } = normalizeSingleSource(body.source);
   if (!source) return json({ error }, 400);
+
+  // Users to turn the new Node on for (the editor's User Selection); a request without userIds links none.
+  const userIds = await resolveValidUserIds(env, body.userIds);
 
   const now = Date.now();
   const node = {
@@ -63,12 +96,14 @@ export async function createNode(request, env) {
 
   // docs/problem.md DK-15: uniqueness is now enforced by the nodes.name
   // UNIQUE constraint (src/d1.js) instead of a separate check-then-write
-  // critical section — a constraint violation here means another Node
+  // critical section: a constraint violation here means another Node
   // already holds this name (created concurrently or otherwise), so it is
   // translated into the same 409 duplicate_name response the old
   // pre-check + withNodeNameLock() path returned.
+  // The Node row and its User links commit together in one batch (insertNodeRow()), so a duplicate name
+  // leaves no link behind.
   try {
-    await insertNodeRow(env, node);
+    await insertNodeRow(env, node, nodeUserStatements(env, node.id, userIds, [], now));
   } catch (err) {
     if (isUniqueConstraintError(err)) {
       return json({ error: "duplicate_name" }, 409);
@@ -76,6 +111,8 @@ export async function createNode(request, env) {
     throw err;
   }
   await recordActivity(env, `Created node "${node.name}"`);
+  if (userIds.length > 0)
+    await recordActivity(env, `Updated users for node "${node.name}"`);
   return json({ node }, 201);
 }
 
@@ -115,22 +152,41 @@ export async function updateNode(id, request, env) {
     toggled = true;
   }
 
+  // The editor's User Selection: userIds is the wanted set of enabled Users. A request without userIds, or for a
+  // disabled Node (no Node can be turned on for a User while it is disabled, as in the User editor), changes no
+  // link. Links of disabled Users are left out of the comparison, so a Save never removes them.
+  let addUserIds = [];
+  let removeUserIds = [];
+  if (body && Array.isArray(body.userIds) && node.enabled !== false) {
+    const wanted = await resolveValidUserIds(env, body.userIds);
+    const linkedEnabled = await resolveValidUserIds(env, await getNodeUserIds(env, id));
+    addUserIds = wanted.filter((u) => !linkedEnabled.includes(u));
+    removeUserIds = linkedEnabled.filter((u) => !wanted.includes(u));
+  }
+  const usersChanged = addUserIds.length > 0 || removeUserIds.length > 0;
+  const nodeChanged = isRename || sourceChanged || toggled;
+
   // Nothing changed (a Save without edits): no write, no edit time, no log entry (as for Users).
-  if (!isRename && !sourceChanged && !toggled) return json({ node });
+  if (!nodeChanged && !usersChanged) return json({ node });
 
   // updatedAt is the last subscription fetch (touchNodesUpdatedAt()), so a panel change leaves it alone.
-  // A real name or source change, or an Enable / Disable, counts as an edit.
-  node.editedAt = Date.now();
+  // A real name or source change, or an Enable / Disable, counts as an edit of the Node. A change of its Users
+  // only is not an edit of the Node (the Users get the new edit time, in nodeUserStatements()).
+  const now = Date.now();
+  if (nodeChanged) node.editedAt = now;
+  const userStmts = nodeUserStatements(env, id, addUserIds, removeUserIds, now);
 
   // docs/problem.md DK-15: uniqueness for a rename is now enforced by the
   // nodes.name UNIQUE constraint (src/d1.js) instead of a separate
-  // check-then-write critical section keyed on the new name — a
+  // check-then-write critical section keyed on the new name: a
   // constraint violation here means another Node already holds
   // requestedName, translated into the same 409 duplicate_name response
   // the old pre-check + withNodeNameLock() path returned. A non-rename
   // update never touches node.name, so it cannot hit this constraint.
+  // The Node row and the link changes commit together in one batch; with no Node change only the links run.
   try {
-    await updateNodeRow(env, node);
+    if (nodeChanged) await updateNodeRow(env, node, userStmts);
+    else await runNodeStatements(env, userStmts);
   } catch (err) {
     if (isRename && isUniqueConstraintError(err)) {
       return json({ error: "duplicate_name" }, 409);
@@ -148,6 +204,8 @@ export async function updateNode(id, request, env) {
       env,
       `${node.enabled ? "Enabled" : "Disabled"} node "${node.name}"`,
     );
+  if (usersChanged)
+    await recordActivity(env, `Updated users for node "${node.name}"`);
   return json({ node });
 }
 
@@ -156,7 +214,7 @@ export async function deleteNode(id, env) {
   if (!row) return json({ error: "not_found" }, 404);
 
   // ON DELETE CASCADE on user_nodes.node_id (src/d1.js) removes every
-  // User's reference to this Node as part of this same statement — this
+  // User's reference to this Node as part of this same statement. This
   // replaces the old per-user nodeIds[] cascade loop (and the
   // withUserLock() it needed) entirely. It is enforced at the database
   // level, so it cannot be left partially applied the way the old

@@ -13,7 +13,7 @@ function timeAgo(ts) {
 // "YYYY-MM-DD" in the browser's local time; a dash for a missing or invalid value.
 function formatDate(ts) {
   const d = new Date(ts);
-  if (!ts || isNaN(d.getTime())) return "—";
+  if (!ts || isNaN(d.getTime())) return "-";
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
 
@@ -21,7 +21,7 @@ function formatDate(ts) {
 // hover tooltip; a dash for a missing or invalid value.
 function formatDateTooltip(ts) {
   const d = new Date(ts);
-  if (!ts || isNaN(d.getTime())) return "—";
+  if (!ts || isNaN(d.getTime())) return "-";
   const weekday = d.toLocaleDateString("en-US", { weekday: "long" });
   const time = [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, "0")).join(":");
   return weekday + " | " + formatDate(ts) + " | " + time;

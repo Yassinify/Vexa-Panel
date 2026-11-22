@@ -109,7 +109,7 @@ function parseYamlBlockMapLines(lines) {
 
 // Extracts the top-level "proxies:" block/flow sequence from raw YAML text
 // and returns an array of plain JS proxy objects. Returns [] if no such key
-// is found — callers treat that as "not a Clash-format subscription".
+// is found - callers treat that as "not a Clash-format subscription".
 function parseClashProxiesYaml(yamlText) {
   const rawLines = yamlText.split(/\r?\n/).map(stripYamlComment);
 
@@ -185,7 +185,7 @@ function parseClashProxiesYaml(yamlText) {
 // Converts one parsed Clash/Mihomo proxy object into the same internal node
 // shape parseNodeUri/parseXrayOutbound produce, so it flows straight through
 // the existing generateNodeUri. Returns null for proxy types not yet
-// supported (e.g. clash-only types like socks5/http/snell — Step 5 territory
+// supported (e.g. clash-only types like socks5/http/snell - Step 5 territory
 // for socks5/http; snell has no vexa-side URI format to export to).
 function clashProxyToNode(p) {
   if (!p || typeof p !== "object" || !p.type || !p.server || !p.port)

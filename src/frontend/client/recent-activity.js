@@ -1,6 +1,6 @@
 export const RECENT_ACTIVITY_SCRIPT = `
 // ---------------------------------------------------------------------
-// RECENT ACTIVITY card (Dashboard) — short companion to the User Growth
+// RECENT ACTIVITY card (Dashboard) - short companion to the User Growth
 // card, per the reference. Shows the first 4 records of state.activity
 // (already loaded by loadDashboard()), reusing the Log page's
 // .activity-row/.activity-icon/.activity-text/.activity-time and

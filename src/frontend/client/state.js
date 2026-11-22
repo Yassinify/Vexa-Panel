@@ -11,7 +11,7 @@ const state = {
   errorMsg: "",
 
   // Whether admin authentication has been initialized yet (D1 auth_config
-  // row exists, or a complete Cloudflare Secret triplet is bound) — null
+  // row exists, or a complete Cloudflare Secret triplet is bound) - null
   // until the first /api/version check resolves it. The login view uses
   // this to decide between the normal login form and the first-run
   // "choose a password" form; there is no separate /secret page anymore.
@@ -43,18 +43,22 @@ const state = {
   editingUserNodeIds: null,
   // The Name field of the open User editor, kept here so a redraw of the modal does not reset it.
   editingUserName: "",
-  // UUID mode of the open User editor: true = random UUID, false = username as UUID. A new User sends it with Create;
-  // an edited User takes it from the server and changes it only through the confirmed toggle (user-editor.js).
+  // UUID mode of the open User editor: true = random UUID, false = username as UUID. Display only until Save,
+  // which sends it (user-editor.js).
   editingUserUuidRandom: true,
+  // The random UUID the open User editor shows (the stored id, or a generated one). Regenerate replaces it;
+  // Save sends it in random mode.
+  editingUserUuid: "",
   editingNode: null,
   editingNodeSource: "",
+  // The Node editor's User Selection: the enabled Users to show as cards (null = not available, so the section is
+  // hidden and Save sends no userIds), and the ids of the Users the Node is on for.
+  editingNodeUsers: null,
+  editingNodeUserIds: null,
   mergeResult: null,
   // Item waiting for delete confirmation, {kind: "user" | "node", id}, or null.
   // Used by the delete popup (state.modal === "confirmDelete").
   confirmDelete: null,
-  // UUID change waiting for confirmation in the User editor, {kind: "mode", uuidRandom: boolean} or {kind: "regenerate"},
-  // or null. Used by the UUID confirm popup (state.modal === "confirmUuid"); the editor's typed data stays in state meanwhile.
-  confirmUuid: null,
   // Secrets-backed Change Password result ({ADMIN_PASSWORD_HASH}), shown in the
   // Change Password popup until it closes; null while the form is shown.
   changePwValues: null

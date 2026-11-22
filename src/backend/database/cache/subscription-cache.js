@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------
-// SUBSCRIPTION FALLBACK CACHE — replaces src/kv.js's
+// SUBSCRIPTION FALLBACK CACHE - replaces src/kv.js's
 // subCacheKeyFor()/SUB_CACHE_TTL_SECONDS + the raw env.STORAGE.get/put
 // calls src/merge.js used to make directly. Cache-key derivation (sha256
 // of the source URL) is unchanged so existing cache keys, if any legacy
@@ -19,7 +19,7 @@ export async function subCacheKeyFor(url) {
 }
 
 // Stores/overwrites the cached node list for one cache key, with a fresh
-// TTL from now — same "last successful fetch wins" semantics KV's put()
+// TTL from now - same "last successful fetch wins" semantics KV's put()
 // had. Cache-write failures are swallowed here (mirrors merge.js's old
 // try/catch around its own KV put): a cache-write failure must not fail
 // the merge that triggered it.
@@ -41,7 +41,7 @@ export async function putSubscriptionCache(env, cacheKey, nodes) {
 }
 
 // Returns { nodes, fetchedAt } for a still-fresh cache entry, or null if
-// missing/expired/on error — same fallback contract src/merge.js's old
+// missing/expired/on error - same fallback contract src/merge.js's old
 // env.STORAGE.get() + JSON.parse() pair had (a read failure or expiry both
 // just mean "no fallback available", not a thrown error).
 export async function getSubscriptionCache(env, cacheKey) {

@@ -16,7 +16,7 @@ export function validateNodeUri(uri) {
       }
       const [creds, rest] = splitOnce(withoutProto.split("#")[0], "@");
       // A bare "/" (RFC3986 authority terminator) commonly precedes the query
-      // string, e.g. "host:443/?security=tls" — strip it before splitting port.
+      // string, e.g. "host:443/?security=tls" - strip it before splitting port.
       const hostPortRaw = splitOnce(rest, "?")[0];
       const [host, port] = splitOnce(hostPortRaw.split("/")[0], ":");
       if (!creds || !host || !port || isNaN(Number(port))) {
@@ -64,7 +64,7 @@ export function validateNodeUri(uri) {
       return { valid: true };
     }
     if (uri.startsWith("tuic://")) {
-      // tuic://uuid:password@host:port?params — same authority shape as
+      // tuic://uuid:password@host:port?params - same authority shape as
       // vless/trojan (userinfo before "@", host:port after), just with a
       // colon-joined uuid:password pair instead of a single credential.
       const withoutProto = uri.slice("tuic://".length).split("#")[0];
@@ -119,7 +119,7 @@ export function validateNodeUri(uri) {
       return { valid: true };
     }
     if (uri.startsWith("socks://")) {
-      // socks://[base64(user:pass)@]host:port#remark — auth is optional
+      // socks://[base64(user:pass)@]host:port#remark - auth is optional
       // (many public/self-hosted SOCKS5 proxies are open, no userinfo at all).
       const withoutProto = uri.slice("socks://".length).split("#")[0];
       const beforeQuery = splitOnce(withoutProto, "?")[0].split("/")[0];
@@ -133,7 +133,7 @@ export function validateNodeUri(uri) {
       return { valid: true };
     }
     if (uri.startsWith("naive+https://") || uri.startsWith("naive+quic://")) {
-      // naive+https://[user:pass@]host:port[?padding=...][#remark] — auth is
+      // naive+https://[user:pass@]host:port[?padding=...][#remark] - auth is
       // optional at the URI-shape level (a Caddy forwardproxy server could be
       // configured without basic_auth), matching this file's socks:// stance.
       const withoutProto = uri.slice(uri.indexOf("://") + 3).split("#")[0];

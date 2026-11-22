@@ -59,8 +59,12 @@ const MODALS_CSS = String.raw`
 .modal-title { font-size: var(--text-body); font-weight: 600; margin-bottom: var(--space-md); }
 .source-repeater { display: flex; flex-direction: column; gap: var(--space-sm); margin-bottom: var(--space-sm); }
 .source-row { display: flex; gap: var(--space-sm); align-items: flex-start; }
-/* Font and size come from the shared textarea rule (R162); the field stays a textarea for multi-line sources. */
-.source-row-input { flex: 1; min-width: 0; resize: vertical; }
+/* Font and size come from the shared textarea rule (R162); the field stays a textarea for multi-line sources.
+   resize: none: the user cannot resize it. The height starts at the rows attribute and autoGrow() (client/modals/modals.js)
+   grows it to fit the text, so overflow-y: hidden keeps a scrollbar from flashing while the height catches up. */
+.source-row-input { flex: 1; min-width: 0; resize: none; overflow-y: hidden; }
+/* The Node editor source box is not resizable either, and grows with its text the same way. */
+#nodeSourceInput { resize: none; overflow-y: hidden; }
 /* The Remove icon button is centered on the first line of its 42px textarea. */
 .source-row .icon-btn { margin-top: 4px; }
 /* An added source: a one-line preview (type label and shortened text) with Edit and Delete beside it. */
@@ -109,6 +113,43 @@ const MODALS_CSS = String.raw`
 .node-pill:hover { border-color: var(--color-primary); }
 .node-pill:hover .ui-icon { color: var(--color-primary); }
 .node-pill-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Node picker cards (renderNodePicker() in client/nodes/node-picker.js): a two-column grid, one column at 400px and below.
+   A card is a button with a letter badge, the name, the source type and a round check in the top right corner. The
+   selected card has a primary border and fill and a filled check with a tick, so the state is not shown by color alone.
+   Transitions stop under reduced motion (reduced-motion.js). .node-list, .node-pills and their rules above are no longer
+   used by the picker and are kept until the user asks to remove them. */
+.node-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-sm); }
+.node-card {
+  position: relative; display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0;
+  padding: 10px 36px 10px 10px; text-align: left; cursor: pointer;
+  border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-alt);
+  transition: background .12s ease, border-color .12s ease;
+}
+.node-card:hover { border-color: var(--color-primary); }
+.node-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.node-card[aria-pressed="true"] { border-color: var(--color-primary); background: var(--color-primary-faint); }
+/* Letter badge: the first letter of the Node name on the faint primary fill. */
+.node-card-badge {
+  flex: none; display: grid; place-items: center; width: 32px; height: 32px;
+  border-radius: var(--radius-md); background: var(--color-primary-faint); color: var(--color-primary); font-weight: 600;
+}
+/* Name and source type on two lines; a long text is cut with an ellipsis (the full name is in the title attribute). */
+.node-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.node-card-name, .node-card-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-card-name { font-weight: 600; }
+.node-card-type { color: var(--color-muted); font-size: var(--text-caption); }
+/* The round check: an empty ring on every card, filled with the primary color and showing its tick when selected. */
+.node-card-check {
+  position: absolute; top: 8px; right: 8px; display: grid; place-items: center; width: 18px; height: 18px;
+  border: 1px solid var(--color-border-input); border-radius: 50%; color: #fff;
+  transition: background .12s ease, border-color .12s ease;
+}
+.node-card-tick { width: 12px; height: 12px; opacity: 0; transform: scale(.6); transition: opacity .12s ease, transform .12s ease; }
+.node-card[aria-pressed="true"] .node-card-check { background: var(--color-primary); border-color: var(--color-primary); }
+.node-card[aria-pressed="true"] .node-card-tick { opacity: 1; transform: none; }
+@media (max-width: 400px) {
+  .node-cards { grid-template-columns: minmax(0, 1fr); }
+}
 /* Small square icon button (Remove): muted, with a soft error fill on hover like Sign out. */
 .icon-btn {
   position: relative; flex: none; display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0;
@@ -119,8 +160,21 @@ const MODALS_CSS = String.raw`
 .icon-btn:hover { background: var(--color-error-soft); color: var(--color-error); }
 .icon-btn:focus-visible { outline-color: var(--color-error); }
 .icon-btn:hover, .icon-btn:focus-visible { z-index: 2; }
+/* Press motion of the theme toggle, the same as the text buttons (styles/buttons.js): a pressed icon button scales to .96
+   in 120ms and springs back over 350ms on --spring-soft. Only where linear() is supported and reduced motion is not
+   requested. Its tooltip is a pseudo-element, so it scales with the button for the length of the press. */
+@supports (transition-timing-function: linear(0, 1)) {
+  @media (prefers-reduced-motion: no-preference) {
+    .icon-btn { transition: background .12s ease, color .12s ease, z-index 0s linear .16s, transform 350ms var(--spring-soft); }
+    .icon-btn:not(:disabled):active { transform: scale(.96); transition-duration: 120ms; }
+  }
+}
+/* Wait before a tooltip opens: 500ms, or 350ms at 760px and below. It is the delay of the opening transition of the
+   icon-button and info tooltips below; the date tooltip (client/users/users-view.js) uses the same two values. */
+:root { --tip-delay: .5s; }
+@media (max-width: 760px) { :root { --tip-delay: .35s; } }
 /* Tooltip from the data-tip attribute (the markup also sets aria-label). It looks like the date tooltip
-   (surface, border, 12px radius, shadow, arrow), opens above the button after 500ms on hover or keyboard
+   (surface, border, 12px radius, shadow, arrow), opens above the button after the --tip-delay wait on hover or keyboard
    focus, and its right edge lines up with the button. It is always laid out and shown through opacity,
    so it can fade out as well as in; visibility switches after the fade, so a hidden tooltip is not exposed. */
 .icon-btn[data-tip]::before, .icon-btn[data-tip]::after {
@@ -137,12 +191,12 @@ const MODALS_CSS = String.raw`
   content: ""; z-index: 1; right: 12px; bottom: calc(100% + 7px); width: 10px; height: 10px;
   background: var(--color-surface); border: solid var(--color-border); border-width: 0 1px 1px 0; transform: translateY(6px) rotate(45deg);
 }
-/* Open: the same fade and 6px slide as the popups, after a 500ms wait. Close: the same motion backwards,
+/* Open: the same fade and 6px slide as the popups, after the --tip-delay wait. Close: the same motion backwards,
    at once (the base rule above). The arrow keeps its 45deg turn in every state. */
 .icon-btn[data-tip]:hover::before, .icon-btn[data-tip]:hover::after,
 .icon-btn[data-tip]:focus-visible::before, .icon-btn[data-tip]:focus-visible::after {
   opacity: 1; visibility: visible;
-  transition: opacity .16s ease-out .5s, transform .16s ease-out .5s, visibility 0s linear .5s;
+  transition: opacity .16s ease-out var(--tip-delay), transform .16s ease-out var(--tip-delay), visibility 0s linear var(--tip-delay);
 }
 .icon-btn[data-tip]:hover::after, .icon-btn[data-tip]:focus-visible::after { transform: none; }
 .icon-btn[data-tip]:hover::before, .icon-btn[data-tip]:focus-visible::before { transform: rotate(45deg); }
@@ -152,24 +206,89 @@ const MODALS_CSS = String.raw`
   .icon-btn[data-tip]:hover::before, .icon-btn[data-tip]:hover::after,
   .icon-btn[data-tip]:focus-visible::before, .icon-btn[data-tip]:focus-visible::after { transition: none; }
 }
+/* --- Info tip --- */
+/* A small i in a circle (infoTip() in icons.js) that shows its text from data-tip. It looks and moves like the
+   icon-button tooltip above: the same surface, border, 12px radius, shadow and arrow, opening after the --tip-delay wait with a
+   160ms fade and a 6px slide and closing at once. The text wraps (260px at most) because it is a sentence, not a
+   label. By default it opens above the icon with its left edge 12px before it. .below opens under the icon (for a
+   field at the top of a scrolling card) and .end lines the right edge up with the icon, so the tip stays inside
+   the card. */
+.info-tip {
+  position: relative; flex: none; display: inline-grid; place-items: center; width: 16px; height: 16px;
+  vertical-align: middle; border-radius: 50%; color: var(--color-muted); cursor: default; transition: color .12s ease;
+}
+.info-tip .ui-icon { width: 16px; height: 16px; }
+.info-tip:hover, .info-tip:focus-visible { color: var(--color-text); z-index: 2; }
+.info-tip::before, .info-tip::after {
+  position: absolute; pointer-events: none; opacity: 0; visibility: hidden;
+  transition: opacity .16s ease-in, transform .16s ease-in, visibility 0s linear .16s;
+}
+.info-tip::after {
+  content: attr(data-tip); left: -12px; bottom: calc(100% + 12px); width: max-content; max-width: 260px;
+  padding: var(--space-sm) var(--space-md); white-space: normal; text-align: left;
+  font-size: var(--text-caption); font-weight: 400; line-height: 1.5; color: var(--color-text);
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); transform: translateY(6px);
+}
+/* The arrow points at the middle of the 16px icon (3px plus half of the 10px arrow). */
+.info-tip::before {
+  content: ""; z-index: 1; left: 3px; bottom: calc(100% + 7px); width: 10px; height: 10px;
+  background: var(--color-surface); border: solid var(--color-border); border-width: 0 1px 1px 0;
+  transform: translateY(6px) rotate(45deg);
+}
+.info-tip.end::after { left: auto; right: -12px; }
+.info-tip.below::after { bottom: auto; top: calc(100% + 12px); transform: translateY(-6px); }
+.info-tip.below::before { bottom: auto; top: calc(100% + 7px); border-width: 1px 0 0 1px; transform: translateY(-6px) rotate(45deg); }
+/* Open on hover or keyboard focus. These rules come after the modifiers above, so they win at equal specificity. */
+.info-tip:hover::before, .info-tip:hover::after,
+.info-tip:focus-visible::before, .info-tip:focus-visible::after {
+  opacity: 1; visibility: visible;
+  transition: opacity .16s ease-out var(--tip-delay), transform .16s ease-out var(--tip-delay), visibility 0s linear var(--tip-delay);
+}
+.info-tip:hover::after, .info-tip:focus-visible::after { transform: none; }
+.info-tip:hover::before, .info-tip:focus-visible::before { transform: rotate(45deg); }
+/* A touch screen has no hover and a tap does not always match :focus-visible, so there a tap (:focus) opens it. */
+@media (hover: none) {
+  .info-tip:focus::before, .info-tip:focus::after {
+    opacity: 1; visibility: visible;
+    transition: opacity .16s ease-out var(--tip-delay), transform .16s ease-out var(--tip-delay), visibility 0s linear var(--tip-delay);
+  }
+  .info-tip:focus::after { transform: none; }
+  .info-tip:focus::before { transform: rotate(45deg); }
+}
+/* Reduced motion: the tip shows and hides at once (the global rule in reduced-motion.js does not reach pseudo-elements). */
+@media (prefers-reduced-motion: reduce) {
+  .info-tip::before, .info-tip::after,
+  .info-tip:hover::before, .info-tip:hover::after,
+  .info-tip:focus-visible::before, .info-tip:focus-visible::after { transition: none; }
+}
+@media (prefers-reduced-motion: reduce) and (hover: none) {
+  .info-tip:focus::before, .info-tip:focus::after { transition: none; }
+}
 /* --- UUID section of the User editor --- */
-/* The Regenerate button is disabled for a new User and in username mode: it looks inactive and ignores hover. */
+/* The Regenerate button is disabled in username mode: it looks inactive and ignores hover. */
 .field-head .btn-sm:disabled { opacity: .5; cursor: not-allowed; }
 .field-head .btn-sm:disabled:hover { color: var(--color-muted); }
-/* A long username id is cut with an ellipsis; the field stays selectable. */
-#userUuidInput { text-overflow: ellipsis; }
-/* Switch row: the label on the left, the switch at the right edge. */
+/* In the UUID header row Regenerate comes first and the switch after it. Regenerate takes the free space through the
+   auto margin of .field-head .btn-sm above, so the two stay together at the right edge. */
+/* The UUID field is display only: it looks like a disabled button (half opacity, not-allowed cursor), cannot be
+   selected, and a long id is cut with an ellipsis. */
+#userUuidInput { text-overflow: ellipsis; opacity: .5; cursor: not-allowed; user-select: none; -webkit-user-select: none; }
+/* Switch row: the label on the left, the switch at the right edge. Unused since the UUID switch moved into the header row. */
 .switch-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); margin-top: var(--space-sm); }
 /* Switch: a button with role="switch"; aria-checked="true" turns it on (primary track, white knob).
-   Inside the 1px border the track is 38px by 20px, so the knob travels 18px. Transitions stop under reduced motion (reduced-motion.js). */
+   Inside the 1px border the track is 38px by 20px, so the knob travels 18px.
+   The motion is the theme toggle's: the knob slides on --spring-soft (900ms) and the colors blend over 700ms with the
+   same ease-out as --tt-ease-out in styles/theme-toggle.js; the squash is played by toggleUuidMode() in
+   client/users/user-editor.js. Transitions stop under reduced motion (reduced-motion.js). */
 .switch {
   position: relative; flex: none; width: 40px; height: 22px; padding: 0; cursor: pointer;
   border: 1px solid var(--color-border-input); border-radius: 999px; background: var(--color-surface-alt);
-  transition: background .15s ease, border-color .15s ease;
+  transition: background 700ms cubic-bezier(.22, 1, .36, 1), border-color 700ms cubic-bezier(.22, 1, .36, 1);
 }
 .switch-knob {
   position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
-  background: var(--color-muted); transition: transform .15s ease, background .15s ease;
+  background: var(--color-muted); transition: transform 900ms var(--spring-soft), background 700ms cubic-bezier(.22, 1, .36, 1);
 }
 .switch[aria-checked="true"] { background: var(--color-primary); border-color: var(--color-primary); }
 .switch[aria-checked="true"] .switch-knob { background: #fff; transform: translateX(18px); }

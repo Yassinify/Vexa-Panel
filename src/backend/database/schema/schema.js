@@ -90,7 +90,7 @@ const SCHEMA_STATEMENTS = [
   // DK-18: singleton row for D1-backed authentication configuration, same
   // CHECK (id = 1) convention as stats/migration_flags above. No default
   // row is inserted here (unlike stats/migration_flags) because there is
-  // no valid "empty" auth_config — a row only ever gets created once real
+  // no valid "empty" auth_config - a row only ever gets created once real
   // salt/hash/secret values exist (see initAuthConfigIfAbsent() below);
   // inserting a placeholder row here would let a deployment authenticate
   // against empty-string values.
@@ -101,8 +101,8 @@ const SCHEMA_STATEMENTS = [
     jwt_secret TEXT NOT NULL
   )`,
   // The one and only stats row, created once. Every later change is a
-  // plain UPDATE ... WHERE id = 1 (see adjustStats() below) — never a
-  // second INSERT — so this OR IGNORE never needs to fire again after the
+  // plain UPDATE ... WHERE id = 1 (see adjustStats() below) - never a
+  // second INSERT - so this OR IGNORE never needs to fire again after the
   // first successful bootstrap.
   `INSERT OR IGNORE INTO stats (id, total_users, total_sub_sources, total_raw_sources, updated_at)
    VALUES (1, 0, 0, 0, 0)`,

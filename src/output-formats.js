@@ -349,7 +349,7 @@ function buildSingboxConfig(nodes, title) {
   return { json: JSON.stringify(config, null, 2), count: outbounds.length };
 }
 
-// Minimal hand-rolled YAML writer — sufficient for the flat proxy maps and
+// Minimal hand-rolled YAML writer, sufficient for the flat proxy maps and
 // small proxy-groups list this config needs, without pulling in a library.
 function toYamlValue(v) {
   if (typeof v === "string") {

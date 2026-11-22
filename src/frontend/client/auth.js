@@ -3,7 +3,7 @@ export const AUTH_SCRIPT = `
 // LOGIN
 // ---------------------------------------------------------------------
 // state.authInitialized === false means no admin authentication exists
-// yet anywhere (no D1 auth_config row, no complete Secret triplet) — the
+// yet anywhere (no D1 auth_config row, no complete Secret triplet): the
 // first-run "choose a password" form is shown in place of the normal
 // login form, right on this same page. There is no separate /secret
 // setup route; first-run and normal login are two states of one page.
@@ -17,12 +17,12 @@ function renderLoginView() {
         <div class="brand-sub">\${firstRun ? "Choose an admin password to finish setup" : "Sign in to your account"}</div>
         \${firstRun ? \`
           <div class="field-group">
-            <label><span class="field-label">Password</span><input type="password" id="loginPassword" autocomplete="new-password" /></label>
+            <div class="field-head"><label class="field-label" for="loginPassword">Password</label>\${infoTip("This is the password you'll log in with. The plaintext password is never stored: only a hash of it is kept.", "below")}</div>
+            <input type="password" id="loginPassword" autocomplete="new-password" />
           </div>
           <div class="field-group">
             <label><span class="field-label">Confirm password</span><input type="password" id="loginPasswordConfirm" autocomplete="new-password" /></label>
           </div>
-          <div class="helper-text">This is the password you'll log in with. The plaintext password is never stored — only a hash of it is kept.</div>
         \` : \`
           <div class="field-group">
             <label><span class="field-label">Password</span><input type="password" id="loginPassword" autocomplete="current-password" /></label>
@@ -74,10 +74,11 @@ async function doLogin() {
 // (POST /api/secret/generate -> handleInitializeD1Auth, unauthenticated
 // only while auth isn't configured yet). The server generates and
 // persists admin_salt/admin_password_hash/jwt_secret into D1 itself and
-// never returns any of them here. Per the intended first-run UX, this
-// does not log the new admin in directly — it returns to the normal
-// login form so the admin enters the password they just chose, exactly
-// once, before reaching the panel.
+// never returns any of them here. The setup endpoint returns no token,
+// so after it succeeds this signs the new admin in with POST /api/login
+// using the same password. A concurrent loser of the first INSERT also
+// gets configured:true but its password was not stored, so its login
+// is refused and it falls back to the normal login form.
 async function doCreateAccount() {
   if (state.authPending) return; // ignore repeated submits while a request is in flight
   const password = document.getElementById("loginPassword").value;
@@ -103,24 +104,37 @@ async function doCreateAccount() {
     const data = await res.json();
     if (!res.ok) {
       state.errorMsg = data && data.error === "already_configured"
-        ? "Setup already completed — please sign in."
+        ? "Setup already completed - please sign in."
         : "Could not complete setup. Try again.";
       // Re-check in case another request already finished first-run setup
       // concurrently (see initAuthConfigIfAbsent()'s race-safety in
-      // src/d1.js) — either way, the normal login form is now correct.
+      // src/d1.js): either way, the normal login form is now correct.
       if (data && data.error === "already_configured") state.authInitialized = true;
       render();
       return;
     }
-    // Setup complete. Log out once (there is no session to hold yet
-    // anyway) and return to the normal login form per the intended
-    // first-run flow: Create Account -> logged out -> Login -> Logged in.
+    // Setup complete: sign in at once with the password just chosen.
     state.authInitialized = true;
     state.errorMsg = "";
-    state.token = null;
-    localStorage.removeItem("vexa_token");
-    render();
-    showToast("Account created — sign in with your new password.");
+    const loginRes = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password })
+    });
+    const loginData = await loginRes.json();
+    if (!loginRes.ok) {
+      // Automatic sign-in refused: show the normal login form instead.
+      state.token = null;
+      localStorage.removeItem("vexa_token");
+      state.errorMsg = "Could not sign in automatically. Please sign in.";
+      render();
+      return;
+    }
+    state.token = loginData.token;
+    localStorage.setItem("vexa_token", loginData.token);
+    state.view = "dashboard";
+    history.pushState(null, "", VIEW_PATHS.dashboard);
+    await bootAuthenticated();
   } catch (e) {
     state.errorMsg = "Connection error.";
     render();
@@ -129,7 +143,7 @@ async function doCreateAccount() {
   }
 }
 
-// Manual logout clears the session outright — the next visit gets no
+// Manual logout clears the session outright: the next visit gets no
 // "less than 48h since last login" grace period and lands back on /login.
 function logout() {
   state.token = null;

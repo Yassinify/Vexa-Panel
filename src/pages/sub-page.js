@@ -1,8 +1,8 @@
 // =====================================================================
-// VEXA — Public subscription status page: shown when a user opens their
+// VEXA - Public subscription status page: shown when a user opens their
 // /sub/user/:id link directly in a browser (as opposed to a VPN client
 // app fetching it as a subscription source). Browser detection lives in
-// isBrowserRequest() in public-sub.js — a client app still gets the exact
+// isBrowserRequest() in public-sub.js - a client app still gets the exact
 // raw formatted response, unchanged.
 // =====================================================================
 
@@ -10,15 +10,27 @@ import { STYLES } from "../frontend/styles.js";
 import { QR_LIB } from "../frontend/qr-lib.js";
 import { LOGO_MARK_PATHS, FAVICON_LINK } from "../favicon-assets.js";
 
+// Escapes text for HTML content; the user's name is free text, and this page has no other escaping helper.
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
 // Like the panel's Subscription popup, the page shows no merge counts or source issues.
 // mergeResult only decides which blocks show: the Normal block shows when the output has
 // links or no JSON, the JSON block when it has JSON configs (same rules as the popup). A plus
 // icon (the markup icon("plus") draws in icons.js) sits between them when both show, and each
-// block then gets a title (.sub-block-title) so the QR codes line up.
+// block then gets a title (.sub-block-title) so the QR codes line up. The hint "Scan the QR code or copy the link
+// below" is the text of one info icon next to the page title, as in the popup; infoTip() in icons.js exists only in
+// the panel script, so the page writes the same markup itself. A header row at the top of the card holds the brand
+// (logo and "Vexa Panel") at the left and the user's name at the right. In the Normal block the link field spans the
+// whole row and the full-width Copy button sits below it, level with the JSON block's Download button, as in the popup.
 export function renderUserSubPage(user, mergeResult, url) {
   const base = `${url.origin}/sub/user/${user.id}`;
+  const userName = escapeHtml(user.name);
   const hasJson = mergeResult.jsonConfigs.length > 0;
   const showNormal = mergeResult.nodes.length > 0 || !hasJson;
+  const scanHint = "Scan the QR code or copy the link below";
+  const scanTip = `<span class="info-tip below end" tabindex="0" role="img" aria-label="${scanHint}" data-tip="${scanHint}"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="ui-icon" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" /></svg></span>`;
 
   return `<!DOCTYPE html>
 <html lang="en" data-theme="dark">
@@ -37,29 +49,35 @@ ${FAVICON_LINK}
 /* The card is 420px wide, or 600px above 760px when both blocks show (the plus icon exists only then), as in the panel popup. */
 .login-card { max-width: 420px; }
 @media (min-width: 761px) { .login-card:has(.sub-plus) { max-width: 600px; } }
+/* Header row: the brand at the left and the user's name at the right, in the muted color of the panel's lead line
+   (.lead in base.js). A long name is cut on one line with an ellipsis. */
+.sub-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); }
+.sub-head .login-logo { flex: none; }
+.sub-user { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-muted); }
 </style>
 </head>
 <body>
 <div class="login-wrap">
   <div class="card login-card" style="text-align:center;">
-    <!-- Same logo block as the login screen (logoMark() in icons.js). -->
-    <div class="login-logo"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 34" width="30" height="26" class="logo-mark" aria-hidden="true">${LOGO_MARK_PATHS}</svg>Vexa Panel</div>
-    <h1 style="margin-bottom:var(--space-lg);">Subscription</h1>
+    <!-- Brand at the left (the login screen's logo block, logoMark() in icons.js) and the user's name at the right. -->
+    <div class="sub-head">
+      <div class="login-logo"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 34" width="30" height="26" class="logo-mark" aria-hidden="true">${LOGO_MARK_PATHS}</svg>Vexa Panel</div>
+      <span class="sub-user">${userName}</span>
+    </div>
+    <h1 style="margin-bottom:var(--space-lg);">Subscription ${scanTip}</h1>
     <div class="sub-blocks">${showNormal ? `
       <div class="sub-block">${showNormal && hasJson ? `
         <h3 class="sub-block-title">Normal</h3>` : ""}
         <div class="qr-box" id="qrBox"></div>
-        <small style="color:var(--color-muted);">Scan the QR code or copy the link below</small>
         <div class="link-row">
           <input id="subLinkInput" readonly value="${base}" onclick="this.select()" />
-          <button class="btn-secondary" onclick="copyLink('subLinkInput')">Copy</button>
         </div>
+        <button class="btn-secondary btn-full" onclick="copyLink('subLinkInput')">Copy</button>
       </div>` : ""}${showNormal && hasJson ? `
       <div class="sub-plus" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="ui-icon" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg></div>` : ""}${hasJson ? `
       <div class="sub-block">
         <h3 class="sub-block-title">JSON</h3>
         <div class="qr-box" id="qrBoxJson"></div>
-        <small style="color:var(--color-muted);">Scan the QR code or copy the link below</small>
         <div class="link-row">
           <input id="subLinkInputJson" readonly value="${base}?format=json" onclick="this.select()" />
           <button class="btn-secondary" onclick="copyLink('subLinkInputJson')">Copy</button>

@@ -78,14 +78,14 @@ export async function requireAuth(request, env) {
   // Effective JWT secret: all three Secrets when complete, otherwise the
   // persisted D1 auth_config, otherwise null. Delegates entirely to
   // resolveAuthConfig() (src/backend/auth/auth.js) so this precedence is
-  // defined in exactly one place — jwt.js must not duplicate it, and must
+  // defined in exactly one place - jwt.js must not duplicate it, and must
   // not import secrets.js (which already imports signJwt from this file)
   // to get it.
   const config = await resolveAuthConfig(env);
   if (!config) {
     // No complete Secret configuration and no D1 auth_config row yet:
     // there is no secret to verify a token against. Reject outright
-    // rather than fabricating one or letting the request through —
+    // rather than fabricating one or letting the request through -
     // missing configuration must never be treated as "authenticated".
     return json({ error: "not_configured" }, 401);
   }

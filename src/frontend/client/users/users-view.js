@@ -2,17 +2,23 @@ export const USERS_VIEW_SCRIPT = `
 // ---------------------------------------------------------------------
 // USERS
 // ---------------------------------------------------------------------
+// Sorts a list with a stable sort; descending flips the comparator instead of reversing the result, so rows
+// whose values are equal always keep the order they have in the list (shared by Users and Nodes).
+function sortRows(list, compare, dir) {
+  const sign = dir === "desc" ? -1 : 1;
+  return [...list].sort((a, b) => sign * compare(a, b));
+}
+
 // Sorts the Users table: Name compares as text (case-insensitive, numbers in order), the
-// date columns compare as numbers (a missing date counts as 0). It sorts ascending from the
-// API order, then reverses for descending, so the default (created, descending) is exactly
-// the reversed API list.
+// date columns compare as numbers (a missing date counts as 0). Equal values keep their
+// current order (setUsersSort() stores the displayed order first), so a click that has nothing to
+// rearrange changes no row.
 function sortedUsers() {
   const { key, dir } = state.usersSort;
   const compare = key === "name"
     ? (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true })
     : (a, b) => (a[key] || 0) - (b[key] || 0);
-  const sorted = [...state.users].sort(compare);
-  return dir === "desc" ? sorted.reverse() : sorted;
+  return sortRows(state.users, compare, dir);
 }
 
 // Sortable header cell: the label plus an up-arrow and a down-arrow. On the sorted column
@@ -58,9 +64,11 @@ function renderSorted() {
   })).then(redraw);
 }
 
-// A new column starts ascending; the same column flips its direction.
+// A new column starts ascending; the same column flips its direction. The displayed order is stored first,
+// so rows with equal values stay where they are.
 function setUsersSort(key) {
   const current = state.usersSort;
+  state.users = sortedUsers();
   state.usersSort = { key, dir: current.key === key && current.dir === "asc" ? "desc" : "asc" };
   renderSorted();
 }
@@ -74,15 +82,18 @@ function dateCell(ts) {
 // How long the pointer (or a phone tap) must stay on a date before its tooltip opens, so the
 // tooltip does not flash while the pointer crosses the table.
 const DATE_TIP_DELAY_MS = 500;
+// At 760px and below (the compact layout) the wait is shorter; the same two values as --tip-delay (styles/modals.js).
+const DATE_TIP_DELAY_COMPACT_MS = 350;
 let dateTipTimer = null;
 
-// Waits DATE_TIP_DELAY_MS, then opens the tooltip. A new date restarts the wait, and hideDateTip()
-// cancels it. The target may have been redrawn away during the wait, so it is checked first.
+// Waits DATE_TIP_DELAY_MS (DATE_TIP_DELAY_COMPACT_MS on a compact screen), then opens the tooltip. A new date restarts
+// the wait, and hideDateTip() cancels it. The target may have been redrawn away during the wait, so it is checked first.
 function scheduleDateTip(target) {
   clearTimeout(dateTipTimer);
+  const delay = window.matchMedia("(max-width: 760px)").matches ? DATE_TIP_DELAY_COMPACT_MS : DATE_TIP_DELAY_MS;
   dateTipTimer = setTimeout(() => {
     if (target.isConnected) showDateTip(target);
-  }, DATE_TIP_DELAY_MS);
+  }, delay);
 }
 
 // Opens the tooltip above the date, or below it when there is no room above. It is position: fixed,
@@ -157,9 +168,9 @@ function renderUserRow(u) {
       \${dateCell(u.editedAt)}
       <td>
         <div class="row-actions">
-          <button class="btn-secondary btn-sm" onclick="openMerge('\${u.id}')">\${icon("link")}Link</button>
+          <button class="btn-secondary btn-sm link-btn" onclick="openMerge('\${u.id}')">\${icon("link")}\${buttonSwap("Link")}</button>
           \${rowMenu([
-            { label: "Edit", icon: "pencilSquare", onclick: "openUser('" + u.id + "')" },
+            { label: "Edit", icon: "pencil", onclick: "openUser('" + u.id + "')" },
             { label: u.enabled ? "Disable" : "Enable", icon: u.enabled ? "noSymbol" : "checkCircle", onclick: "toggleUserEnabled('" + u.id + "')" },
             { label: "Delete", icon: "trash", onclick: "askDeleteUser('" + u.id + "')", danger: true }
           ])}
@@ -170,12 +181,12 @@ function renderUserRow(u) {
 }
 
 function renderUsersView() {
-  // Page title and lead line (R90), placed in the toolbar row next to the
+  // Page title (R90) with its lead line, placed in the toolbar row next to the
   // "+ Add user" button as in the reference.
   const pageTitle = \`
     <div>
       <h2>Users</h2>
-      <p class="lead" style="margin:4px 0 0">Manage your users and their access.</p>
+      <p class="lead">Manage your users and their access.</p>
     </div>
   \`;
   // Ordered by the header the admin picked (state.usersSort); the default is
@@ -184,9 +195,19 @@ function renderUsersView() {
 
   const rows = ordered.map(renderUserRow).join("");
 
-  // While the data loads the table body is empty, as in the reference (no
-  // skeleton, R80); a failed load is shown as a toast by navigate().
-  const emptyRow = state.loading ? "" : '<tr><td colspan="5">No users yet. Add your first user.</td></tr>';
+  // A failed load is shown as a toast by navigate().
+  // With no users (and no load running) only the title and a centered, larger Add button show:
+  // no table, no empty-state text and no icon. The button returns to the toolbar with the first user.
+  if (!state.loading && state.users.length === 0) {
+    return \`
+      <div class="toolbar">
+        \${pageTitle}
+      </div>
+      <div class="empty-add">
+        <button class="btn-primary" onclick="openUserEditor()">+ Add user</button>
+      </div>
+    \`;
+  }
 
   return \`
     <div class="toolbar">
@@ -205,7 +226,7 @@ function renderUsersView() {
             <th aria-label="Actions"></th>
           </tr>
         </thead>
-        <tbody>\${rows || emptyRow}</tbody>
+        <tbody>\${rows}</tbody>
       </table>
       </div>
       <div class="date-tip" id="dateTip" role="tooltip"></div>

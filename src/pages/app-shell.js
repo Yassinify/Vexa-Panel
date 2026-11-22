@@ -1,5 +1,5 @@
 // =====================================================================
-// VEXA — App shell page: the SPA container that boots the client script
+// VEXA - App shell page: the SPA container that boots the client script
 // (login screen + full panel), themed before first paint to avoid a flash
 // of the wrong theme.
 // =====================================================================

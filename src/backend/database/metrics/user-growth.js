@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------
-// USER GROWTH (Dashboard chart) — one row per UTC calendar day holding
+// USER GROWTH (Dashboard chart) - one row per UTC calendar day holding
 // the total user count last recorded that day. Rows are written lazily
 // (no cron), so a day nobody touched has no row and getUserGrowth()
 // carries the previous value forward. Nothing before the first snapshot

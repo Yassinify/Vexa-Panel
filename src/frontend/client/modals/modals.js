@@ -2,6 +2,22 @@ export const MODALS_SCRIPT = `
 // ---------------------------------------------------------------------
 // MODALS
 // ---------------------------------------------------------------------
+// Grows a textarea to fit its text, so a long source shows in full and the box never scrolls. The height is reset to
+// auto first (the rows height, which is also the smallest the box can be) and then set to the content height. The box
+// uses border-box sizing, so the border is added to scrollHeight. A box that is not on screen measures 0, so it is
+// left alone; render() (client/app/root-render.js) sizes the boxes once the popup is shown.
+function autoGrow(el) {
+  if (!el) return;
+  el.style.height = "auto";
+  if (!el.offsetHeight) { el.style.height = ""; return; }
+  el.style.height = el.scrollHeight + (el.offsetHeight - el.clientHeight) + "px";
+}
+
+// Sizes every textarea of the popup layer; also on a window resize, because the text wraps differently at a new width.
+function autoGrowAll() {
+  document.querySelectorAll("#md textarea").forEach(autoGrow);
+}
+window.addEventListener("resize", autoGrowAll);
 function closeModal() {
   state.modal = null;
   state.mergeResult = null;
@@ -11,10 +27,12 @@ function closeModal() {
   state.editingUserNodeIds = null;
   state.editingUserName = "";
   state.editingUserUuidRandom = true;
+  state.editingUserUuid = "";
   state.editingNode = null;
   state.editingNodeSource = "";
+  state.editingNodeUsers = null;
+  state.editingNodeUserIds = null;
   state.confirmDelete = null;
-  state.confirmUuid = null;
   state.changePwValues = null;
   render();
 }
@@ -30,7 +48,6 @@ function renderModal() {
   if (state.modal === "userEditor") {
     const u = state.editingUser;
     const isEdit = u && u.id;
-    const sourceCount = state.editingUserSources.length;
     return \`
       <div class="card modal-card editor-card" role="dialog" aria-modal="true" aria-label="\${isEdit ? "Edit user" : "Add user"}">
         <div class="modal-title">\${isEdit ? "Edit user" : "Add user"}</div>
@@ -40,21 +57,17 @@ function renderModal() {
         <div class="field-group">
           <div class="field-head">
             <span class="field-label" id="uuidLabel">UUID</span>
-            <button type="button" class="btn-secondary btn-sm" \${isEdit && state.editingUserUuidRandom ? "" : "disabled"} onclick="askRegenerateUuid()">\${icon("arrowPath")}Regenerate</button>
+            \${infoTip(state.editingUserUuidRandom ? "A random id in the link. Turn the switch on to use the username as the UUID instead. Regenerate replaces the link." : "The id in the link is the username, with spaces turned into _. Letters, digits, - and _ only. Turn the switch off to use a random UUID.", "below")}
+            <button type="button" class="btn-secondary btn-sm" \${state.editingUserUuidRandom ? "" : "disabled"} onclick="regenerateUuid()">\${icon("arrowPath")}Regenerate</button>
+            <button type="button" class="switch" role="switch" aria-checked="\${state.editingUserUuidRandom ? "false" : "true"}" aria-label="Use the username as UUID" onclick="toggleUuidMode()"><span class="switch-knob"></span></button>
           </div>
-          <input id="userUuidInput" readonly aria-labelledby="uuidLabel" placeholder="\${state.editingUserUuidRandom ? "Generated when you save" : "Set from the name when you save"}" value="\${isEdit ? escapeHtml(u.id) : ""}" />
-          <div class="switch-row">
-            <span class="switch-label" id="uuidSwitchLabel">Use the username as UUID</span>
-            <button type="button" class="switch" role="switch" aria-checked="\${state.editingUserUuidRandom ? "false" : "true"}" aria-labelledby="uuidSwitchLabel" onclick="toggleUuidMode()"><span class="switch-knob"></span></button>
-          </div>
-          <div class="field-hint">\${state.editingUserUuidRandom ? "A random id in the link. Regenerate it to replace the link." : "The id in the link is the name, with spaces turned into _. Letters, digits, - and _ only."}</div>
+          <input id="userUuidInput" disabled aria-labelledby="uuidLabel" placeholder="\${state.editingUserUuidRandom ? "Generated when you save" : "Set from the name when you save"}" value="\${escapeHtml(uuidFieldValue())}" />
         </div>
         \${renderNodePicker()}
         <div class="field-group">
           <div class="field-head">
             <span class="field-label">Sources</span>
-            <span class="field-count">\${sourceCount} \${sourceCount === 1 ? "source" : "sources"}</span>
-            <button type="button" class="btn-secondary btn-sm" onclick="addSourceRow()">\${icon("plus")}Add source</button>
+            \${infoTip("A link, a subscription URL, JSON or Clash YAML. One source per box.", "below")}
           </div>
           <div class="source-repeater">
             \${state.editingUserSources.map((val, i) => {
@@ -64,49 +77,24 @@ function renderModal() {
                 return \`
               <div class="source-row source-row-added">
                 <div class="source-preview"><span class="source-type">\${escapeHtml(preview.type)}</span><span class="source-preview-text">\${escapeHtml(preview.text)}</span></div>
-                <button type="button" class="icon-btn" data-tip="Edit source" aria-label="Edit source \${i + 1}" onclick="editSourceRow(\${i})">\${icon("pencilSquare")}</button>
+                <button type="button" class="icon-btn" data-tip="Edit source" aria-label="Edit source \${i + 1}" onclick="editSourceRow(\${i})">\${icon("pencil")}</button>
                 <button type="button" class="icon-btn" data-tip="Delete source" aria-label="Delete source \${i + 1}" onclick="removeSourceRow(\${i})">\${icon("trash")}</button>
               </div>
             \`;
               }
               return \`
               <div class="source-row">
-                <textarea id="sourceInput\${i}" class="source-row-input" rows="2" placeholder="Paste a source here" aria-label="Source \${i + 1}" oninput="updateSourceRow(\${i}, this.value)">\${escapeHtml(val)}</textarea>
+                <textarea id="sourceInput\${i}" class="source-row-input" rows="2" placeholder="Paste a source here" aria-label="Source \${i + 1}" oninput="updateSourceRow(\${i}, this.value); autoGrow(this)">\${escapeHtml(val)}</textarea>
                 <button type="button" class="btn-secondary btn-sm" aria-label="Add source \${i + 1}" onclick="confirmSourceRow(\${i})">\${icon("plus")}Add</button>
               </div>
             \`;
             }).join("")}
           </div>
-          <div class="field-hint">A link, a subscription URL, JSON or Clash YAML. One source per box.</div>
         </div>
         <div class="error-text" id="userEditorError" role="alert"></div>
         <div class="modal-footer">
           <button class="btn-secondary" onclick="closeModal()">Cancel</button>
           <button class="btn-primary" onclick="saveUser()">Save</button>
-        </div>
-      </div>
-    \`;
-  }
-
-  // The UUID confirm popup: opened from the User editor's UUID section, because the change takes effect at
-  // once and the old link stops working. Cancel (and Escape, init.js) return to the editor; its data is still in state.
-  if (state.modal === "confirmUuid") {
-    const c = state.confirmUuid;
-    if (!c) return "";
-    const isRegenerate = c.kind === "regenerate";
-    const toUsername = !isRegenerate && !c.uuidRandom;
-    const title = isRegenerate ? "Regenerate the UUID?" : toUsername ? "Use the username as UUID?" : "Switch to a random UUID?";
-    const text = toUsername
-      ? "The link changes to the username at once. The old link stops working."
-      : "The user gets a new random link at once. The old link stops working.";
-    return \`
-      <div class="card modal-card" role="dialog" aria-modal="true" aria-label="\${title}">
-        <div class="modal-title">\${title}</div>
-        <div class="helper-text">\${text}</div>
-        <div class="error-text" id="uuidConfirmError" role="alert"></div>
-        <div class="modal-footer">
-          <button class="btn-secondary" onclick="cancelUuidConfirm()">Cancel</button>
-          <button class="btn-primary" onclick="performUuidChange()">\${isRegenerate ? icon("arrowPath") : ""}\${isRegenerate ? "Regenerate" : "Switch"}</button>
         </div>
       </div>
     \`;
@@ -122,9 +110,10 @@ function renderModal() {
           <label><span class="field-label">Name</span><input id="nodeNameInput" placeholder="Node name" value="\${isEdit ? escapeHtml(n.name) : ""}" /></label>
         </div>
         <div class="field-group">
-          <label><span class="field-label">Source</span><textarea id="nodeSourceInput" rows="3" placeholder="Paste a source here">\${escapeHtml(state.editingNodeSource)}</textarea></label>
-          <div class="field-hint">A link, a subscription URL, JSON or Clash YAML. A node holds one source.</div>
+          <div class="field-head"><label class="field-label" for="nodeSourceInput">Source</label>\${infoTip("A link, a subscription URL, JSON or Clash YAML. A node holds one source.", "below")}</div>
+          <textarea id="nodeSourceInput" rows="3" placeholder="Paste a source here" oninput="autoGrow(this)">\${escapeHtml(state.editingNodeSource)}</textarea>
         </div>
+        \${renderUserPicker()}
         <div class="error-text" id="nodeEditorError" role="alert"></div>
         <div class="modal-footer">
           <button class="btn-secondary" onclick="closeModal()">Cancel</button>
@@ -139,11 +128,12 @@ function renderModal() {
     // The link and QR modal: a title and the blocks that apply. The Normal block (QR, hint,
     // link field, Copy) shows when the output has links or no JSON; the JSON block (JSON heading,
     // QR, hint, link field, Copy, Download) shows when it has JSON configs; a plus icon sits between
-    // them when both show. It has no lead, counts or
+    // them when both show. In the Normal block the link field spans the whole row and the full-width Copy button sits
+    // below it, level with the JSON block's Download button (both rows are 42px + 14px margin, buttons 40px). It has no lead, counts or
     // Close button; a click outside the card or Escape closes it (init.js), and
     // .modal-card-static (styles/modals.js) turns off scrolling.
     const header = \`
-      <h2 style="font-size:var(--text-h3);margin-bottom:var(--space-lg);">Subscription</h2>
+      <h2 style="font-size:var(--text-h3);margin-bottom:var(--space-lg);">Subscription \${infoTip("Scan the QR code or copy the link below", "below end")}</h2>
     \`;
     const fullUrl = location.origin + r.subUrl;
     const hasJson = r.jsonCount > 0;
@@ -153,18 +143,16 @@ function renderModal() {
         <div class="sub-block">
           \${bothBlocks ? '<h3 class="sub-block-title">Normal</h3>' : ""}
           <div class="qr-box" id="qrContainer"></div>
-          <small style="color:var(--color-muted);">Scan the QR code or copy the link below</small>
           <div class="link-row">
             <input id="subLinkInput" readonly value="\${fullUrl}" />
-            <button class="btn-secondary" onclick="copyLink('subLinkInput')">Copy</button>
           </div>
+          <button class="btn-secondary btn-full" onclick="copyLink('subLinkInput')">Copy</button>
         </div>
     \` : "";
     const jsonBlock = hasJson ? \`
         <div class="sub-block">
           <h3 class="sub-block-title">JSON</h3>
           <div class="qr-box" id="qrContainerJson"></div>
-          <small style="color:var(--color-muted);">Scan the QR code or copy the link below</small>
           <div class="link-row">
             <input id="subLinkInputJson" readonly value="\${location.origin + r.jsonUrl}" />
             <button class="btn-secondary" onclick="copyLink('subLinkInputJson')">Copy</button>

@@ -2,6 +2,7 @@ import { TOKENS_CSS } from './styles/tokens.js';
 import { BASE_CSS } from './styles/base.js';
 import { CARD_CSS } from './styles/card.js';
 import { BUTTONS_CSS } from './styles/buttons.js';
+import { SPINNER_CSS } from './styles/spinner.js';
 import { TABLES_CSS } from './styles/tables.js';
 import { TOOLBAR_CSS } from './styles/toolbar.js';
 import { DASHBOARD_CSS } from './styles/dashboard.js';
@@ -24,7 +25,7 @@ import { THEME_TOGGLE_CSS } from "./styles/theme-toggle.js";
 
 export const STYLES = `
 /* =====================================================================
-   VEXA — visual design system, following reference/reference.html
+   VEXA - visual design system, following reference/reference.html
    (palette, radii, layout and component styles). Class names / element
    ids referenced by client-script.js and the standalone pages
    (d1-setup.js, sub-page.js) are kept so no
@@ -37,6 +38,8 @@ ${BASE_CSS}
 ${CARD_CSS}
 
 ${BUTTONS_CSS}
+
+${SPINNER_CSS}
 
 ${ICONS_CSS}
 

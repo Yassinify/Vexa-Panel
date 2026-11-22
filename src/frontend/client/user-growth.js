@@ -1,6 +1,6 @@
 export const USER_GROWTH_SCRIPT = `
 // ---------------------------------------------------------------------
-// USER GROWTH card (Dashboard) — draws state.userGrowth ([{ day,
+// USER GROWTH card (Dashboard) - draws state.userGrowth ([{ day,
 // totalUsers }], oldest first, up to 365 daily points) as in the
 // reference: one SVG (viewBox 600x210, width 100%) that holds the three
 // gridlines, the y and x labels, the area and the line. The card header is

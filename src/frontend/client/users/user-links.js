@@ -1,18 +1,32 @@
 export const USER_LINKS_SCRIPT = `
 // The per-user subscription link is /sub/user/:id (the API returns it as subUrl).
-// One link works for every client — the server auto-detects sing-box/Clash/plain
+// One link works for every client - the server auto-detects sing-box/Clash/plain
 // from the requesting client's User-Agent (see detectFormatFromUserAgent in
 // output-formats.js), so there's no format to pick here.
 
 // ---------------------------------------------------------------------
-// LINK, QR AND MERGE PREVIEW — one combined modal (R111)
+// LINK, QR AND MERGE PREVIEW - one combined modal (R111)
 // ---------------------------------------------------------------------
 // True while an openMerge() request runs, so another click on a Link button is ignored.
 let openMergePending = false;
 
+// Finds the Link button of this user's row. It is looked up on every call, because the table may have been redrawn in
+// the meantime; null when the row is not on screen.
+function linkButtonOf(id) {
+  return document.querySelector('#view tr[data-row-id="' + id + '"] .link-btn');
+}
+
+// Shows the spinner ring in place of the word "Link" on the Link button of this user's row, or the word again
+// (setButtonLoading() in client/spinner.js); a missing button is ignored.
+function setLinkLoading(id, on) {
+  setButtonLoading(linkButtonOf(id), on);
+}
+
 async function openMerge(id) {
   if (openMergePending) return;
   openMergePending = true;
+  // The Link button shows the ring until the popup is open or the request has failed.
+  setLinkLoading(id, true);
   // The popup shows what the user's output contains, so it opens only after
   // /api/merge-preview succeeds. The preview runs a full merge that fetches every
   // source, so the answer can take a while. A failed request shows a toast and opens nothing.
@@ -22,17 +36,21 @@ async function openMerge(id) {
   } catch (e) {
     // A 401 already switched to the login view inside apiFetch().
     if (e.message !== "unauthorized") showToast("Could not load the link - try again");
+    setLinkLoading(id, false);
     return;
   } finally {
     openMergePending = false;
   }
   if (!result || result.error) {
+    setLinkLoading(id, false);
     showToast("Could not load the link - try again");
     return;
   }
   state.modal = "merge";
   state.mergeResult = result;
   render();
+  // render() rebuilt the table, so this is a new button in its label state: play the ring out and the label in on it.
+  playButtonSwapBack(linkButtonOf(id));
   setTimeout(() => {
     if (!window.qrcodegen) return;
     // One QR code per block the popup shows: the Normal block when the output has

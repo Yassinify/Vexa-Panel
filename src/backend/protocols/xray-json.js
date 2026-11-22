@@ -164,7 +164,7 @@ function parseXrayOutbound(outbound) {
 
     // V2Fly's separate "shadowsocks2022" protocol name (Xray-core folds 2022
     // ciphers into the unified "shadowsocks" protocol above and is already
-    // handled by that branch — this covers the distinct V2Fly-flavored shape:
+    // handled by that branch - this covers the distinct V2Fly-flavored shape:
     // a flat settings object with "psk" instead of "password"). We map psk
     // -> password so it flows through the same internal node shape.
     if (protocol === "shadowsocks2022") {
@@ -188,7 +188,7 @@ function parseXrayOutbound(outbound) {
 
     // Xray-core's native "wireguard" outbound (distinct shape from the URI
     // link above: settings holds the local interface config directly, with
-    // one peer in settings.peers[0] — Xray-core doesn't support multiple
+    // one peer in settings.peers[0] - Xray-core doesn't support multiple
     // peers per outbound, so only the first is used).
     if (protocol === "wireguard") {
       const peer = (settings.peers && settings.peers[0]) || {};
@@ -227,10 +227,10 @@ function parseXrayOutbound(outbound) {
       };
     }
 
-    // Xray-core's native "http" outbound — identical settings shape to
+    // Xray-core's native "http" outbound - identical settings shape to
     // "socks" above (servers[0].{address,port,users[0].{user,pass}}).
     // JSON-only, deliberately: unlike socks/wireguard/etc., there's no safe
-    // node-link scheme to add for this one — "http://" and "https://" are
+    // node-link scheme to add for this one - "http://" and "https://" are
     // already committed elsewhere in this file to mean "fetch this as a
     // subscription URL" (see classifySourceString/fetchSubscriptionNodes),
     // checked before any node-scheme detection. Registering "http://" as a
