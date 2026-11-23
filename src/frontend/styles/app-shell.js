@@ -250,13 +250,16 @@ export const APP_SHELL_CSS = `
     border-right: 0; border-top: 1px solid var(--color-border);
   }
   .sidebar-brand, .sidebar-footer { display: none; }
-  .sidebar-link { flex-direction: column; gap: 2px; min-height: 48px; padding: 8px; font-size: 11px; }
+  /* Every tab has the same fixed size, so the active highlight and the hover fill match (the More tab too). */
+  .sidebar-link { box-sizing: border-box; flex: none; width: 72px; flex-direction: column; gap: 2px; min-height: 48px; padding: 8px; font-size: 11px; }
   .main { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin-left: 0; padding: 0 16px 32px; }
   .topbar-search { display: none; }
   .topbar-brand { display: flex; }
   .account-wrap-top { display: block; }
   /* Logs and Settings move into the More menu. */
   .sidebar-link-extra { display: none; }
-  .more-wrap { display: flex; }
+  .more-wrap { display: flex; flex: none; box-sizing: border-box; width: 72px; min-width: 72px; }
+  /* Arrow centered over the 72px-wide More tab (72 / 2 - 5 = 31px from the right edge). */
+  .more-menu::after { right: 31px; }
 }
 `;

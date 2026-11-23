@@ -2,9 +2,10 @@ export const RECENT_ACTIVITY_SCRIPT = `
 // ---------------------------------------------------------------------
 // RECENT ACTIVITY card (Dashboard) - short companion to the User Growth
 // card, per the reference. Shows the first 4 records of state.activity
-// (already loaded by loadDashboard()), reusing the Log page's
-// .activity-row/.activity-icon/.activity-text/.activity-time and
-// timeAgo(); "View all" navigates to the full list on the Log page.
+// (already loaded by loadDashboard()), drawn with the same row markup as
+// the Log page (.log-row/.log-icon, icon and tone from logKind(), then
+// .activity-text/.activity-time and timeAgo()); "View all" navigates to the
+// full list on the Log page.
 // Records only carry { message, ts } (no type field), so mapActivity()
 // below turns the message into a title and an entity line. It is not
 // specific to this card: the Logs page can use it too. Classes live in
@@ -61,11 +62,12 @@ function renderRecentActivity() {
   const rowsHtml = items.length
     ? items.map(a => {
         const mapped = mapActivity(a);
-        // Every Dashboard row uses the same users icon, as in the reference.
+        const kind = logKind(a.message);
+        // Same row as the Logs page (renderLogView() in activity/activity-view.js).
         // The entity span is left out when the message has no entity.
         return \`
-        <div class="activity-row">
-          <span class="activity-icon">\${icon("users")}</span>
+        <div class="log-row" data-tone="\${kind.tone}">
+          <span class="log-icon">\${icon(kind.icon)}</span>
           <span class="activity-text"><span class="activity-title">\${escapeHtml(mapped.title)}</span>\${mapped.entity ? \`<span class="activity-entity">\${escapeHtml(mapped.entity)}</span>\` : ""}</span>
           \${activityTime(a.ts)}
         </div>
