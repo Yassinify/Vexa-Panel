@@ -12,4 +12,7 @@ export const SETTINGS_CSS = `
 .setting-title { display: block; }
 .setting-desc { display: block; color: var(--color-muted); font-size: var(--text-caption); }
 .setting-row .btn-secondary { flex: none; white-space: nowrap; }
+/* Cards stack with a gap; the calendar dropdown (client/shell.js, growth dropdown styles) keeps its size. */
+.settings-card + .settings-card { margin-top: var(--space-lg); }
+.setting-row .calendar-dropdown { flex: none; }
 `;

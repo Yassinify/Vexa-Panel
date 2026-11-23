@@ -41,6 +41,12 @@ async function loadNodes() {
   state.nodesLoaded = Array.isArray(data.nodes);
 }
 
+// Loads the panel settings. An error body or an unknown value keeps the default calendar (Gregorian).
+async function loadSettings() {
+  const data = await apiFetch("/api/settings");
+  if (data && (data.calendar === "gregorian" || data.calendar === "jalali")) state.calendar = data.calendar;
+}
+
 // Sidebar view <-> URL path mapping, used by navigate() and init() for
 // path-based routing (/Dashboard, /Users, /Nodes, /Log, /settings).
 const VIEW_PATHS = { dashboard: "/Dashboard", users: "/Users", nodes: "/Nodes", log: "/Log", settings: "/settings" };

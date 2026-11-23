@@ -101,6 +101,13 @@ const SCHEMA_STATEMENTS = [
     admin_password_hash TEXT NOT NULL,
     jwt_secret TEXT NOT NULL
   )`,
+  // Singleton panel settings. calendar is 'gregorian' or 'jalali' (validated by
+  // the settings handler); the default row keeps existing installs on Gregorian.
+  `CREATE TABLE IF NOT EXISTS settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    calendar TEXT NOT NULL DEFAULT 'gregorian'
+  )`,
+  `INSERT OR IGNORE INTO settings (id, calendar) VALUES (1, 'gregorian')`,
   // The one and only stats row, created once. Every later change is a
   // plain UPDATE ... WHERE id = 1 (see adjustStats() below) - never a
   // second INSERT - so this OR IGNORE never needs to fire again after the

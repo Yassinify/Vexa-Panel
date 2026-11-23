@@ -248,6 +248,56 @@ function renderSidebar() {
   \`;
 }
 
+// Calendar choices in menu order, for the Settings dropdown (state.calendar holds the key).
+const CALENDAR_LABELS = { gregorian: "Gregorian Calendar", jalali: "Jalali Calendar" };
+
+// Calendar dropdown, built like the growth range dropdown (renderGrowthChart() in user-growth.js) and styled with its
+// classes: a trigger button and a popup of items, the selected item is .active. The open state lives in the DOM.
+function renderCalendarDropdown() {
+  const items = Object.keys(CALENDAR_LABELS).map(key =>
+    '<button type="button" class="growth-item' + (key === state.calendar ? ' active' : '') + '" role="menuitem" data-calendar="' + key + '" onclick="setCalendar(this.dataset.calendar)">' + CALENDAR_LABELS[key] + '</button>'
+  ).join("");
+  return '<div class="growth-dropdown calendar-dropdown">' +
+    '<button type="button" class="growth-range" id="calendarBtn" aria-haspopup="menu" aria-expanded="false" aria-label="Calendar" onclick="toggleCalendarMenu()">' + (CALENDAR_LABELS[state.calendar] || CALENDAR_LABELS.gregorian) + icon("chevron") + '</button>' +
+    '<div class="growth-menu" id="calendarMenu" role="menu">' + items + '</div>' +
+  '</div>';
+}
+
+function setCalendarMenuOpen(open) {
+  const menu = document.getElementById("calendarMenu");
+  const button = document.getElementById("calendarBtn");
+  if (!menu || !button) return;
+  menu.classList.toggle("open", open);
+  button.setAttribute("aria-expanded", open ? "true" : "false");
+}
+function toggleCalendarMenu() {
+  const menu = document.getElementById("calendarMenu");
+  if (menu) setCalendarMenuOpen(!menu.classList.contains("open"));
+}
+function closeCalendarMenu() {
+  setCalendarMenuOpen(false);
+}
+
+// Saves the chosen calendar on the server, then redraws the view so every date shows in it at once. Nothing is applied
+// before the server confirms; a failure shows a toast and keeps the old calendar. A pick during a save is ignored.
+let calendarSaving = false;
+async function setCalendar(key) {
+  if (!CALENDAR_LABELS[key] || calendarSaving) return;
+  if (key === state.calendar) { closeCalendarMenu(); return; }
+  calendarSaving = true;
+  try {
+    const data = await apiFetch("/api/settings", { method: "PUT", body: JSON.stringify({ calendar: key }) });
+    if (!data || data.calendar !== key) throw new Error("save_failed");
+    state.calendar = key;
+    render();
+  } catch (e) {
+    // A 401 already showed the login view (apiFetch()).
+    if (!e || e.message !== "unauthorized") showToast("Could not save the calendar", "error");
+  } finally {
+    calendarSaving = false;
+  }
+}
+
 // Routed Settings view (/settings); reuses the content of the former
 // Settings modal. The lead line is visible text; the row description is the text of an info icon.
 function renderSettingsView() {
@@ -260,6 +310,14 @@ function renderSettingsView() {
           <span class="setting-title">Change Password \${infoTip("Rotates your admin password. Sessions and subscription links keep working. You will be signed out and must sign in again with the new password.", "below")}</span>
         </div>
         <button class="btn-secondary btn-sm" onclick="openChangePasswordModal()">Change</button>
+      </div>
+    </div>
+    <div class="card settings-card">
+      <div class="setting-row">
+        <div class="setting-text">
+          <span class="setting-title">Calendar \${infoTip("Choose how dates are shown across the panel. The choice is saved on the server, so it applies in every browser.", "below")}</span>
+        </div>
+        \${renderCalendarDropdown()}
       </div>
     </div>
   \`;

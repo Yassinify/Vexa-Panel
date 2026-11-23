@@ -9,6 +9,7 @@ import {
   deleteUser,
 } from "./users.js";
 import { mergePreviewHandler } from "./merge.js";
+import { getSettings, updateSettings } from "./settings.js";
 import {
   listNodes,
   createNode,
@@ -27,6 +28,10 @@ export async function handleApi(pathname, method, request, env, authPayload) {
   await ensureD1Migrated(env);
 
   if (pathname === "/api/stats" && method === "GET") return getStats(env);
+
+  if (pathname === "/api/settings" && method === "GET") return getSettings(env);
+  if (pathname === "/api/settings" && method === "PUT")
+    return updateSettings(request, env);
 
   if (pathname === "/api/users" && method === "GET") return listUsers(env);
   if (pathname === "/api/users" && method === "POST")

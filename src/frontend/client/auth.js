@@ -261,7 +261,8 @@ async function bootAuthenticated() {
   state.loading = true;
   render();
   try {
-    await loadViewData(state.view);
+    // The calendar is stored on the server; a failed settings load keeps the default (Gregorian).
+    await Promise.all([loadSettings().catch(() => {}), loadViewData(state.view)]);
   } finally {
     state.loading = false;
     renderAfterLoad();

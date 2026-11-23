@@ -4,6 +4,7 @@ export * from "./schema/schema.js";
 export * from "./records/users.js";
 export * from "./records/nodes.js";
 export * from "./records/user-nodes.js";
+export * from "./records/settings.js";
 export * from "./metrics/stats.js";
 export * from "./metrics/activity.js";
 export * from "./metrics/user-growth.js";

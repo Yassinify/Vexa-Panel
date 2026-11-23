@@ -30,4 +30,6 @@ export const ACTIVITY_CSS = `
 .log-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); padding: 12px 16px; margin-bottom: 6px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: linear-gradient(90deg, var(--log-tone-soft), transparent 75%); font-size: var(--text-body); }
 .log-icon { width: 38px; height: 38px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: var(--log-tone); }
 .log-icon .ui-icon { width: 20px; height: 20px; }
+/* Light theme: a white base under the tone gradient, so the rows match the white cards instead of tinting the gray page. */
+:root[data-theme="light"] .log-row { background: linear-gradient(90deg, var(--log-tone-soft), transparent 75%), var(--color-surface); }
 `;

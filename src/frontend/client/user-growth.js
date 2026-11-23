@@ -29,13 +29,17 @@ const GROWTH_RANGES = {
 const GROWTH_W = 600;
 const GROWTH_H = 200;
 
-// "Sep 15" for a UTC timestamp (the API's days are UTC calendar days).
+// "Sep 15" (Jalali: "Aban 2") for a UTC timestamp (the API's days are UTC calendar days).
 function growthDayLabel(ms) {
+  const jalali = state.calendar === "jalali" ? jalaliLabel(ms, "UTC", true, false) : null;
+  if (jalali) return jalali;
   return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-// "Sep 2026" for a UTC timestamp (year range).
+// "Sep 2026" (Jalali: "Aban 1405") for a UTC timestamp (year range).
 function growthMonthLabel(ms) {
+  const jalali = state.calendar === "jalali" ? jalaliLabel(ms, "UTC", false, true) : null;
+  if (jalali) return jalali;
   return new Date(ms).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
 }
 

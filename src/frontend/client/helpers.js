@@ -10,19 +10,56 @@ function timeAgo(ts) {
   return Math.floor(diff / 86400) + "d ago";
 }
 
-// "YYYY-MM-DD" in the browser's local time; a dash for a missing or invalid value.
+// Jalali (Persian) calendar names in English transliteration. Months start at Farvardin (month 1); weekdays are
+// indexed by Date.getDay() (0 = Sunday).
+const JALALI_MONTHS = ["Farvardin", "Ordibehesht", "Khordad", "Tir", "Mordad", "Shahrivar", "Mehr", "Aban", "Azar", "Dey", "Bahman", "Esfand"];
+const JALALI_WEEKDAYS = ["Yekshanbe", "Doshanbe", "Seshanbe", "Chaharshanbe", "Panjshanbe", "Jomeh", "Shanbe"];
+
+// { year, month, day } of a timestamp in the Jalali calendar (Latin digits, month 1-12), or null when the browser
+// cannot convert it. timeZone is optional: without it the browser's local time is used.
+function jalaliParts(ms, timeZone) {
+  try {
+    const options = { year: "numeric", month: "numeric", day: "numeric" };
+    if (timeZone) options.timeZone = timeZone;
+    const parts = new Intl.DateTimeFormat("en-u-ca-persian-nu-latn", options).formatToParts(new Date(ms));
+    const get = type => Number((parts.find(p => p.type === type) || {}).value);
+    const result = { year: get("year"), month: get("month"), day: get("day") };
+    return result.year && result.month >= 1 && result.month <= 12 && result.day ? result : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// "Aban 2", "Aban 1405" or "Aban 2, 1405" for a Jalali date (month name, then the day and/or the year asked for), or
+// null when the browser cannot convert it, so the caller falls back to its Gregorian label.
+function jalaliLabel(ms, timeZone, withDay, withYear) {
+  const j = jalaliParts(ms, timeZone);
+  if (!j) return null;
+  const name = JALALI_MONTHS[j.month - 1];
+  if (withDay && withYear) return name + " " + j.day + ", " + j.year;
+  return withDay ? name + " " + j.day : name + " " + j.year;
+}
+
+// "YYYY-MM-DD" in the browser's local time, in the calendar chosen in Settings (state.calendar); a dash for a
+// missing or invalid value.
 function formatDate(ts) {
   const d = new Date(ts);
   if (!ts || isNaN(d.getTime())) return "-";
-  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  const pad = n => String(n).padStart(2, "0");
+  if (state.calendar === "jalali") {
+    const j = jalaliParts(d.getTime());
+    if (j) return j.year + "-" + pad(j.month) + "-" + pad(j.day);
+  }
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
 }
 
 // "Thursday | 2026-10-29 | 14:55:13" in the browser's local time (24-hour, with seconds), used as a
-// hover tooltip; a dash for a missing or invalid value.
+// hover tooltip; a dash for a missing or invalid value. The weekday and the date follow state.calendar.
 function formatDateTooltip(ts) {
   const d = new Date(ts);
   if (!ts || isNaN(d.getTime())) return "-";
-  const weekday = d.toLocaleDateString("en-US", { weekday: "long" });
+  const jalali = state.calendar === "jalali" && jalaliParts(d.getTime());
+  const weekday = jalali ? JALALI_WEEKDAYS[d.getDay()] : d.toLocaleDateString("en-US", { weekday: "long" });
   const time = [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, "0")).join(":");
   return weekday + " | " + formatDate(ts) + " | " + time;
 }

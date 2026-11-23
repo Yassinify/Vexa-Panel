@@ -34,6 +34,9 @@ const state = {
   userGrowth: [],
   // Selected range of the growth chart: "week", "month" or "year" (see GROWTH_RANGES).
   growthRange: "week",
+  // Calendar used for every displayed date: "gregorian" or "jalali". Stored on the server; loaded after sign-in
+  // (loadSettings() in api.js) and saved by setCalendar() in shell.js.
+  calendar: "gregorian",
 
   modal: null,
   editingUser: null,
