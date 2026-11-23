@@ -38,8 +38,12 @@ const DASHBOARD_CSS = String.raw`
   .stat-grid { grid-template-columns: minmax(0, 1fr); }
 }
 /* --- User Growth card (Dashboard), per the reference. The chart is one SVG
-   (client/user-growth.js) that scales with the card width. --- */
+   (client/user-growth.js) drawn at the card's real width, so it fits any width down to 320px. --- */
 .growth-card { padding: 18px; margin-bottom: var(--space-xl); }
+/* Narrow phones: less padding gives the chart more width (about 258px at 320px instead of 250px). */
+@media (max-width: 480px) {
+  .growth-card { padding: 14px; }
+}
 /* Header row like the reference .hd: title left, range dropdown right. */
 .growth-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .growth-title { font-size: var(--text-body); font-weight: 600; }
@@ -53,14 +57,30 @@ const DASHBOARD_CSS = String.raw`
 .growth-range:hover, .growth-range[aria-expanded="true"] { color: var(--color-text); }
 .growth-range .ui-icon { width: 14px; height: 14px; transition: transform .15s ease; }
 .growth-range[aria-expanded="true"] .ui-icon { transform: rotate(180deg); }
-/* Popup: same surface, border, radius and shadow as .more-menu (app-shell.js); script toggles .open. */
+/* Popup: same surface, border, radius and shadow as .more-menu (app-shell.js); script toggles .open and .closing.
+   It plays the row menu motion (styles/tables.js): the popup fades and slides 6px, the items rise in one after
+   another on open and fade out last item first on close. --wave-out-total is for the three range items. */
 .growth-menu {
   display: none; position: absolute; right: 0; top: calc(100% + 6px); z-index: 10; min-width: 140px;
   flex-direction: column; gap: 2px; padding: 6px;
   background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --account-menu-shift: -6px;
+  --wave-step: 70ms; --wave-time: .38s; --wave-out-time: .2s; --wave-out-step: 40ms;
+  --wave-out-total: calc(var(--wave-out-time) + var(--wave-out-step) * 2);
 }
-.growth-menu.open { display: flex; }
+/* The Settings calendar dropdown reuses these classes and has two items. */
+.calendar-dropdown .growth-menu { --wave-out-total: calc(var(--wave-out-time) + var(--wave-out-step)); }
+/* Closing delays the popup fade to the end of the item exits; a closing popup ignores the pointer. */
+.growth-menu.open { display: flex; animation: account-menu-in .16s ease-out; }
+.growth-menu.closing { display: flex; pointer-events: none; animation: account-menu-out .16s ease-in forwards; animation-delay: calc(var(--wave-out-total) - .16s); }
+.growth-menu.open .growth-item { animation: row-menu-item-wave var(--wave-time) ease-out backwards; }
+.growth-menu.open .growth-item:nth-child(2) { animation-delay: var(--wave-step); }
+.growth-menu.open .growth-item:nth-child(3) { animation-delay: calc(var(--wave-step) * 2); }
+.growth-menu.closing .growth-item { animation: row-menu-item-out var(--wave-out-time) ease-in both; }
+.growth-menu.closing .growth-item:nth-last-child(2) { animation-delay: var(--wave-out-step); }
+.growth-menu.closing .growth-item:nth-last-child(3) { animation-delay: calc(var(--wave-out-step) * 2); }
+@media (prefers-reduced-motion: reduce) { .growth-menu.open, .growth-menu.closing, .growth-menu.open .growth-item, .growth-menu.closing .growth-item { animation: none; } }
 /* Items look like .more-item but shorter; .active marks the selected range like an active nav item. */
 .growth-item {
   display: flex; align-items: center; min-height: 36px; padding: 0 var(--space-md);

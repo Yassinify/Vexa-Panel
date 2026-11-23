@@ -263,12 +263,13 @@ function renderCalendarDropdown() {
   '</div>';
 }
 
+// Calendar menu open state: aria-expanded on the trigger and the classes .open and .closing on the popup, through
+// setPopupOpen(), so the popup plays the same enter and exit motion as the growth range menu (styles/dashboard.js).
 function setCalendarMenuOpen(open) {
   const menu = document.getElementById("calendarMenu");
   const button = document.getElementById("calendarBtn");
   if (!menu || !button) return;
-  menu.classList.toggle("open", open);
-  button.setAttribute("aria-expanded", open ? "true" : "false");
+  setPopupOpen(menu, button, open);
 }
 function toggleCalendarMenu() {
   const menu = document.getElementById("calendarMenu");
@@ -278,17 +279,40 @@ function closeCalendarMenu() {
   setCalendarMenuOpen(false);
 }
 
-// Saves the chosen calendar on the server, then redraws the view so every date shows in it at once. Nothing is applied
-// before the server confirms; a failure shows a toast and keeps the old calendar. A pick during a save is ignored.
+// Resolves when a closing popup has finished its exit animation: at once when it is not closing, and after 500 ms at
+// the latest, so a missing animationend can never hold the caller.
+function popupClosed(menu) {
+  if (!menu || !menu.classList.contains("closing")) return Promise.resolve();
+  return new Promise(resolve => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      menu.removeEventListener("animationend", onEnd);
+      clearTimeout(timer);
+      resolve();
+    };
+    const onEnd = e => { if (e.target === menu) finish(); };
+    const timer = setTimeout(finish, 500);
+    menu.addEventListener("animationend", onEnd);
+  });
+}
+
+// Saves the chosen calendar on the server, then redraws the view so every date shows in it at once. The menu closes
+// at once on every pick (also for the selected item and for a pick during a save), so its exit plays; after the
+// server confirms, the redraw waits for that exit so render() does not cut it off. Nothing is applied before the
+// server confirms; a failure shows a toast and keeps the old calendar. A pick during a save is ignored.
 let calendarSaving = false;
 async function setCalendar(key) {
-  if (!CALENDAR_LABELS[key] || calendarSaving) return;
-  if (key === state.calendar) { closeCalendarMenu(); return; }
+  if (!CALENDAR_LABELS[key]) return;
+  closeCalendarMenu();
+  if (key === state.calendar || calendarSaving) return;
   calendarSaving = true;
   try {
     const data = await apiFetch("/api/settings", { method: "PUT", body: JSON.stringify({ calendar: key }) });
     if (!data || data.calendar !== key) throw new Error("save_failed");
     state.calendar = key;
+    await popupClosed(document.getElementById("calendarMenu"));
     render();
   } catch (e) {
     // A 401 already showed the login view (apiFetch()).
