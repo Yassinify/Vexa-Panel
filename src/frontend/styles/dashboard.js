@@ -14,11 +14,14 @@ const DASHBOARD_CSS = String.raw`
 .up { color: var(--color-success); }
 .dn { color: var(--color-error); }
 .stat-card-icon {
-  width: 38px; height: 38px; border-radius: var(--radius-md); flex-shrink: 0;
+  width: 38px; height: 38px; border-radius: var(--radius-lg); flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  background: var(--color-primary-faint); color: var(--color-primary);
+  background: linear-gradient(180deg, var(--color-primary), var(--color-primary-hover)); color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 2px 6px var(--color-primary-soft);
 }
 .stat-card-icon .ui-icon { width: 18px; height: 18px; }
+/* Light theme: the soft shadow is too faint on a white card, so the bevel gets a firmer shadow and a darker bottom edge. */
+:root[data-theme="light"] .stat-card-icon { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -1px 0 rgba(0, 0, 0, 0.18), 0 2px 6px rgba(190, 18, 60, 0.35); }
 /* Above 1000px the cards are wider than the reference card, so the icon tile and the number scale up with them. */
 @media (min-width: 1001px) {
   .stat-card-icon { width: 46px; height: 46px; }
