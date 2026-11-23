@@ -80,6 +80,77 @@ const MODALS_CSS = String.raw`
   color: var(--color-muted); font-size: var(--text-caption); line-height: 1.5; white-space: nowrap;
 }
 .source-preview-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Added sources as a dense table: a caption header (Type, Source) and 36px rows split by 1px dividers, no boxes. The dot
+   color comes from data-type (set from sourcePreview() in client/modals/modals.js); the type word always accompanies it. */
+.source-table { margin-bottom: var(--space-sm); }
+.source-table-head, .source-table-row {
+  display: grid; grid-template-columns: 104px minmax(0, 1fr) auto; align-items: center;
+  padding: 0 var(--space-xs) 0 var(--space-sm); border-bottom: 1px solid var(--color-border);
+}
+.source-table-head { padding-bottom: var(--space-xs); color: var(--color-muted); font-size: var(--text-caption); }
+.source-table-row { min-height: 36px; --source-dot: var(--color-disabled); }
+.source-table-row[data-type="link"] { --source-dot: var(--color-primary); }
+.source-table-row[data-type="subscription"] { --source-dot: var(--color-success); }
+.source-table-row[data-type="json"] { --source-dot: var(--color-warning); }
+.source-table-row[data-type="yaml"] { --source-dot: var(--color-muted); }
+.source-table-type { display: inline-flex; align-items: center; gap: 6px; color: var(--color-muted); font-size: var(--text-caption); }
+.source-table-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--source-dot); }
+.source-table-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Edit and Delete show on row hover and keyboard focus; always visible on touch and at 760px and below. */
+.source-table-actions { display: flex; opacity: 0; transition: opacity .12s ease; }
+.source-table-row:hover .source-table-actions, .source-table-row:focus-within .source-table-actions { opacity: 1; }
+@media (hover: none), (max-width: 760px) { .source-table-actions { opacity: 1; } }
+.source-table-actions .icon-btn { width: 28px; height: 28px; }
+/* The "N sources" count at the right of the Sources label row. */
+.source-table-count { margin-left: auto; color: var(--color-muted); font-size: var(--text-caption); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Source editor box: opens under the added source being edited (client/modals/modals.js, client/users/user-editor.js).
+   It takes its own space, so the sources below move down. render() rewrites the popup markup, so a transition would not
+   run on the new elements: the enter is a keyframe animation, and the exit is played on the live elements through
+   .closing and .undim before the redraw (endSourceEdit() in user-editor.js). Enter 180ms, exit 120ms, the popup motion
+   (fade and a 6px slide). The height opens through grid-template-rows (0fr to 1fr); a browser that cannot animate it
+   still fades. The three nested elements: .source-edit animates, .source-edit-inner clips while it opens (its padding
+   leaves room for the arrow and the shadow), .source-edit-box is the tooltip surface. */
+.source-edit { display: grid; grid-template-rows: 1fr; margin: 0 -6px; animation: source-edit-in .18s ease-out; }
+.source-edit.closing { animation: source-edit-out .12s ease-in forwards; }
+.source-edit-inner { min-height: 0; overflow: hidden; padding: 12px 6px 14px; }
+.source-edit-box {
+  position: relative; display: flex; flex-direction: column; gap: var(--space-sm); padding: var(--space-md);
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+  box-shadow: 0 8px 12px -8px rgba(0, 0, 0, 0.45);
+}
+/* The arrow points up at the source row, like the info tooltip that opens below its icon. */
+.source-edit-box::before {
+  content: ""; position: absolute; top: -6px; left: 20px; width: 10px; height: 10px;
+  background: var(--color-surface); border: solid var(--color-border); border-width: 1px 0 0 1px; transform: rotate(45deg);
+}
+/* .source-row-input has flex: 1 for the composer row; in this column it would collapse the height. */
+.source-edit-box .source-row-input { flex: none; width: 100%; }
+/* Cancel on the left, Save on the right, the same size. */
+.source-edit-actions { display: flex; gap: var(--space-sm); }
+.source-edit-actions button { flex: 1; }
+/* While a box is open the other sources, the table head and the new-source input are slightly blurred and inert
+   (the markup also sets the inert attribute). The static look is the end state of the enter animation. */
+.source-dim { filter: blur(2px); opacity: .55; pointer-events: none; user-select: none; -webkit-user-select: none; animation: source-dim-in .18s ease-out; }
+.source-dim.undim { animation: source-dim-out .12s ease-in forwards; }
+@keyframes source-edit-in {
+  from { grid-template-rows: 0fr; opacity: 0; transform: translateY(-6px); }
+  to { grid-template-rows: 1fr; opacity: 1; transform: none; }
+}
+@keyframes source-edit-out {
+  from { grid-template-rows: 1fr; opacity: 1; transform: none; }
+  to { grid-template-rows: 0fr; opacity: 0; transform: translateY(-6px); }
+}
+@keyframes source-dim-in {
+  from { filter: blur(0); opacity: 1; }
+  to { filter: blur(2px); opacity: .55; }
+}
+@keyframes source-dim-out {
+  from { filter: blur(2px); opacity: .55; }
+  to { filter: blur(0); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .source-edit, .source-edit.closing, .source-dim, .source-dim.undim { animation: none; }
+}
 
 /* --- User and Node editor fields --- */
 /* Label row: the title, an optional count pill after it and an optional button at the right edge. */

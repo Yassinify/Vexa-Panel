@@ -84,13 +84,14 @@ export async function updateUserWithNodes(env, user, nodeIds) {
   const stmts = [
     env.DB
       .prepare(
-        `UPDATE users SET name = ?, enabled = ?, sources = ?, edited_at = ? WHERE id = ?`,
+        `UPDATE users SET name = ?, enabled = ?, sources = ?, edited_at = ?, subscription_title = ? WHERE id = ?`,
       )
       .bind(
         user.name,
         user.enabled !== false ? 1 : 0,
         JSON.stringify(user.sources || []),
         user.editedAt ?? null,
+        user.subscriptionTitle || null,
         user.id,
       ),
     env.DB.prepare(`DELETE FROM user_nodes WHERE user_id = ?`).bind(user.id),
@@ -116,8 +117,8 @@ export async function replaceUserId(env, oldId, user, nodeIds) {
   const stmts = [
     env.DB
       .prepare(
-        `INSERT INTO users (id, name, enabled, sources, created_at, updated_at, edited_at, uuid_random)
-         SELECT ?, ?, ?, ?, created_at, updated_at, ?, ? FROM users WHERE id = ?`,
+        `INSERT INTO users (id, name, enabled, sources, created_at, updated_at, edited_at, uuid_random, subscription_title)
+         SELECT ?, ?, ?, ?, created_at, updated_at, ?, ?, ? FROM users WHERE id = ?`,
       )
       .bind(
         user.id,
@@ -126,6 +127,7 @@ export async function replaceUserId(env, oldId, user, nodeIds) {
         JSON.stringify(user.sources || []),
         user.editedAt ?? null,
         user.uuidRandom !== false ? 1 : 0,
+        user.subscriptionTitle || null,
         oldId,
       ),
     ...nodeIds.map((nodeId, i) =>
@@ -151,8 +153,8 @@ export async function insertUserWithNodes(env, user, nodeIds) {
   const stmts = [
     env.DB
       .prepare(
-        `INSERT INTO users (id, name, enabled, sources, created_at, updated_at, uuid_random)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO users (id, name, enabled, sources, created_at, updated_at, uuid_random, subscription_title)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         user.id,
@@ -162,6 +164,7 @@ export async function insertUserWithNodes(env, user, nodeIds) {
         user.createdAt,
         user.updatedAt,
         user.uuidRandom !== false ? 1 : 0,
+        user.subscriptionTitle || null,
       ),
     ...nodeIds.map((nodeId, i) =>
       env.DB

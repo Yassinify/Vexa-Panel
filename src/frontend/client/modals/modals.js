@@ -24,10 +24,12 @@ function closeModal() {
   state.editingUser = null;
   state.editingUserSources = null;
   state.editingUserSourcesAdded = null;
+  state.editingUserSourcesBackup = null;
   state.editingUserNodeIds = null;
   state.editingUserName = "";
   state.editingUserUuidRandom = true;
   state.editingUserUuid = "";
+  state.editingUserSubscriptionTitle = "";
   state.editingNode = null;
   state.editingNodeSource = "";
   state.editingNodeUsers = null;
@@ -48,6 +50,61 @@ function renderModal() {
   if (state.modal === "userEditor") {
     const u = state.editingUser;
     const isEdit = u && u.id;
+    // Added sources fill a dense table (type, source, Edit and Delete). Sources not added yet (the empty input and any
+    // source being edited) stay below it as composer rows. Both keep their index into state.editingUserSources.
+    // The type comes from sourcePreview() and goes into data-type (link, subscription, json, yaml or source).
+    const addedRows = [];
+    const composerRows = [];
+    // While an editor box is open (openSourceEditIndex() in user-editor.js) every other source and the new-source
+    // input is dimmed and inert, so the focus stays on the source being edited.
+    const editing = openSourceEditIndex();
+    state.editingUserSources.forEach((val, i) => {
+      const dimmed = editing !== -1 && i !== editing;
+      const dimCls = dimmed ? " source-dim" : "";
+      const dimAttr = dimmed ? " inert" : "";
+      if (state.editingUserSourcesAdded[i]) {
+        const preview = sourcePreview(val);
+        addedRows.push(\`
+          <div class="source-table-row\${dimCls}" data-type="\${preview.type.toLowerCase()}"\${dimAttr}>
+            <span class="source-table-type"><i class="source-table-dot"></i>\${escapeHtml(preview.type)}</span>
+            <span class="source-table-text" title="\${escapeHtml(preview.text)}">\${escapeHtml(preview.text)}</span>
+            <span class="source-table-actions">
+              <button type="button" class="icon-btn" data-tip="Edit source" aria-label="Edit source \${i + 1}" onclick="editSourceRow(\${i})">\${icon("pencil")}</button>
+              <button type="button" class="icon-btn" data-tip="Delete source" aria-label="Delete source \${i + 1}" onclick="removeSourceRow(\${i})">\${icon("trash")}</button>
+            </span>
+          </div>
+        \`);
+        // The editor box of the source being edited sits right under its row: the textarea, then Cancel (left) and
+        // Save (right) at the same size. The three nested divs let it open by height without clipping its shadow.
+        if (i === editing) {
+          addedRows.push(\`
+            <div class="source-edit" role="group" aria-label="Edit source \${i + 1}">
+              <div class="source-edit-inner">
+                <div class="source-edit-box">
+                  <textarea id="sourceInput\${i}" class="source-row-input" rows="1" placeholder="Paste a source here" aria-label="Source \${i + 1}" oninput="updateSourceRow(\${i}, this.value); autoGrow(this)">\${escapeHtml(val)}</textarea>
+                  <div class="source-edit-actions">
+                    <button type="button" class="btn-secondary btn-sm" onclick="cancelSourceRow(\${i})">Cancel</button>
+                    <button type="button" class="btn-primary btn-sm" onclick="confirmSourceRow(\${i})">Save</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          \`);
+        }
+      } else {
+        composerRows.push(\`
+          <div class="source-row\${dimCls}"\${dimAttr}>
+            <textarea id="sourceInput\${i}" class="source-row-input" rows="1" placeholder="Paste a source here" aria-label="Source \${i + 1}" oninput="updateSourceRow(\${i}, this.value); autoGrow(this)">\${escapeHtml(val)}</textarea>
+            <button type="button" class="btn-secondary btn-sm" aria-label="Save source \${i + 1}" onclick="confirmSourceRow(\${i})">Save</button>
+          </div>
+        \`);
+      }
+    });
+    // Count the added sources, not addedRows: while a box is open that array also holds the editor box.
+    const addedCount = state.editingUserSourcesAdded.filter(Boolean).length;
+    const headClass = editing !== -1 ? "source-table-head source-dim" : "source-table-head";
+    const headInert = editing !== -1 ? " inert" : "";
+    const sourceTable = addedCount ? \`<div class="source-table"><div class="\${headClass}"\${headInert}><span>Type</span><span>Source</span><span></span></div>\${addedRows.join("")}</div>\` : "";
     return \`
       <div class="card modal-card editor-card" role="dialog" aria-modal="true" aria-label="\${isEdit ? "Edit user" : "Add user"}">
         <div class="modal-title">\${isEdit ? "Edit user" : "Add user"}</div>
@@ -63,6 +120,13 @@ function renderModal() {
           </div>
           <input id="userUuidInput" disabled aria-labelledby="uuidLabel" placeholder="\${state.editingUserUuidRandom ? "Generated when you save" : "Set from the name when you save"}" value="\${escapeHtml(uuidFieldValue())}" />
         </div>
+        <div class="field-group">
+          <div class="field-head">
+            <label class="field-label" for="userSubTitleInput">Subscription Title</label>
+            \${infoTip("The default title is Vexa - {username}. You can enter your own title, and {username} is replaced with the name of the user. Leave it empty to use the default.", "below")}
+          </div>
+          <input id="userSubTitleInput" placeholder="Vexa - {username}" value="\${escapeHtml(state.editingUserSubscriptionTitle)}" oninput="updateSubscriptionTitle(this.value)" />
+        </div>
         \${renderNodePicker()}
         <div class="field-group">
           <div class="field-head">
@@ -70,25 +134,8 @@ function renderModal() {
             \${infoTip("A link, a subscription URL, JSON or Clash YAML. One source per box.", "below")}
           </div>
           <div class="source-repeater">
-            \${state.editingUserSources.map((val, i) => {
-              // An added source is a preview with Edit and Delete; an unadded one is an input with Add only.
-              if (state.editingUserSourcesAdded[i]) {
-                const preview = sourcePreview(val);
-                return \`
-              <div class="source-row source-row-added">
-                <div class="source-preview"><span class="source-type">\${escapeHtml(preview.type)}</span><span class="source-preview-text">\${escapeHtml(preview.text)}</span></div>
-                <button type="button" class="icon-btn" data-tip="Edit source" aria-label="Edit source \${i + 1}" onclick="editSourceRow(\${i})">\${icon("pencil")}</button>
-                <button type="button" class="icon-btn" data-tip="Delete source" aria-label="Delete source \${i + 1}" onclick="removeSourceRow(\${i})">\${icon("trash")}</button>
-              </div>
-            \`;
-              }
-              return \`
-              <div class="source-row">
-                <textarea id="sourceInput\${i}" class="source-row-input" rows="2" placeholder="Paste a source here" aria-label="Source \${i + 1}" oninput="updateSourceRow(\${i}, this.value); autoGrow(this)">\${escapeHtml(val)}</textarea>
-                <button type="button" class="btn-secondary btn-sm" aria-label="Add source \${i + 1}" onclick="confirmSourceRow(\${i})">\${icon("plus")}Add</button>
-              </div>
-            \`;
-            }).join("")}
+            \${sourceTable}
+            \${composerRows.join("")}
           </div>
         </div>
         <div class="error-text" id="userEditorError" role="alert"></div>

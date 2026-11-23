@@ -32,12 +32,16 @@ function escapeHtml(str) {
   return String(str == null ? "" : str).replace(/[&<>"']/g, c => "&#" + c.charCodeAt(0) + ";");
 }
 
-// One persistent #toast element: a new message replaces the text and restarts the 1800 ms timer.
-// Callers may still pass a second argument; there is no error variant, so it is ignored.
+// One persistent #toast element: a new message replaces the content and restarts the 1800 ms timer. The toast is
+// {icon} text: kind "error" shows the red error icon, any other value (or none) the green success icon. The text is
+// set with textContent, so a message is never parsed as HTML; the icon markup is fixed (icons.js).
 let toastTimer = null;
-function showToast(msg) {
+function showToast(msg, kind) {
   const toast = document.getElementById("toast");
-  toast.textContent = msg;
+  const text = document.createElement("span");
+  text.textContent = msg;
+  toast.innerHTML = icon(kind === "error" ? "toastError" : "toastSuccess");
+  toast.appendChild(text);
   toast.classList.add("show");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.remove("show"), 1800);
@@ -173,7 +177,7 @@ async function toggleRow(id, nextEnabled, request, renderRow) {
     if (row) {
       row.querySelectorAll(".status-dot").forEach(dot => dot.classList.remove("busy-on", "busy-off"));
     }
-    showToast(e.message);
+    showToast(e.message, "error");
   } finally {
     rowsToggling.delete(id);
   }

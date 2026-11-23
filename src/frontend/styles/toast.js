@@ -5,8 +5,11 @@ export const TOAST_CSS = `
   position: fixed; left: 50%; bottom: calc(var(--space-xl) + env(safe-area-inset-bottom, 0px));
   transform: translate(-50%, 20px); opacity: 0;
   background: var(--color-surface); border: 1px solid var(--color-border);
-  padding: 10px 18px; border-radius: var(--radius-lg);
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 18px 10px 14px; border-radius: var(--radius-lg);
   transition: .2s; pointer-events: none; z-index: 60;
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
+/* The status icon before the text (toastSuccess or toastError in icons.js). */
+#toast .ui-icon { width: 22px; height: 22px; flex: none; }
 `;

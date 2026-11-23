@@ -116,6 +116,7 @@ export async function createUser(request, env) {
   const { sources, invalid } = normalizeSources(body.sources || []);
   const nodeIds = await resolveValidNodeIds(env, body.nodeIds);
   const name = body.name.trim();
+  const subscriptionTitle = cleanSubscriptionTitle(body.subscriptionTitle);
   // Random UUID by default; uuidRandom: false uses the username as the id.
   const uuidRandom = body.uuidRandom !== false;
   let id = crypto.randomUUID();
@@ -139,6 +140,7 @@ export async function createUser(request, env) {
     name,
     enabled: true,
     uuidRandom,
+    subscriptionTitle,
     sources,
     nodeIds,
     createdAt: now,
@@ -184,6 +186,7 @@ export async function updateUser(id, request, env) {
   let renamed = false;
   let invalid = [];
   let sourcesChanged = false;
+  let titleChanged = false;
   const oldName = current.name;
   const beforeSources = current.sources || [];
   const beforeSub = beforeSources.filter(
@@ -234,6 +237,15 @@ export async function updateUser(id, request, env) {
     current.enabled = body.enabled;
     toggled = true;
   }
+  // Subscription title: applied only when it is a string that differs from the stored one. A blank
+  // string clears the custom title, so the default title is used again.
+  if (body && typeof body.subscriptionTitle === "string") {
+    const title = cleanSubscriptionTitle(body.subscriptionTitle);
+    if (title !== (current.subscriptionTitle || "")) {
+      current.subscriptionTitle = title;
+      titleChanged = true;
+    }
+  }
   if (body && body.sources) {
     const result = normalizeSources(body.sources);
     // Reject the whole save so a rejected edit cannot wipe the previous valid source.
@@ -267,14 +279,14 @@ export async function updateUser(id, request, env) {
   }
 
   // Nothing changed (a Save without edits): no write, no edit time, no log entry.
-  if (!renamed && !toggled && !sourcesChanged && !nodeIdsChanged && !idChanged) {
+  if (!renamed && !toggled && !sourcesChanged && !nodeIdsChanged && !idChanged && !titleChanged) {
     current.nodeIds = existingNodeIds;
     return json({ user: current, invalidSources: invalid });
   }
   const now = Date.now();
   // updatedAt is the last subscription fetch (public-sub.js), so a panel change leaves it alone.
-  // A rename, a sources change, a Node link change, an Enable / Disable or a new id is an edit.
-  if (renamed || sourcesChanged || nodeIdsChanged || toggled || idChanged) current.editedAt = now;
+  // A rename, a title change, a sources change, a Node link change, an Enable / Disable or a new id is an edit.
+  if (renamed || titleChanged || sourcesChanged || nodeIdsChanged || toggled || idChanged) current.editedAt = now;
 
   // DK-19: when the Node links change, the User row update and the
   // user_nodes replacement must commit or fail together:
@@ -364,6 +376,12 @@ export async function deleteUser(id, env) {
 function usernameToId(name) {
   const id = String(name).trim().replace(/\s/g, "_");
   return /^[A-Za-z0-9_-]+$/.test(id) ? id : null;
+}
+
+// Custom subscription title: a trimmed string. Anything else, or a blank string, gives "", which
+// means the default title is used (see handlePublicUserSub() in public-sub.js).
+function cleanSubscriptionTitle(value) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 // A random id has the canonical lowercase UUID shape, the one crypto.randomUUID() returns.

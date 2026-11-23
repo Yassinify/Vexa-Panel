@@ -63,7 +63,7 @@ export const TABLES_CSS = `/* Scrolls sideways when the table is narrow, never v
    motion backwards; .closing is set by closeRowMenus() (client/helpers.js) while it runs, then removed. A closing
    popup ignores the pointer, so it cannot be clicked while it fades out. */
 .row-menu-popup.open { display: flex; animation: account-menu-in .16s ease-out; }
-.row-menu-popup.closing { display: flex; pointer-events: none; animation: account-menu-out .16s ease-in forwards; }
+.row-menu-popup.closing { display: flex; pointer-events: none; animation: account-menu-out .16s ease-in forwards; animation-delay: calc(var(--wave-out-total) - .16s); }
 .row-menu-popup.above { --account-menu-shift: 6px; }
 @media (prefers-reduced-motion: reduce) { .row-menu-popup.open, .row-menu-popup.closing { animation: none; } }
 /* Items look like the Dashboard range items, each with its icon before the label. */
@@ -75,6 +75,36 @@ export const TABLES_CSS = `/* Scrolls sideways when the table is narrow, never v
 .row-menu-item:hover { background: var(--color-surface-alt); color: var(--color-text); }
 .row-menu-item:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }
 .row-menu-item .ui-icon { width: 16px; height: 16px; flex: none; }
+/* Wave on open: the options appear one after another with a vertical tap, like typing dots (written from scratch).
+   Each item starts hidden and low, rises a little past its place and settles; the delay grows by --wave-step per
+   item (nth-child, so the markup needs no index). Closing has its own, shorter motion (see below). */
+.row-menu-popup { --wave-step: 70ms; --wave-time: .38s; --wave-out-time: .2s; --wave-out-step: 40ms; --wave-out-total: calc(var(--wave-out-time) + var(--wave-out-step) * 2); }
+.row-menu-popup.open .row-menu-item { animation: row-menu-item-wave var(--wave-time) ease-out backwards; }
+.row-menu-popup.open .row-menu-item:nth-child(2) { animation-delay: calc(var(--wave-step) * 1); }
+.row-menu-popup.open .row-menu-item:nth-child(3) { animation-delay: calc(var(--wave-step) * 2); }
+.row-menu-popup.open .row-menu-item:nth-child(4) { animation-delay: calc(var(--wave-step) * 3); }
+.row-menu-popup.open .row-menu-item:nth-child(5) { animation-delay: calc(var(--wave-step) * 4); }
+.row-menu-popup.open .row-menu-item:nth-child(6) { animation-delay: calc(var(--wave-step) * 5); }
+@keyframes row-menu-item-wave {
+  0% { opacity: 0; transform: translateY(8px); }
+  55% { opacity: 1; transform: translateY(-3px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+/* Closing: each option fades out while dropping 6px, last option first (nth-last-child, so no item count is needed). It
+   is a shorter motion of its own, not the wave in reverse, whose upward overshoot and late fade looked poor. The popup's
+   own fade-out is delayed to the end of it (--wave-out-total is for the three items every row menu has), and
+   closeRowMenus() waits for the popup's animationend, so the options are never cut off. */
+@keyframes row-menu-item-out {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(6px); }
+}
+.row-menu-popup.closing .row-menu-item { animation: row-menu-item-out var(--wave-out-time) ease-in both; }
+.row-menu-popup.closing .row-menu-item:nth-last-child(2) { animation-delay: calc(var(--wave-out-step) * 1); }
+.row-menu-popup.closing .row-menu-item:nth-last-child(3) { animation-delay: calc(var(--wave-out-step) * 2); }
+.row-menu-popup.closing .row-menu-item:nth-last-child(4) { animation-delay: calc(var(--wave-out-step) * 3); }
+.row-menu-popup.closing .row-menu-item:nth-last-child(5) { animation-delay: calc(var(--wave-out-step) * 4); }
+.row-menu-popup.closing .row-menu-item:nth-last-child(6) { animation-delay: calc(var(--wave-out-step) * 5); }
+@media (prefers-reduced-motion: reduce) { .row-menu-popup.open .row-menu-item, .row-menu-popup.closing .row-menu-item { animation: none; } }
 /* Delete is the only destructive item, so it keeps the Danger Button's color. */
 .row-menu-item.danger, .row-menu-item.danger:hover { color: var(--color-primary); }
 .row-menu-item.danger:hover { background: rgba(225, 29, 72, .12); }

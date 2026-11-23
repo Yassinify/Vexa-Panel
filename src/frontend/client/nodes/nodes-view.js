@@ -61,7 +61,7 @@ function renderNodeRow(n) {
         <div class="row-actions">
           \${rowMenu([
             { label: "Edit", icon: "pencil", onclick: "openNode('" + n.id + "')" },
-            { label: n.enabled ? "Disable" : "Enable", icon: n.enabled ? "noSymbol" : "checkCircle", onclick: "toggleNodeEnabled('" + n.id + "')" },
+            { label: n.enabled ? "Disable" : "Enable", icon: n.enabled ? "pauseCircle" : "playCircle", onclick: "toggleNodeEnabled('" + n.id + "')" },
             { label: "Delete", icon: "trash", onclick: "askDeleteNode('" + n.id + "')", danger: true }
           ])}
         </div>
@@ -126,6 +126,6 @@ async function openNodeEditor() {
   state.editingNodeSource = "";
   state.modal = "nodeEditor";
   render();
-  if (!ok) showToast("Users could not be loaded");
+  if (!ok) showToast("Users could not be loaded", "error");
 }
 `;

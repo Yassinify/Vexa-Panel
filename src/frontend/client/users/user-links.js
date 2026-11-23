@@ -35,7 +35,7 @@ async function openMerge(id) {
     result = await apiFetch("/api/merge-preview", { method: "POST", body: JSON.stringify({ userId: id }) });
   } catch (e) {
     // A 401 already switched to the login view inside apiFetch().
-    if (e.message !== "unauthorized") showToast("Could not load the link - try again");
+    if (e.message !== "unauthorized") showToast("Could not load the link - try again", "error");
     setLinkLoading(id, false);
     return;
   } finally {
@@ -43,7 +43,7 @@ async function openMerge(id) {
   }
   if (!result || result.error) {
     setLinkLoading(id, false);
-    showToast("Could not load the link - try again");
+    showToast("Could not load the link - try again", "error");
     return;
   }
   state.modal = "merge";
@@ -83,7 +83,7 @@ async function copyLink(inputId = "subLinkInput") {
   } catch (e) {
     try { copied = document.execCommand("copy"); } catch (e2) {}
   }
-  showToast(copied ? "Link copied" : "Could not copy - select the link and copy it");
+  showToast(copied ? "Link copied" : "Could not copy - select the link and copy it", copied ? "success" : "error");
 }
 
 // Downloads the user's JSON configs as a .json file, from the JSON link the merge preview returned (jsonUrl).
@@ -94,11 +94,11 @@ async function downloadLink() {
   try {
     const res = await fetch(jsonUrl);
     if (res.status === 404) {
-      showToast("No JSON configs to download");
+      showToast("No JSON configs to download", "error");
       return;
     }
     if (!res.ok) {
-      showToast("Could not download the file");
+      showToast("Could not download the file", "error");
       return;
     }
     const blobUrl = URL.createObjectURL(await res.blob());
@@ -111,7 +111,7 @@ async function downloadLink() {
     URL.revokeObjectURL(blobUrl);
     showToast("Download started");
   } catch (e) {
-    showToast("Could not download the file");
+    showToast("Could not download the file", "error");
   }
 }
 `;

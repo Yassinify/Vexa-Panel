@@ -11,12 +11,14 @@ export const INIT_SCRIPT = `
   applyTheme(savedTheme);
 
   // Escape closes an open modal, the More menu, the account menus and the
-  // growth range dropdown.
+  // growth range dropdown. While a source editor box is open in the User editor,
+  // Escape cancels only that box and the popup stays open.
   document.addEventListener("keydown", e => {
     if (e.key !== "Escape") return;
     closeMoreMenu();
     closeAccountMenus();
     closeGrowthMenu();
+    if (state.modal === "userEditor" && cancelOpenSourceEdit()) return;
     if (state.modal) closeModal();
   });
 

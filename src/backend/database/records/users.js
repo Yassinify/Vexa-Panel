@@ -18,6 +18,8 @@ export function rowToUser(row, nodeIds) {
     editedAt: row.edited_at ?? row.created_at,
     // 1 = the id is a random UUID; 0 = the id is the username (a missing value reads as random).
     uuidRandom: row.uuid_random !== 0,
+    // Custom subscription title; "" (stored as NULL) means the default title is used.
+    subscriptionTitle: row.subscription_title || "",
   };
 }
 
@@ -36,7 +38,7 @@ export async function listUserRows(env) {
   return results;
 }
 
-// Full-record replace (name, enabled, sources, edited_at) - mirrors the
+// Full-record replace (name, enabled, sources, edited_at, subscription_title) - mirrors the
 // old KV pattern of writing the whole user:{uuid} record back on every
 // update, since D1's per-statement atomicity makes a partial-field UPDATE
 // no safer than a full one here. updated_at is not written here: it is the
@@ -45,13 +47,14 @@ export async function listUserRows(env) {
 export async function updateUserRow(env, user) {
   await env.DB
     .prepare(
-      `UPDATE users SET name = ?, enabled = ?, sources = ?, edited_at = ? WHERE id = ?`,
+      `UPDATE users SET name = ?, enabled = ?, sources = ?, edited_at = ?, subscription_title = ? WHERE id = ?`,
     )
     .bind(
       user.name,
       user.enabled !== false ? 1 : 0,
       JSON.stringify(user.sources || []),
       user.editedAt ?? null,
+      user.subscriptionTitle || null,
       user.id,
     )
     .run();

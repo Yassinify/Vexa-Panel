@@ -201,7 +201,7 @@ async function submitChangePassword() {
       // The session ended meanwhile: back to the login screen.
       state.modal = null;
       logout();
-      showToast("Session expired. Sign in again.");
+      showToast("Session expired. Sign in again.", "error");
       return;
     }
     let data = null;

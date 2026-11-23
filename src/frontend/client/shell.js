@@ -118,7 +118,7 @@ function navigate(view) {
     // A failed load shows its error message as a toast (R112, R125).
     .catch(err => {
       if (state.view !== view) return;
-      showToast(err && err.message ? err.message : "Could not load data");
+      showToast(err && err.message ? err.message : "Could not load data", "error");
     })
     .finally(() => { state.loading = false; renderAfterLoad(); });
 }

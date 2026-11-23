@@ -171,7 +171,7 @@ function renderUserRow(u) {
           <button class="btn-secondary btn-sm link-btn" onclick="openMerge('\${u.id}')">\${icon("link")}\${buttonSwap("Link")}</button>
           \${rowMenu([
             { label: "Edit", icon: "pencil", onclick: "openUser('" + u.id + "')" },
-            { label: u.enabled ? "Disable" : "Enable", icon: u.enabled ? "noSymbol" : "checkCircle", onclick: "toggleUserEnabled('" + u.id + "')" },
+            { label: u.enabled ? "Disable" : "Enable", icon: u.enabled ? "pauseCircle" : "playCircle", onclick: "toggleUserEnabled('" + u.id + "')" },
             { label: "Delete", icon: "trash", onclick: "askDeleteUser('" + u.id + "')", danger: true }
           ])}
         </div>

@@ -40,6 +40,9 @@ const state = {
   editingUserSources: null,
   // One boolean per editingUserSources entry: true once the source was added (shown as a preview), false while it is an input.
   editingUserSourcesAdded: null,
+  // One entry per editingUserSources entry: null, or the text the source had before Edit was clicked (Cancel puts it back).
+  // A source is open in the editor box under its row while its entry is not null; at most one is open at a time.
+  editingUserSourcesBackup: null,
   editingUserNodeIds: null,
   // The Name field of the open User editor, kept here so a redraw of the modal does not reset it.
   editingUserName: "",
@@ -49,6 +52,9 @@ const state = {
   // The random UUID the open User editor shows (the stored id, or a generated one). Regenerate replaces it;
   // Save sends it in random mode.
   editingUserUuid: "",
+  // The Subscription Title field of the open User editor, kept here so a redraw of the modal does not reset it.
+  // "" means the default title is used. Save sends it (user-editor.js).
+  editingUserSubscriptionTitle: "",
   editingNode: null,
   editingNodeSource: "",
   // The Node editor's User Selection: the enabled Users to show as cards (null = not available, so the section is

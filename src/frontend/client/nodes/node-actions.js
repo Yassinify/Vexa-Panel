@@ -41,7 +41,7 @@ async function openNode(id) {
   state.editingNodeSource = (node.source && (node.source.value || node.source.url)) || "";
   state.modal = "nodeEditor";
   render();
-  if (!ok) showToast("Users could not be loaded");
+  if (!ok) showToast("Users could not be loaded", "error");
 }
 
 // Writes into the modal's error line (R129); typed data stays in the open modal.

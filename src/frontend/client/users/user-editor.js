@@ -15,10 +15,12 @@ async function openUserEditor() {
   state.editingUserName = "";
   state.editingUserSources = [""];
   state.editingUserSourcesAdded = [false];
+  state.editingUserSourcesBackup = [null];
   state.editingUserNodeIds = [];
   // A new User starts with a random UUID, shown at once; the switch and Regenerate only change the display until Create.
   state.editingUserUuidRandom = true;
   state.editingUserUuid = newUuid();
+  state.editingUserSubscriptionTitle = "";
   state.modal = "userEditor";
   // Opens at once from the cached Node list.
   render();
@@ -69,6 +71,7 @@ async function recheckEditorNodes() {
 function removeSourceRow(i) {
   state.editingUserSources.splice(i, 1);
   state.editingUserSourcesAdded.splice(i, 1);
+  state.editingUserSourcesBackup.splice(i, 1);
   render();
 }
 
@@ -81,22 +84,86 @@ function confirmSourceRow(i) {
     showUserEditorError("Paste a source first.");
     return;
   }
+  // Save in the editor box of an added source: keep the text and close the box.
+  if (state.editingUserSourcesBackup[i] !== null) {
+    endSourceEdit(() => {
+      state.editingUserSources[i] = value;
+      state.editingUserSourcesBackup[i] = null;
+    });
+    return;
+  }
   state.editingUserSources[i] = value;
   state.editingUserSourcesAdded[i] = true;
+  state.editingUserSourcesBackup[i] = null;
   if (state.editingUserSourcesAdded[state.editingUserSourcesAdded.length - 1]) {
     state.editingUserSources.push("");
     state.editingUserSourcesAdded.push(false);
+    state.editingUserSourcesBackup.push(null);
   }
   showUserEditorError("");
   render();
 }
 
-// Turns the preview of row i back into its input, with the text as it was.
-function editSourceRow(i) {
-  state.editingUserSourcesAdded[i] = false;
+// A source is open for editing while its backup entry is not null (the text it had before Edit). Its row stays in the
+// table and the editor box opens under it (modals.js); the other rows and the new-source input are dimmed and inert.
+function openSourceEditIndex() {
+  return state.editingUserSourcesBackup ? state.editingUserSourcesBackup.findIndex(b => b !== null) : -1;
+}
+
+// render() rewrites the popup markup, which resets the scroll of the card; this keeps it, so the source stays in view.
+function renderKeepingScroll() {
+  const card = document.querySelector("#md .modal-card");
+  const top = card ? card.scrollTop : 0;
   render();
-  const input = document.getElementById("sourceInput" + i);
-  if (input) input.focus();
+  const next = document.querySelector("#md .modal-card");
+  if (next) next.scrollTop = top;
+}
+
+// Opens the editor box under row i; the text before Edit is kept for Cancel. No field is focused: the admin clicks or
+// taps the textarea to type (focusing it would open the keyboard on a phone).
+function editSourceRow(i) {
+  if (openSourceEditIndex() !== -1) return;
+  state.editingUserSourcesBackup[i] = state.editingUserSources[i];
+  renderKeepingScroll();
+}
+
+// Closes the editor box: the box and the dimming play their exit first (the classes are styled in styles/modals.js),
+// then apply() changes the state and the popup is redrawn. The exit is shorter than the enter. Nothing waits under
+// reduced motion. A second call while the exit plays is ignored.
+const SOURCE_EDIT_EXIT_MS = 120;
+let sourceEditExiting = false;
+function endSourceEdit(apply) {
+  if (sourceEditExiting) return;
+  sourceEditExiting = true;
+  const done = () => {
+    sourceEditExiting = false;
+    // The popup may have been closed while the exit played.
+    if (!state.editingUserSources) return;
+    apply();
+    showUserEditorError("");
+    renderKeepingScroll();
+  };
+  if (uuidMotionOff()) { done(); return; }
+  document.querySelectorAll("#md .source-edit").forEach(el => el.classList.add("closing"));
+  document.querySelectorAll("#md .source-dim").forEach(el => el.classList.add("undim"));
+  setTimeout(done, SOURCE_EDIT_EXIT_MS);
+}
+
+// Cancel in the editor box: the text goes back to what it was before Edit.
+function cancelSourceRow(i) {
+  if (state.editingUserSourcesBackup[i] === null) return;
+  endSourceEdit(() => {
+    state.editingUserSources[i] = state.editingUserSourcesBackup[i];
+    state.editingUserSourcesBackup[i] = null;
+  });
+}
+
+// Escape while a box is open cancels only the box (init.js); returns false when no box is open.
+function cancelOpenSourceEdit() {
+  const i = openSourceEditIndex();
+  if (i === -1) return false;
+  cancelSourceRow(i);
+  return true;
 }
 
 // Prefixes the server treats as a proxy link (classifySourceString() in protocols/sources.js).
@@ -141,6 +208,12 @@ function updateUserName(value) {
   if (state.editingUserUuidRandom) return;
   const field = document.getElementById("userUuidInput");
   if (field) field.value = uuidFieldValue();
+}
+
+// Keeps the typed Subscription Title, so a redraw of the editor does not reset the field. Writes the state only,
+// without a redraw, so the field keeps its caret while typing.
+function updateSubscriptionTitle(value) {
+  state.editingUserSubscriptionTitle = value;
 }
 
 // Writes into the modal's error line (R113); typed data stays in the open modal.
@@ -220,10 +293,12 @@ async function saveUser() {
   const id = isEdit ? state.editingUser.id : null;
   const name = document.getElementById("userNameInput").value.trim();
   if (!name) { showUserEditorError("Enter a user name."); return; }
-  const sources = state.editingUserSources.map(s => s.trim()).filter(Boolean);
+  // A box that is still open sends the saved text, not the unsaved draft.
+  const sources = state.editingUserSources.map((s, i) => (state.editingUserSourcesBackup[i] !== null ? state.editingUserSourcesBackup[i] : s).trim()).filter(Boolean);
   // Save is the only place the UUID mode and the UUID change: the mode is always sent, the UUID only in random mode.
   const body = JSON.stringify({
     name, sources, nodeIds: state.editingUserNodeIds,
+    subscriptionTitle: state.editingUserSubscriptionTitle,
     uuidRandom: state.editingUserUuidRandom,
     ...(state.editingUserUuidRandom ? { uuid: state.editingUserUuid } : {})
   });
@@ -244,7 +319,7 @@ async function saveUser() {
     else if (!isEdit) state.users.push({ createdAt: u.createdAt, ...row });
     closeModal();
     if (result.invalidSources && result.invalidSources.length) {
-      showToast(result.invalidSources.length + " line(s) skipped - invalid format");
+      showToast(result.invalidSources.length + " line(s) skipped - invalid format", "error");
     } else {
       showToast(isEdit ? "User saved" : "User added");
     }
@@ -278,17 +353,19 @@ async function openUser(id) {
     state.editingUserSourcesAdded = state.editingUserSources.map(() => true);
     state.editingUserSources.push("");
     state.editingUserSourcesAdded.push(false);
+    state.editingUserSourcesBackup = state.editingUserSources.map(() => null);
     state.editingUserNodeIds = (data.user.nodeIds || []).filter(nid =>
       state.nodes.some(n => n.id === nid && n.enabled !== false)
     );
     state.editingUserUuidRandom = data.user.uuidRandom !== false;
     // A random-mode User shows its stored id; a username-mode one gets a candidate for a switch to random.
     state.editingUserUuid = state.editingUserUuidRandom ? data.user.id : newUuid();
+    state.editingUserSubscriptionTitle = data.user.subscriptionTitle || "";
     state.modal = "userEditor";
     render();
     recheckEditorNodes();
   } catch (e) {
-    showToast(e.message);
+    showToast(e.message, "error");
   }
 }
 `;

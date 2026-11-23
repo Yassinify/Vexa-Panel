@@ -84,7 +84,12 @@ export async function handlePublicUserSub(id, request, env, url) {
     await recordActivity(env, `Updated subscription for user "${user.name}"`);
   }
 
-  const subtitle = `Vexa - ${user.name}`;
+  // A custom title replaces every {username} with the user's name (split/join, so a name that contains
+  // "$" is inserted as typed). No custom title, or one that ends up empty, uses the default title.
+  const customTitle = user.subscriptionTitle
+    ? user.subscriptionTitle.split("{username}").join(user.name).trim()
+    : "";
+  const subtitle = customTitle || `Vexa - ${user.name}`;
   const { nodes, jsonConfigs } = mergeResult;
   const explicitFormat = url.searchParams.get("format");
 
