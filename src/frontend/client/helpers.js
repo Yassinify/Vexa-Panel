@@ -40,28 +40,58 @@ function jalaliLabel(ms, timeZone, withDay, withYear) {
   return withDay ? name + " " + j.day : name + " " + j.year;
 }
 
-// "YYYY-MM-DD" in the browser's local time, in the calendar chosen in Settings (state.calendar); a dash for a
-// missing or invalid value.
-function formatDate(ts) {
-  const d = new Date(ts);
-  if (!ts || isNaN(d.getTime())) return "-";
-  const pad = n => String(n).padStart(2, "0");
-  if (state.calendar === "jalali") {
-    const j = jalaliParts(d.getTime());
-    if (j) return j.year + "-" + pad(j.month) + "-" + pad(j.day);
+// Gregorian (English) month and weekday names, indexed by Date.getMonth() and Date.getDay().
+const GREGORIAN_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const GREGORIAN_WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+// Year, month (1-12), day, month name (monthShort: three letters for Gregorian, the full transliteration for Jalali)
+// and weekday name of a Date in the browser's local time, in the calendar chosen in Settings (state.calendar). A date
+// the browser cannot convert to Jalali falls back to Gregorian.
+function dateParts(d) {
+  const jalali = state.calendar === "jalali" ? jalaliParts(d.getTime()) : null;
+  if (jalali) {
+    const name = JALALI_MONTHS[jalali.month - 1];
+    return { year: jalali.year, month: jalali.month, day: jalali.day, monthName: name, monthShort: name, weekday: JALALI_WEEKDAYS[d.getDay()] };
   }
-  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  const name = GREGORIAN_MONTHS[d.getMonth()];
+  return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate(), monthName: name, monthShort: name.slice(0, 3), weekday: GREGORIAN_WEEKDAYS[d.getDay()] };
 }
 
-// "Thursday | 2026-10-29 | 14:55:13" in the browser's local time (24-hour, with seconds), used as a
-// hover tooltip; a dash for a missing or invalid value. The weekday and the date follow state.calendar.
-function formatDateTooltip(ts) {
+// Short date text for a style key: "iso" (2026-02-15) or "month-day-year" (Nov 16, 2026). Any other key gives the
+// default iso look.
+function shortDateText(parts, style) {
+  if (style === "month-day-year") return parts.monthShort + " " + parts.day + ", " + parts.year;
+  const pad = n => String(n).padStart(2, "0");
+  return parts.year + "-" + pad(parts.month) + "-" + pad(parts.day);
+}
+
+// Long date as [weekday, rest] for a style key: "weekday-month-day-year" (Sunday | February 15, 2026),
+// "weekday-day-month-year" (Sunday | 15 February, 2026) or "weekday-iso" (Sunday | 2026-02-15). Any other key gives
+// the default weekday-iso look. The two parts are kept apart because the tooltip shows the weekday as a muted label.
+function longDateParts(parts, style) {
+  if (style === "weekday-month-day-year") return [parts.weekday, parts.monthName + " " + parts.day + ", " + parts.year];
+  if (style === "weekday-day-month-year") return [parts.weekday, parts.day + " " + parts.monthName + ", " + parts.year];
+  return [parts.weekday, shortDateText(parts, "iso")];
+}
+
+// The short date in the browser's local time, in the calendar chosen in Settings (state.calendar) and the short style
+// (state.shortDateFormat, or the style key passed as the second argument); a dash for a missing or invalid value.
+function formatDate(ts, style) {
   const d = new Date(ts);
   if (!ts || isNaN(d.getTime())) return "-";
-  const jalali = state.calendar === "jalali" && jalaliParts(d.getTime());
-  const weekday = jalali ? JALALI_WEEKDAYS[d.getDay()] : d.toLocaleDateString("en-US", { weekday: "long" });
+  return shortDateText(dateParts(d), style || state.shortDateFormat);
+}
+
+// "Thursday | 2026-10-29 | 14:55:13" in the browser's local time (24-hour, with seconds), used as a hover tooltip; a
+// dash for a missing or invalid value. The weekday and the date follow state.calendar and the long style
+// (state.longDateFormat, or the style key passed as the second argument), so the middle part can also be
+// "February 15, 2026" or "15 February, 2026".
+function formatDateTooltip(ts, style) {
+  const d = new Date(ts);
+  if (!ts || isNaN(d.getTime())) return "-";
+  const long = longDateParts(dateParts(d), style || state.longDateFormat);
   const time = [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, "0")).join(":");
-  return weekday + " | " + formatDate(ts) + " | " + time;
+  return long[0] + " | " + long[1] + " | " + time;
 }
 
 // Escapes & < > " ' as numeric entities, so the result is safe in both text and attribute values.

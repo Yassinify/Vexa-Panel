@@ -3,7 +3,7 @@ export const SETTINGS_CSS = `
 /* Card padding matches the reference .card (18px); each row adds its own 14px. */
 .settings-card { max-width: 560px; padding: 18px; }
 .setting-row {
-  display: flex; justify-content: space-between; align-items: center; gap: var(--space-lg);
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-sm) var(--space-lg);
   padding: 14px 0; border-bottom: 1px solid var(--color-border);
 }
 .setting-row:last-child { border-bottom: 0; }
@@ -15,5 +15,8 @@ export const SETTINGS_CSS = `
 /* Sections stack with a gap; each has a title above its card. The calendar dropdown (client/shell.js, growth dropdown styles) keeps its size. */
 .settings-section + .settings-section { margin-top: var(--space-xl); }
 .settings-section-title { margin: 0 0 var(--space-sm); font-size: var(--text-body-lg); font-weight: 600; color: var(--color-text); }
-.setting-row .calendar-dropdown { flex: none; }
+.setting-row .calendar-dropdown, .setting-row .date-format-dropdown { flex: none; }
+/* The date format dropdowns hold long examples ("Sunday February 15, 2026"); a row that is too narrow for the title and the
+   dropdown wraps the dropdown below the title (flex-wrap above). The Short menu has two items like the calendar menu. */
+.date-format-short .growth-menu { --wave-out-total: calc(var(--wave-out-time) + var(--wave-out-step)); }
 `;

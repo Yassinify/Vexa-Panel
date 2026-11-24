@@ -22,15 +22,14 @@ function logKind(message) {
   return LOG_KINDS.find(k => k.re.test(message)) || { icon: "log", tone: "primary" };
 }
 
-// Group label of one record: "Today", "Yesterday" or a short date (Jalali: "Aban 2, 1405"), by the local calendar day.
+// Group label of one record: "Today", "Yesterday" or the date in the short format chosen in Settings (formatDate() in
+// helpers.js: 2026-11-16 or Nov 16, 2026; Jalali: 1405-08-25 or Aban 25, 1405), by the local calendar day.
 function logDayLabel(ts) {
   const dayStart = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const diff = Math.round((dayStart(new Date()) - dayStart(new Date(ts))) / 86400000);
   if (diff <= 0) return "Today";
   if (diff === 1) return "Yesterday";
-  const jalali = state.calendar === "jalali" ? jalaliLabel(ts, null, true, true) : null;
-  if (jalali) return jalali;
-  return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  return formatDate(ts);
 }
 
 function renderLogView() {

@@ -313,7 +313,10 @@ function setCalendarMenuOpen(open) {
 }
 function toggleCalendarMenu() {
   const menu = document.getElementById("calendarMenu");
-  if (menu) setCalendarMenuOpen(!menu.classList.contains("open"));
+  if (!menu) return;
+  const willOpen = !menu.classList.contains("open");
+  closeDateFormatMenus();
+  setCalendarMenuOpen(willOpen);
 }
 function closeCalendarMenu() {
   setCalendarMenuOpen(false);
@@ -362,9 +365,92 @@ async function setCalendar(key) {
   }
 }
 
+// Date format dropdowns of the Settings view, one per kind. stateKey is the field in state and in the settings API
+// (the same name), choices are the style keys in menu order (the same keys as SHORT_DATE_FORMATS and LONG_DATE_FORMATS
+// in the server's records/settings.js). The ids of a dropdown are stateKey + "Btn" and stateKey + "Menu".
+const DATE_FORMAT_KINDS = {
+  short: { stateKey: "shortDateFormat", title: "Short Format", choices: ["iso", "month-day-year"] },
+  long: { stateKey: "longDateFormat", title: "Long Format", choices: ["weekday-month-day-year", "weekday-day-month-year", "weekday-iso"] }
+};
+
+// The text of a style choice: today's date written in that style, in the chosen calendar, so the menu shows real
+// examples ("2026-02-15", "Sunday February 15, 2026") and not style names.
+function dateFormatExample(kind, choice) {
+  const now = Date.now();
+  return kind === "short" ? formatDate(now, choice) : longDateParts(dateParts(new Date(now)), choice).join(" ");
+}
+
+// Date format dropdown, built like renderCalendarDropdown() with the same classes. The kind travels in data-kind, so
+// no inline handler carries text. A state value that is not a choice shows the first choice.
+function renderDateFormatDropdown(kind) {
+  const cfg = DATE_FORMAT_KINDS[kind];
+  const current = cfg.choices.includes(state[cfg.stateKey]) ? state[cfg.stateKey] : cfg.choices[0];
+  // The Long Format menu lists the saved choice first, then the others in their usual order.
+  const ordered = kind === "long" ? [current].concat(cfg.choices.filter(choice => choice !== current)) : cfg.choices;
+  const items = ordered.map(choice =>
+    '<button type="button" class="growth-item' + (choice === current ? ' active' : '') + '" role="menuitem" data-kind="' + kind + '" data-choice="' + choice + '" onclick="setDateFormat(this.dataset.kind, this.dataset.choice)">' + dateFormatExample(kind, choice) + '</button>'
+  ).join("");
+  return '<div class="growth-dropdown date-format-dropdown date-format-' + kind + '" data-kind="' + kind + '">' +
+    '<button type="button" class="growth-range" id="' + cfg.stateKey + 'Btn" data-kind="' + kind + '" aria-haspopup="menu" aria-expanded="false" aria-label="' + cfg.title + '" onclick="toggleDateFormatMenu(this.dataset.kind)">' + dateFormatExample(kind, current) + icon("chevron") + '</button>' +
+    '<div class="growth-menu" id="' + cfg.stateKey + 'Menu" role="menu">' + items + '</div>' +
+  '</div>';
+}
+
+// Open state of a date format menu, through setPopupOpen() like the calendar menu.
+function setDateFormatMenuOpen(kind, open) {
+  const cfg = DATE_FORMAT_KINDS[kind];
+  if (!cfg) return;
+  const menu = document.getElementById(cfg.stateKey + "Menu");
+  const button = document.getElementById(cfg.stateKey + "Btn");
+  if (!menu || !button) return;
+  setPopupOpen(menu, button, open);
+}
+// Closes every date format menu except the kind given (none given: all of them).
+function closeDateFormatMenus(exceptKind) {
+  Object.keys(DATE_FORMAT_KINDS).forEach(kind => {
+    if (kind !== exceptKind) setDateFormatMenuOpen(kind, false);
+  });
+}
+// Opening one dropdown closes the others, so only one menu is open at a time.
+function toggleDateFormatMenu(kind) {
+  const cfg = DATE_FORMAT_KINDS[kind];
+  const menu = cfg ? document.getElementById(cfg.stateKey + "Menu") : null;
+  if (!menu) return;
+  const willOpen = !menu.classList.contains("open");
+  closeCalendarMenu();
+  closeDateFormatMenus(kind);
+  setDateFormatMenuOpen(kind, willOpen);
+}
+
+// Saves the chosen date format on the server, then redraws the view so every date shows in it at once. It follows
+// setCalendar(): the menu closes at once on every pick, nothing is applied before the server confirms, the redraw
+// waits for the menu's exit, a failure shows a toast and keeps the old format, and a pick during a save is ignored.
+let dateFormatSaving = false;
+async function setDateFormat(kind, choice) {
+  const cfg = DATE_FORMAT_KINDS[kind];
+  if (!cfg || !cfg.choices.includes(choice)) return;
+  setDateFormatMenuOpen(kind, false);
+  if (choice === state[cfg.stateKey] || dateFormatSaving) return;
+  dateFormatSaving = true;
+  try {
+    const body = {};
+    body[cfg.stateKey] = choice;
+    const data = await apiFetch("/api/settings", { method: "PUT", body: JSON.stringify(body) });
+    if (!data || data[cfg.stateKey] !== choice) throw new Error("save_failed");
+    state[cfg.stateKey] = choice;
+    await popupClosed(document.getElementById(cfg.stateKey + "Menu"));
+    render();
+  } catch (e) {
+    // A 401 already showed the login view (apiFetch()).
+    if (!e || e.message !== "unauthorized") showToast("Could not save the date format", "error");
+  } finally {
+    dateFormatSaving = false;
+  }
+}
+
 // Routed Settings view (/settings); reuses the content of the former
-// Settings modal. Two titled sections in this order: Date & Time (Calendar), then Account (Change Password).
-// The lead line is visible text; the row description is the text of an info icon.
+// Settings modal. Two titled sections in this order: Date & Time (Calendar, Short Format and Long Format), then
+// Account (Change Password). The lead line is visible text; the row description is the text of an info icon.
 function renderSettingsView() {
   return \`
     <h2>Settings</h2>
@@ -377,6 +463,18 @@ function renderSettingsView() {
             <span class="setting-title">Calendar \${infoTip("Choose how dates are shown across the panel. The choice is saved on the server, so it applies in every browser.", "below")}</span>
           </div>
           \${renderCalendarDropdown()}
+        </div>
+        <div class="setting-row">
+          <div class="setting-text">
+            <span class="setting-title">Short Format \${infoTip("Used for dates in the Created at, Updated at and Edited at columns and for the days in the Logs. Hover a date to see it in the long format.", "below")}</span>
+          </div>
+          \${renderDateFormatDropdown("short")}
+        </div>
+        <div class="setting-row">
+          <div class="setting-text">
+            <span class="setting-title">Long Format \${infoTip("Used when you hover a date: the full date with the weekday, followed by the time. The choice is saved on the server, so it applies in every browser.", "below")}</span>
+          </div>
+          \${renderDateFormatDropdown("long")}
         </div>
       </div>
     </section>

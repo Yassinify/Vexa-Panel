@@ -11,25 +11,29 @@ export const INIT_SCRIPT = `
   applyTheme(savedTheme);
 
   // Escape closes an open modal, the More menu, the account menus, the
-  // growth range dropdown and the Settings calendar dropdown. While a source editor box is open in the User editor,
-  // Escape cancels only that box and the popup stays open.
+  // growth range dropdown and the Settings calendar and date format dropdowns. While a source editor box is open in
+  // the User editor, Escape cancels only that box and the popup stays open.
   document.addEventListener("keydown", e => {
     if (e.key !== "Escape") return;
     closeMoreMenu();
     closeAccountMenus();
     closeGrowthMenu();
     closeCalendarMenu();
+    closeDateFormatMenus();
     if (state.modal === "userEditor" && cancelOpenSourceEdit()) return;
     if (state.modal) closeModal();
   });
 
   // A click outside the More menu and its button closes the menu; the same
-  // for the account menus and the growth range dropdown.
+  // for the account menus, the growth range dropdown and the Settings dropdowns. A click inside one date format
+  // dropdown leaves that one to its own button and closes the other.
   document.addEventListener("click", e => {
     if (!e.target.closest(".more-wrap")) closeMoreMenu();
     if (!e.target.closest(".account-wrap")) closeAccountMenus();
     if (!e.target.closest(".growth-dropdown")) closeGrowthMenu();
     if (!e.target.closest(".calendar-dropdown")) closeCalendarMenu();
+    const formatDropdown = e.target.closest(".date-format-dropdown");
+    closeDateFormatMenus(formatDropdown ? formatDropdown.dataset.kind : undefined);
   });
 
   // A click on the dark area around the Subscription popup closes it. The press must

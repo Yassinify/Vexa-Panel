@@ -37,6 +37,10 @@ const state = {
   // Calendar used for every displayed date: "gregorian" or "jalali". Stored on the server; loaded after sign-in
   // (loadSettings() in api.js) and saved by setCalendar() in shell.js.
   calendar: "gregorian",
+  // Date styles (keys), stored on the server and loaded with the calendar (loadSettings() in api.js): the short style
+  // is shown in table cells and day labels, the long style in the hover tooltip. The defaults are today's look.
+  shortDateFormat: "iso",
+  longDateFormat: "weekday-iso",
 
   modal: null,
   editingUser: null,

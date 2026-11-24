@@ -101,10 +101,14 @@ function preloadData(currentView) {
   needed.forEach(load => load().catch(() => {}));
 }
 
-// Loads the panel settings. An error body or an unknown value keeps the default calendar (Gregorian).
+// Loads the panel settings. An error body or an unknown value keeps the default (Gregorian calendar, short style
+// iso, long style weekday-iso). The server only sends known date style keys; the formatters (helpers.js) show the
+// default look for any key they do not know.
 async function loadSettings() {
   const data = await apiFetch("/api/settings");
   if (data && (data.calendar === "gregorian" || data.calendar === "jalali")) state.calendar = data.calendar;
+  if (data && typeof data.shortDateFormat === "string") state.shortDateFormat = data.shortDateFormat;
+  if (data && typeof data.longDateFormat === "string") state.longDateFormat = data.longDateFormat;
 }
 
 // Sidebar view <-> URL path mapping, used by navigate() and init() for

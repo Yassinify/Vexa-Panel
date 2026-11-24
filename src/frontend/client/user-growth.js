@@ -14,12 +14,14 @@ export const USER_GROWTH_SCRIPT = `
 // across the whole range, and they are drawn as one smooth curve (monotone
 // cubic segments: no corners, no overshoot). With no recorded day at all no
 // line or area is drawn. The
-// x axis has 7 date labels spread evenly over the range (5, 4 or 3 on a narrower card). Classes
+// x axis has up to 7 date labels spread evenly over the range, fewer when they would not fit (growthXLabels()). Classes
 // live in styles/dashboard.js (.growth-*).
 // ---------------------------------------------------------------------
 const GROWTH_MS_PER_DAY = 86400000;
-// Most date labels under the chart (a wide card); a narrower card shows fewer, see growthLabelCount().
+// Most date labels under the chart; fewer are drawn when they would not fit, see growthXLabels().
 const GROWTH_LABELS = 7;
+// Least free space in px between two neighbouring date labels.
+const GROWTH_LABEL_GAP = 8;
 // Ranges in menu order. days = number of daily slots; months = label as
 // "Oct 2026" instead of "Oct 27".
 const GROWTH_RANGES = {
@@ -31,16 +33,53 @@ const GROWTH_RANGES = {
 // the first measurement); the plot runs from x = 30 to x = W - 10 and from y = 10 (top gridline) to y = 180.
 let growthW = 600;
 const GROWTH_H = 200;
-// From this chart width up the card is wide: 7 date labels, all centered. Narrower, the first label starts at the
-// left edge of the plot and the last ends at its right edge, so none is cut off.
-const GROWTH_WIDE = 520;
+// Width in px of a date label as drawn (10px, the page font). Measured on a canvas, so the longer Jalali names
+// ("Ordibehesht 1405") get their real width; a length based estimate is the fallback.
+let growthMeasureCtx = null;
+function growthTextWidth(text) {
+  try {
+    if (!growthMeasureCtx) growthMeasureCtx = document.createElement("canvas").getContext("2d");
+    growthMeasureCtx.font = "10px " + getComputedStyle(document.body).fontFamily;
+    const width = growthMeasureCtx.measureText(text).width;
+    if (width > 0) return width;
+  } catch (e) {
+    // No canvas: use the estimate below.
+  }
+  return text.length * 6;
+}
 
-// How many date labels fit under the chart at its current width. The widest label ("Aban 1405") is about 50px.
-function growthLabelCount() {
-  if (growthW >= GROWTH_WIDE) return GROWTH_LABELS;
-  if (growthW >= 400) return 5;
-  if (growthW >= 280) return 4;
-  return 3;
+// Date labels under the chart as [{ text, x, anchor }] (SVG text attributes). Tries 7 labels first and drops to
+// fewer (down to 2) until every pair of neighbours has at least GROWTH_LABEL_GAP px between them. A label is
+// centered on its slot; one that would pass the left or right edge of the SVG (0 and W) is anchored to that edge
+// instead, so none leaves the card. px(slot) gives the x of a slot and lastSlotMs is the UTC time of the newest slot.
+function growthXLabels(slots, lastSlotMs, range, px, W) {
+  let layout = [];
+  for (let count = GROWTH_LABELS; count >= 2; count--) {
+    layout = [];
+    for (let i = 0; i < count; i++) {
+      const slot = Math.round((i * (slots - 1)) / (count - 1));
+      const ms = lastSlotMs - (slots - 1 - slot) * GROWTH_MS_PER_DAY;
+      const text = range.months ? growthMonthLabel(ms) : growthDayLabel(ms);
+      const width = growthTextWidth(text);
+      const center = px(slot);
+      let x = center;
+      let anchor = "middle";
+      let left = center - width / 2;
+      if (left < 0) {
+        x = 0;
+        anchor = "start";
+        left = 0;
+      } else if (center + width / 2 > W) {
+        x = W;
+        anchor = "end";
+        left = W - width;
+      }
+      layout.push({ text, x, anchor, left, right: left + width });
+    }
+    const fits = layout.every((item, i) => i === 0 || item.left - layout[i - 1].right >= GROWTH_LABEL_GAP);
+    if (fits) break;
+  }
+  return layout;
 }
 
 // "Sep 15" (Jalali: "Aban 2") for a UTC timestamp (the API's days are UTC calendar days).
@@ -134,17 +173,11 @@ function growthChartSvg(series) {
     '<text class="growth-label" fill="currentColor" font-size="10" x="0" y="' + (py(v) + 4) + '">' + v + '</text>'
   ).join("");
 
-  // Date labels at evenly spaced slots (7 on a wide card, fewer on a narrow one), so they stay even when slots are empty.
-  const labelCount = growthLabelCount();
-  const narrow = W < GROWTH_WIDE;
+  // Date labels at evenly spaced slots (up to 7, fewer when they would not fit), so they stay even when slots are empty.
   let xLabels = "";
-  for (let i = 0; i < labelCount; i++) {
-    const slot = Math.round((i * (slots - 1)) / (labelCount - 1));
-    const ms = lastSlotMs - (slots - 1 - slot) * GROWTH_MS_PER_DAY;
-    const text = range.months ? growthMonthLabel(ms) : growthDayLabel(ms);
-    const anchor = narrow && i === 0 ? "start" : narrow && i === labelCount - 1 ? "end" : "middle";
-    xLabels += '<text class="growth-label" fill="currentColor" font-size="10" text-anchor="' + anchor + '" x="' + px(slot) + '" y="' + (GROWTH_H + 4) + '">' + text + '</text>';
-  }
+  growthXLabels(slots, lastSlotMs, range, px, W).forEach((label) => {
+    xLabels += '<text class="growth-label" fill="currentColor" font-size="10" text-anchor="' + label.anchor + '" x="' + label.x + '" y="' + (GROWTH_H + 4) + '">' + label.text + '</text>';
+  });
 
   // The line and the area need at least one recorded day; with none only the grid and labels show.
   // Both use the same smooth path; the area closes along the baseline.

@@ -101,11 +101,14 @@ const SCHEMA_STATEMENTS = [
     admin_password_hash TEXT NOT NULL,
     jwt_secret TEXT NOT NULL
   )`,
-  // Singleton panel settings. calendar is 'gregorian' or 'jalali' (validated by
-  // the settings handler); the default row keeps existing installs on Gregorian.
+  // Singleton panel settings. calendar is 'gregorian' or 'jalali'; short_date_format and
+  // long_date_format are style keys (all validated by the settings handler). The defaults keep
+  // existing installs on Gregorian and on today's date look (2026-02-15 and Sunday 2026-02-15).
   `CREATE TABLE IF NOT EXISTS settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
-    calendar TEXT NOT NULL DEFAULT 'gregorian'
+    calendar TEXT NOT NULL DEFAULT 'gregorian',
+    short_date_format TEXT NOT NULL DEFAULT 'iso',
+    long_date_format TEXT NOT NULL DEFAULT 'weekday-iso'
   )`,
   `INSERT OR IGNORE INTO settings (id, calendar) VALUES (1, 'gregorian')`,
   // The one and only stats row, created once. Every later change is a
@@ -171,6 +174,27 @@ async function ensureNodesEditedAtColumn(env) {
   }
 }
 
+// Same for settings.short_date_format and settings.long_date_format: databases created before them keep their
+// old settings table, so the columns are added here with the defaults (today's date look).
+async function ensureSettingsDateFormatColumns(env) {
+  const { results } = await env.DB.prepare(`PRAGMA table_info(settings)`).all();
+  const columns = [
+    ["short_date_format", "iso"],
+    ["long_date_format", "weekday-iso"],
+  ];
+  for (const [name, fallback] of columns) {
+    if (results.some((col) => col.name === name)) continue;
+    try {
+      await env.DB
+        .prepare(`ALTER TABLE settings ADD COLUMN ${name} TEXT NOT NULL DEFAULT '${fallback}'`)
+        .run();
+    } catch (err) {
+      // Another isolate may have added it between the check and the ALTER.
+      if (!/duplicate column/i.test(String(err && err.message))) throw err;
+    }
+  }
+}
+
 let schemaReadyPromise = null;
 
 // Runs the schema bootstrap at most once per isolate (cached in
@@ -186,6 +210,7 @@ export function ensureD1Ready(env) {
       await ensureUsersUuidRandomColumn(env);
       await ensureUsersSubscriptionTitleColumn(env);
       await ensureNodesEditedAtColumn(env);
+      await ensureSettingsDateFormatColumns(env);
     })().catch((err) => {
       schemaReadyPromise = null;
       throw err;
