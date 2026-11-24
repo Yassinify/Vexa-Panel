@@ -266,6 +266,8 @@ async function bootAuthenticated() {
     await Promise.all([loadSettings().catch(() => {}), loadViewData(state.view)]);
     // The first view is loaded: load the other sections in the background, so opening them later finds their data in memory.
     preloadData(state.view);
+    // Check for a newer version on GitHub (client/update-check.js): once now, then once per hour while signed in.
+    startUpdateChecks();
   } finally {
     state.loading = false;
     renderAfterLoad();

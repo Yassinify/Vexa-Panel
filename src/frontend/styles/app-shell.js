@@ -22,6 +22,17 @@ export const APP_SHELL_CSS = `
 .brand-version { position: relative; text-decoration: none; cursor: pointer; transition: color .15s ease, border-color .15s ease; }
 .brand-version:hover { color: var(--color-text); border-color: var(--color-muted); }
 .brand-version:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+/* Update notice (client/update-check.js): while a newer version is on GitHub the label becomes a fixed orange box,
+   52px by 20px (the height of the version label), with only the word Update in white. The size never changes: the
+   typed letters stay laid out while hidden, and the script lowers the font size (10px down to 7px) if the word does
+   not fit. Cloudflare Tangerine #F6821F with white text. Overflow stays visible so the popup below it is not clipped. */
+.sidebar-brand .brand-version.update-notice, .topbar-brand .brand-version.update-notice {
+  display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; width: 52px; height: 20px; padding: 0 4px;
+  background: #F6821F; border-color: #F6821F; color: #FFFFFF; font-size: 10px; font-weight: 600; line-height: 1;
+}
+.sidebar-brand .brand-version.update-notice:hover, .topbar-brand .brand-version.update-notice:hover { color: #FFFFFF; border-color: #F6821F; filter: brightness(1.08); }
+.update-word { display: inline-block; white-space: nowrap; }
+.update-char.untyped { visibility: hidden; }
 /* The popup looks and behaves like the date tooltip (.date-tip, styles/tables.js): the same surface, 12px radius,
    padding, caption font in normal weight, 10px arrow and 12px gap to the label. It waits --tip-delay before it opens
    (500 ms, or 350 ms at 760px and below, as DATE_TIP_DELAY_MS in client/users/users-view.js), then fades in while sliding 6px, as the other

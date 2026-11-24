@@ -87,9 +87,15 @@ function themeToggleMarkup() {
 // Version label: a link to the project's GitHub page. Hovering or focusing it
 // shows a small popup with the GitHub mark and the project name (CSS only, see
 // .version-pop in styles/app-shell.js). Used in the sidebar and the compact topbar.
+// While updateAvailable is true (client/update-check.js) the label is the orange Update notice instead: it shows only
+// the word (one span per letter, so the typing can run) and links to the Releases page.
 function versionLink() {
-  return '<a class="brand-version" href="${GITHUB_REPO_URL}" target="_blank" rel="noopener noreferrer" onclick="dismissVersionPop(this)" onmouseleave="restoreVersionPop(this)" onblur="restoreVersionPop(this, true)" aria-label="Vexa Panel v${VEXA_VERSION} on GitHub">v${VEXA_VERSION}' +
-    '<span class="version-pop" role="tooltip"><svg class="version-pop-logo" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">${GITHUB_MARK_PATH}</svg>${GITHUB_REPO_NAME}</span></a>';
+  const pop = '<span class="version-pop" role="tooltip"><svg class="version-pop-logo" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">${GITHUB_MARK_PATH}</svg>${GITHUB_REPO_NAME}</span>';
+  const handlers = 'onclick="dismissVersionPop(this)" onmouseleave="restoreVersionPop(this)" onblur="restoreVersionPop(this, true)"';
+  if (updateAvailable) {
+    return '<a class="brand-version update-notice" href="${GITHUB_REPO_URL}/releases" target="_blank" rel="noopener noreferrer" ' + handlers + ' aria-label="Update available. Open the Vexa Panel releases on GitHub">' + updateWordMarkup() + pop + '</a>';
+  }
+  return '<a class="brand-version" href="${GITHUB_REPO_URL}" target="_blank" rel="noopener noreferrer" ' + handlers + ' aria-label="Vexa Panel v${VEXA_VERSION} on GitHub">v${VEXA_VERSION}' + pop + '</a>';
 }
 
 // Version popup after a click: the link opens in a new window while the pointer is still over the label, so :hover
