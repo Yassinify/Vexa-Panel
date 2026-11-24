@@ -12,6 +12,14 @@ export const NODE_PICKER_SCRIPT = `
 // it only on a selected card.
 const NODE_CARD_TICK = '<svg class="node-card-tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5"/></svg>';
 
+// Tooltip text of a Node card: the source text (link, subscription URL, JSON or YAML) with whitespace collapsed and cut at
+// 200 characters. Empty when the Node has no source text, and then the card has no tooltip.
+function nodeTipText(node) {
+  const src = node.source || {};
+  const text = String(src.value || src.url || "").replace(/\\s+/g, " ").trim();
+  return text.length > 200 ? text.slice(0, 200) + "\\u2026" : text;
+}
+
 function renderNodePicker() {
   // With no Nodes at all (the list is loaded) the picker is an empty container: no label and no text.
   // The container stays so recheckEditorNodes() can still redraw it in place.
@@ -23,7 +31,9 @@ function renderNodePicker() {
       // The badge is the first letter of the name, upper case; escaped like every other piece of user text.
       const letter = escapeHtml(String(n.name || "?").trim().charAt(0).toUpperCase() || "?");
       const selected = state.editingUserNodeIds.includes(n.id);
-      return \`<button type="button" class="node-card" aria-pressed="\${selected}" title="\${name}" onclick="toggleNodeForUser('\${n.id}', this)"><span class="node-card-badge">\${letter}</span><span class="node-card-text"><span class="node-card-name">\${name}</span><span class="node-card-type">\${escapeHtml(nodeTypeLabel(n.source && n.source.type))}</span></span><span class="node-card-check">\${NODE_CARD_TICK}</span></button>\`;
+      const tip = nodeTipText(n);
+      const tipAttr = tip ? \` data-tip="\${escapeHtml(tip)}"\` : "";
+      return \`<button type="button" class="node-card" aria-pressed="\${selected}"\${tipAttr} onclick="toggleNodeForUser('\${n.id}', this)"><span class="node-card-badge">\${letter}</span><span class="node-card-text"><span class="node-card-name">\${name}</span><span class="node-card-type">\${escapeHtml(nodeTypeLabel(n.source && n.source.type))}</span></span><span class="node-card-check">\${NODE_CARD_TICK}</span></button>\`;
     }).join("");
   return \`
     <div class="field-group" id="nodePicker">

@@ -264,7 +264,7 @@ function playUuidSquash(el) {
 function toggleUuidMode() {
   const wasRandom = state.editingUserUuidRandom;
   state.editingUserUuidRandom = !wasRandom;
-  render();
+  renderKeepingScroll();
   if (uuidMotionOff()) return;
   const sw = document.querySelector("#md .field-head .switch");
   if (!sw) return;
@@ -284,7 +284,7 @@ function toggleUuidMode() {
 function regenerateUuid() {
   if (!state.editingUserUuidRandom) return;
   state.editingUserUuid = newUuid();
-  render();
+  renderKeepingScroll();
 }
 
 // Waits for the server with the modal open; the modal closes only on success.

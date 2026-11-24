@@ -18,7 +18,123 @@ function autoGrowAll() {
   document.querySelectorAll("#md textarea").forEach(autoGrow);
 }
 window.addEventListener("resize", autoGrowAll);
+
+// ---------------------------------------------------------------------
+// EDITOR TOOLTIP
+// ---------------------------------------------------------------------
+// The info tips and the Node picker card tips of the User and Node editors show through one shared element, #editorTip.
+// It is created on first use and appended to <body>, outside the popup, and it is position: fixed, so it takes no room in
+// the scrolling editor card and the card cannot clip it. (A pseudo-element tip is laid out even while hidden, which
+// widened and lengthened the card's scroll area; styles/modals.js switches those off inside .editor-card.) The script
+// keeps the tip inside the screen sideways, opens it below the trigger (above when there is no room) and points its arrow
+// at the trigger. Events are delegated on document because render() replaces the popup markup. The wait before it opens
+// is the date tooltip's (DATE_TIP_DELAY_MS and DATE_TIP_DELAY_COMPACT_MS, users-view.js).
+const EDITOR_TIP_TARGETS = ".editor-card .info-tip[data-tip], .editor-card .node-card[data-tip]";
+let editorTipTimer = null;
+
+function editorTipElement() {
+  let tip = document.getElementById("editorTip");
+  if (!tip) {
+    tip = document.createElement("div");
+    tip.id = "editorTip";
+    tip.className = "editor-tip";
+    tip.setAttribute("role", "tooltip");
+    document.body.appendChild(tip);
+  }
+  return tip;
+}
+
+// Waits for the tooltip delay, then opens the tip. A new target restarts the wait and hideEditorTip() cancels it. The
+// target may have been redrawn away during the wait, so it is checked first.
+function scheduleEditorTip(target) {
+  clearTimeout(editorTipTimer);
+  const delay = window.matchMedia("(max-width: 760px)").matches ? DATE_TIP_DELAY_COMPACT_MS : DATE_TIP_DELAY_MS;
+  editorTipTimer = setTimeout(() => {
+    if (target.isConnected) showEditorTip(target);
+  }, delay);
+}
+
+// Shows the tip with the target's data-tip text. It is opened first so it can be measured, then placed: centered on the
+// target and clamped to an 8px margin from the screen edges; below the target when it fits, else above when that fits,
+// else below. --tip-arrow-x keeps the arrow on the target's center.
+function showEditorTip(target) {
+  const tip = editorTipElement();
+  const gap = 12;
+  const margin = 8;
+  const viewWidth = document.documentElement.clientWidth;
+  const viewHeight = document.documentElement.clientHeight;
+  tip.textContent = target.getAttribute("data-tip");
+  tip.style.maxWidth = Math.min(260, viewWidth - 2 * margin) + "px";
+  tip.classList.remove("closing");
+  tip.classList.add("open");
+  const rect = target.getBoundingClientRect();
+  const width = tip.offsetWidth;
+  const height = tip.offsetHeight;
+  const fitsBelow = rect.bottom + gap + height + margin <= viewHeight;
+  const fitsAbove = rect.top - gap - height >= margin;
+  const below = fitsBelow || !fitsAbove;
+  const center = rect.left + rect.width / 2;
+  const maxLeft = Math.max(margin, viewWidth - width - margin);
+  const left = Math.min(Math.max(center - width / 2, margin), maxLeft);
+  tip.style.left = left + "px";
+  tip.style.top = (below ? rect.bottom + gap : rect.top - height - gap) + "px";
+  tip.style.setProperty("--tip-arrow-x", Math.min(Math.max(center - left, 14), Math.max(width - 14, 14)) + "px");
+  tip.classList.toggle("below", below);
+}
+
+// Closing plays the exit animation (.open becomes .closing, then both are removed), or hides at once under reduced
+// motion. A tip that is not open is left alone, because this also runs on every scroll event. It also cancels a tip that
+// is still waiting to open.
+function hideEditorTip() {
+  clearTimeout(editorTipTimer);
+  const tip = document.getElementById("editorTip");
+  if (!tip || !tip.classList.contains("open")) return;
+  tip.classList.remove("open");
+  tip.classList.add("closing");
+  if (getComputedStyle(tip).animationName === "none") {
+    tip.classList.remove("closing", "below");
+    return;
+  }
+  const finish = e => {
+    if (e.target !== tip) return;
+    tip.removeEventListener("animationend", finish);
+    // Skipped when a tip opened again meanwhile (showEditorTip() already removed .closing).
+    if (tip.classList.contains("closing")) tip.classList.remove("closing", "below");
+  };
+  tip.addEventListener("animationend", finish);
+}
+
+function editorTipTargetOf(e) {
+  return e.target instanceof Element ? e.target.closest(EDITOR_TIP_TARGETS) : null;
+}
+document.addEventListener("mouseover", e => {
+  const target = editorTipTargetOf(e);
+  if (target && !target.contains(e.relatedTarget)) scheduleEditorTip(target);
+});
+document.addEventListener("mouseout", e => {
+  const target = editorTipTargetOf(e);
+  if (target && !target.contains(e.relatedTarget)) hideEditorTip();
+});
+// Keyboard focus opens it; a mouse click focus does not (as :focus-visible before). On a touch screen a tap focuses the
+// target and opens it, because there is no hover.
+document.addEventListener("focusin", e => {
+  const target = editorTipTargetOf(e);
+  if (target && (target.matches(":focus-visible") || window.matchMedia("(hover: none)").matches)) scheduleEditorTip(target);
+});
+document.addEventListener("focusout", e => {
+  if (editorTipTargetOf(e)) hideEditorTip();
+});
+// A scroll (the popup card or the page; scroll does not bubble, so capture), a resize, any press and Escape close it, so
+// it never stays on screen after its target moved or was redrawn.
+window.addEventListener("scroll", hideEditorTip, true);
+window.addEventListener("resize", hideEditorTip);
+document.addEventListener("pointerdown", hideEditorTip, true);
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") hideEditorTip();
+});
+
 function closeModal() {
+  hideEditorTip();
   state.modal = null;
   state.mergeResult = null;
   state.editingUser = null;
@@ -108,9 +224,25 @@ function renderModal() {
     return \`
       <div class="card modal-card editor-card" role="dialog" aria-modal="true" aria-label="\${isEdit ? "Edit user" : "Add user"}">
         <div class="modal-title">\${isEdit ? "Edit user" : "Add user"}</div>
+        <div class="editor-section">
         <div class="field-group">
           <label><span class="field-label">Name</span><input id="userNameInput" placeholder="User name" value="\${escapeHtml(state.editingUserName)}" oninput="updateUserName(this.value)" /></label>
         </div>
+        </div>
+        <div class="editor-section">
+        \${renderNodePicker()}
+        <div class="field-group">
+          <div class="field-head">
+            <span class="field-label">Sources</span>
+            \${infoTip("A link, a subscription URL, JSON or Clash YAML. One source per box.", "below")}
+          </div>
+          <div class="source-repeater">
+            \${sourceTable}
+            \${composerRows.join("")}
+          </div>
+        </div>
+        </div>
+        <div class="editor-section">
         <div class="field-group">
           <div class="field-head">
             <span class="field-label" id="uuidLabel">UUID</span>
@@ -127,16 +259,6 @@ function renderModal() {
           </div>
           <input id="userSubTitleInput" placeholder="Vexa - {username}" value="\${escapeHtml(state.editingUserSubscriptionTitle)}" oninput="updateSubscriptionTitle(this.value)" />
         </div>
-        \${renderNodePicker()}
-        <div class="field-group">
-          <div class="field-head">
-            <span class="field-label">Sources</span>
-            \${infoTip("A link, a subscription URL, JSON or Clash YAML. One source per box.", "below")}
-          </div>
-          <div class="source-repeater">
-            \${sourceTable}
-            \${composerRows.join("")}
-          </div>
         </div>
         <div class="error-text" id="userEditorError" role="alert"></div>
         <div class="modal-footer">
@@ -150,9 +272,12 @@ function renderModal() {
   if (state.modal === "nodeEditor") {
     const n = state.editingNode;
     const isEdit = n && n.id;
+    // The User Selection is "" when it is not drawn (see renderUserPicker()); its section is then left out too.
+    const userPicker = renderUserPicker();
     return \`
       <div class="card modal-card editor-card" role="dialog" aria-modal="true" aria-label="\${isEdit ? "Edit node" : "Add node"}">
         <div class="modal-title">\${isEdit ? "Edit node" : "Add node"}</div>
+        <div class="editor-section">
         <div class="field-group">
           <label><span class="field-label">Name</span><input id="nodeNameInput" placeholder="Node name" value="\${isEdit ? escapeHtml(n.name) : ""}" /></label>
         </div>
@@ -160,7 +285,8 @@ function renderModal() {
           <div class="field-head"><label class="field-label" for="nodeSourceInput">Source</label>\${infoTip("A link, a subscription URL, JSON or Clash YAML. A node holds one source.", "below")}</div>
           <textarea id="nodeSourceInput" rows="3" placeholder="Paste a source here" oninput="autoGrow(this)">\${escapeHtml(state.editingNodeSource)}</textarea>
         </div>
-        \${renderUserPicker()}
+        </div>
+        \${userPicker ? \`<div class="editor-section">\${userPicker}</div>\` : ""}
         <div class="error-text" id="nodeEditorError" role="alert"></div>
         <div class="modal-footer">
           <button class="btn-secondary" onclick="closeModal()">Cancel</button>

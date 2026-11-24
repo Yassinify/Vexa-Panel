@@ -54,8 +54,9 @@ const MODALS_CSS = String.raw`
    stacked full-width buttons. */
 .modal-card.login-card { max-width: 380px; padding: var(--space-xxl); }
 .login-card .btn-full + .btn-full { margin-top: var(--space-sm); }
-/* User and Node editors: a wider card, so long sources fit. The two-class selector beats .modal-card. */
-.modal-card.editor-card { max-width: 480px; }
+/* User and Node editors: a wider card, so long sources fit. The two-class selector beats .modal-card. The card has no bottom
+   padding because the sticky footer below carries it, and scroll-padding-bottom keeps a focused field clear of that footer. */
+.modal-card.editor-card { max-width: 480px; padding-bottom: 0; scroll-padding-bottom: 80px; }
 .modal-title { font-size: var(--text-body); font-weight: 600; margin-bottom: var(--space-md); }
 .source-repeater { display: flex; flex-direction: column; gap: var(--space-sm); margin-bottom: var(--space-sm); }
 .source-row { display: flex; gap: var(--space-sm); align-items: flex-start; }
@@ -101,6 +102,8 @@ const MODALS_CSS = String.raw`
 .source-table-row:hover .source-table-actions, .source-table-row:focus-within .source-table-actions { opacity: 1; }
 @media (hover: none), (max-width: 760px) { .source-table-actions { opacity: 1; } }
 .source-table-actions .icon-btn { width: 28px; height: 28px; }
+/* Larger touch target where the buttons are always visible; the 36px row height does not change. */
+@media (hover: none), (max-width: 760px) { .source-table-actions .icon-btn { width: 32px; height: 32px; } }
 /* The "N sources" count at the right of the Sources label row. */
 .source-table-count { margin-left: auto; color: var(--color-muted); font-size: var(--text-caption); font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* Source editor box: opens under the added source being edited (client/modals/modals.js, client/users/user-editor.js).
@@ -153,6 +156,9 @@ const MODALS_CSS = String.raw`
 }
 
 /* --- User and Node editor fields --- */
+/* Editor sections (div.editor-section in client/modals/modals.js): related fields are grouped, and a hairline with extra
+   space above the next group shows where one group ends. The gap inside a section stays the 14px of .field-group. */
+.editor-section + .editor-section { margin-top: var(--space-xs); padding-top: var(--space-lg); border-top: 1px solid var(--color-border); }
 /* Label row: the title, an optional count pill after it and an optional button at the right edge. */
 .field-head { display: flex; align-items: center; gap: var(--space-sm); margin-bottom: 6px; }
 .field-head .field-label { margin-bottom: 0; }
@@ -220,6 +226,61 @@ const MODALS_CSS = String.raw`
 .node-card[aria-pressed="true"] .node-card-tick { opacity: 1; transform: none; }
 @media (max-width: 400px) {
   .node-cards { grid-template-columns: minmax(0, 1fr); }
+}
+/* Tooltip with the Node's source text on a Node picker card (data-tip, set by renderNodePicker()). It looks and moves like
+   .info-tip.below further down: the same surface, border, 12px radius, shadow and arrow, opening under the card after the
+   --tip-delay wait with a 160ms fade and a 6px slide, and closing at once. It opens below because a tip above would be cut
+   by the scrolling popup near its top. The bubble is at most 260px and never wider than the card, wraps long text, and is
+   right-aligned on the right-hand column so it stays inside the popup. The hovered card is raised so the tip covers its
+   neighbours. */
+.node-card[data-tip]::before, .node-card[data-tip]::after {
+  position: absolute; pointer-events: none; opacity: 0; visibility: hidden;
+  transition: opacity .16s ease-in, transform .16s ease-in, visibility 0s linear .16s;
+}
+.node-card[data-tip]::after {
+  content: attr(data-tip); left: 0; top: calc(100% + 12px); box-sizing: border-box; width: max-content; max-width: min(260px, 100%);
+  padding: var(--space-sm) var(--space-md); white-space: normal; overflow-wrap: anywhere; text-align: left;
+  font-size: var(--text-caption); font-weight: 400; line-height: 1.5; color: var(--color-text);
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); transform: translateY(-6px);
+}
+.node-card[data-tip]::before {
+  content: ""; z-index: 1; left: 24px; top: calc(100% + 7px); width: 10px; height: 10px;
+  background: var(--color-surface); border: solid var(--color-border); border-width: 1px 0 0 1px;
+  transform: translateY(-6px) rotate(45deg);
+}
+.node-card[data-tip]:nth-child(even)::after { left: auto; right: 0; }
+.node-card[data-tip]:nth-child(even)::before { left: auto; right: 24px; }
+@media (max-width: 400px) {
+  .node-card[data-tip]:nth-child(even)::after { left: 0; right: auto; }
+  .node-card[data-tip]:nth-child(even)::before { left: 24px; right: auto; }
+}
+.node-card[data-tip]:hover, .node-card[data-tip]:focus-visible { z-index: 2; }
+.node-card[data-tip]:hover::before, .node-card[data-tip]:hover::after,
+.node-card[data-tip]:focus-visible::before, .node-card[data-tip]:focus-visible::after {
+  opacity: 1; visibility: visible;
+  transition: opacity .16s ease-out var(--tip-delay), transform .16s ease-out var(--tip-delay), visibility 0s linear var(--tip-delay);
+}
+.node-card[data-tip]:hover::after, .node-card[data-tip]:focus-visible::after { transform: none; }
+.node-card[data-tip]:hover::before, .node-card[data-tip]:focus-visible::before { transform: rotate(45deg); }
+/* A touch screen has no hover and a tap does not always match :focus-visible, so there a tap (:focus) opens it. */
+@media (hover: none) {
+  .node-card[data-tip]:focus { z-index: 2; }
+  .node-card[data-tip]:focus::before, .node-card[data-tip]:focus::after {
+    opacity: 1; visibility: visible;
+    transition: opacity .16s ease-out var(--tip-delay), transform .16s ease-out var(--tip-delay), visibility 0s linear var(--tip-delay);
+  }
+  .node-card[data-tip]:focus::after { transform: none; }
+  .node-card[data-tip]:focus::before { transform: rotate(45deg); }
+}
+/* Reduced motion: the tip shows and hides at once (the global rule in reduced-motion.js does not reach pseudo-elements). */
+@media (prefers-reduced-motion: reduce) {
+  .node-card[data-tip]::before, .node-card[data-tip]::after,
+  .node-card[data-tip]:hover::before, .node-card[data-tip]:hover::after,
+  .node-card[data-tip]:focus-visible::before, .node-card[data-tip]:focus-visible::after { transition: none; }
+}
+@media (prefers-reduced-motion: reduce) and (hover: none) {
+  .node-card[data-tip]:focus::before, .node-card[data-tip]:focus::after { transition: none; }
 }
 /* Small square icon button (Remove): muted, with a soft error fill on hover like Sign out. */
 .icon-btn {
@@ -336,6 +397,39 @@ const MODALS_CSS = String.raw`
 @media (prefers-reduced-motion: reduce) and (hover: none) {
   .info-tip:focus::before, .info-tip:focus::after { transition: none; }
 }
+/* --- Shared tooltip of the User and Node editors --- */
+/* One element (#editorTip, created by editorTipElement() in client/modals/modals.js) shows the info tips and the Node picker
+   card tips of the two editors. It is position: fixed and appended to <body>, so it takes no room in the scrolling editor
+   card and the card cannot clip it. The look is the date tooltip's (styles/tables.js): surface, border, 12px radius, shadow
+   and a 10px arrow. The script sets left, top, max-width and --tip-arrow-x and toggles .open, .closing and .below (.below =
+   under the trigger). z-index 60 keeps it above the popup layer (#md, z-index 50). */
+.editor-tip {
+  display: none; position: fixed; z-index: 60; left: 0; top: 0; pointer-events: none;
+  box-sizing: border-box; width: max-content; max-width: 260px;
+  padding: var(--space-sm) var(--space-md); white-space: normal; overflow-wrap: anywhere; text-align: left;
+  font-size: var(--text-caption); font-weight: 400; line-height: 1.5; color: var(--color-text);
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --account-menu-shift: 6px;
+}
+/* Same fade and 6px slide as the date tooltip. Closing plays the same motion backwards; hideEditorTip() sets .closing while
+   it runs, then removes it. */
+.editor-tip.open { display: block; animation: account-menu-in .16s ease-out; }
+.editor-tip.closing { display: block; animation: account-menu-out .16s ease-in forwards; }
+.editor-tip.below { --account-menu-shift: -6px; }
+.editor-tip::after {
+  content: ""; position: absolute; bottom: -6px; left: var(--tip-arrow-x, 50%); margin-left: -5px;
+  width: 10px; height: 10px; background: var(--color-surface);
+  border: solid var(--color-border); border-width: 0 1px 1px 0; transform: rotate(45deg);
+}
+.editor-tip.below::after { top: -6px; bottom: auto; border-width: 1px 0 0 1px; }
+@media (prefers-reduced-motion: reduce) { .editor-tip.open, .editor-tip.closing { animation: none; } }
+/* Inside the editors the pseudo-element tips above are switched off: a hidden pseudo-element is still laid out and counted in
+   the card's scrollable overflow, which added horizontal scrolling and extra height. content: none removes the box. Their
+   tooltip text (data-tip) is shown by #editorTip instead. The three-class selector beats the earlier rules. Other popups and
+   pages keep the pseudo-element tips. */
+.editor-card .info-tip::before, .editor-card .info-tip::after,
+.editor-card .node-card[data-tip]::before, .editor-card .node-card[data-tip]::after { content: none; display: none; }
 /* --- UUID section of the User editor --- */
 /* The Regenerate button is disabled in username mode: it looks inactive and ignores hover. */
 .field-head .btn-sm:disabled { opacity: .5; cursor: not-allowed; }
@@ -365,6 +459,19 @@ const MODALS_CSS = String.raw`
 .switch[aria-checked="true"] .switch-knob { background: #fff; transform: translateX(18px); }
 .modal-footer { display: flex; gap: var(--space-md); margin-top: var(--space-sm); }
 .modal-footer button { flex: 1; }
+/* User and Node editors: Save and Cancel stay at the bottom edge of the scrolling card. The footer spans the card width
+   (the card padding is 18px), repeats the card surface so scrolled content hides behind it, and carries the bottom
+   padding the card does not have. The hairline and the upward shadow show where content scrolls under it; z-index 1 keeps
+   it above the page content but under a hovered tooltip (z-index 2). The shadow is stronger in the dark theme. */
+.editor-card > .modal-footer {
+  position: sticky; bottom: 0; z-index: 1;
+  margin: var(--space-sm) -18px 0; padding: var(--space-md) 18px 18px;
+  background: var(--color-surface);
+  box-shadow: 0 -1px 0 var(--color-border), 0 -12px 16px -10px rgba(0, 0, 0, 0.6);
+}
+:root[data-theme="light"] .editor-card > .modal-footer {
+  box-shadow: 0 -1px 0 var(--color-border), 0 -12px 16px -10px rgba(15, 23, 42, 0.18);
+}
 `;
 
 export { MODALS_CSS };
