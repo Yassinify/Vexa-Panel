@@ -317,6 +317,7 @@ async function saveUser() {
     const idx = isEdit ? state.users.findIndex(x => x.id === id) : -1;
     if (idx !== -1) state.users[idx] = { ...state.users[idx], ...row };
     else if (!isEdit) state.users.push({ createdAt: u.createdAt, ...row });
+    markDataStale("users", "stats");
     closeModal();
     if (result.invalidSources && result.invalidSources.length) {
       showToast(result.invalidSources.length + " line(s) skipped - invalid format", "error");

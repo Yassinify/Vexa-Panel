@@ -12,7 +12,8 @@ export const SETTINGS_CSS = `
 .setting-title { display: block; }
 .setting-desc { display: block; color: var(--color-muted); font-size: var(--text-caption); }
 .setting-row .btn-secondary { flex: none; white-space: nowrap; }
-/* Cards stack with a gap; the calendar dropdown (client/shell.js, growth dropdown styles) keeps its size. */
-.settings-card + .settings-card { margin-top: var(--space-lg); }
+/* Sections stack with a gap; each has a title above its card. The calendar dropdown (client/shell.js, growth dropdown styles) keeps its size. */
+.settings-section + .settings-section { margin-top: var(--space-xl); }
+.settings-section-title { margin: 0 0 var(--space-sm); font-size: var(--text-body-lg); font-weight: 600; color: var(--color-text); }
 .setting-row .calendar-dropdown { flex: none; }
 `;

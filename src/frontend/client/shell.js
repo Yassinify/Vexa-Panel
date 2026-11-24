@@ -104,6 +104,28 @@ function restoreVersionPop(link, fromBlur) {
   link.classList.remove("pop-off");
 }
 
+// How long loaded data counts as fresh (ms): a section whose data is younger is shown from memory with no request.
+const DATA_FRESH_MS = 30000;
+
+// Where a section's data stands in memory: "none" (never loaded), "fresh" (loaded within DATA_FRESH_MS) or "stale"
+// (in memory but older). Settings has no data to load, so it is always "fresh". Dashboard and Logs share the stats.
+function viewDataState(view) {
+  if (view === "settings") return "fresh";
+  const loadedAt = { dashboard: dataLoadedAt.stats, log: dataLoadedAt.stats, users: dataLoadedAt.users, nodes: dataLoadedAt.nodes }[view];
+  if (!loadedAt) return "none";
+  return Date.now() - loadedAt < DATA_FRESH_MS ? "fresh" : "stale";
+}
+
+// A string that changes when the data a section shows changes, so a background refresh redraws only on a real
+// difference. Lists are compared by id, not by order, because a sort click stores the displayed order in state.
+function viewDataSignature(view) {
+  const byId = list => [...list].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  if (view === "users") return JSON.stringify(byId(state.users));
+  if (view === "nodes") return JSON.stringify(byId(state.nodes));
+  if (view === "dashboard" || view === "log") return JSON.stringify([state.stats, state.activity, state.userGrowth]);
+  return "";
+}
+
 function navigate(view) {
   closeMoreMenu();
   closeAccountMenus();
@@ -111,16 +133,34 @@ function navigate(view) {
   state.errorMsg = "";
   const path = VIEW_PATHS[view];
   if (path && location.pathname !== path) history.pushState(null, "", path);
-  state.loading = true;
+  const dataState = viewDataState(view);
+  if (dataState === "none") {
+    // Nothing in memory yet: draw the loading state, load, then draw the result.
+    state.loading = true;
+    render();
+    loadViewData(view)
+      // Ignore a stale failure if the user has already moved to another view.
+      // A failed load shows its error message as a toast (R112, R125).
+      .catch(err => {
+        if (state.view !== view) return;
+        showToast(err && err.message ? err.message : "Could not load data", "error");
+      })
+      .finally(() => { state.loading = false; renderAfterLoad(); });
+    return;
+  }
+  // Data in memory: draw it at once, with no loading state.
+  state.loading = false;
   render();
+  // Fresh data needs no request. Older data is refreshed in the background; if the data changed and the user is still
+  // on this view, only the parts that differ are updated in place (refreshViewInPlace() in app/root-render.js).
+  // A failed refresh keeps what is shown, with no toast.
+  if (dataState === "fresh") return;
+  const before = viewDataSignature(view);
   loadViewData(view)
-    // Ignore a stale failure if the user has already moved to another view.
-    // A failed load shows its error message as a toast (R112, R125).
-    .catch(err => {
-      if (state.view !== view) return;
-      showToast(err && err.message ? err.message : "Could not load data", "error");
+    .then(() => {
+      if (state.view === view && viewDataSignature(view) !== before) refreshViewInPlace(view);
     })
-    .finally(() => { state.loading = false; renderAfterLoad(); });
+    .catch(() => {});
 }
 
 // Shared open/close for the More menu and the account menus. Opening adds
@@ -323,27 +363,34 @@ async function setCalendar(key) {
 }
 
 // Routed Settings view (/settings); reuses the content of the former
-// Settings modal. The lead line is visible text; the row description is the text of an info icon.
+// Settings modal. Two titled sections in this order: Date & Time (Calendar), then Account (Change Password).
+// The lead line is visible text; the row description is the text of an info icon.
 function renderSettingsView() {
   return \`
     <h2>Settings</h2>
     <p class="lead">Adjust how your panel behaves.</p>
-    <div class="card settings-card">
-      <div class="setting-row">
-        <div class="setting-text">
-          <span class="setting-title">Change Password \${infoTip("Rotates your admin password. Sessions and subscription links keep working. You will be signed out and must sign in again with the new password.", "below")}</span>
+    <section class="settings-section">
+      <h3 class="settings-section-title">Date &amp; Time</h3>
+      <div class="card settings-card">
+        <div class="setting-row">
+          <div class="setting-text">
+            <span class="setting-title">Calendar \${infoTip("Choose how dates are shown across the panel. The choice is saved on the server, so it applies in every browser.", "below")}</span>
+          </div>
+          \${renderCalendarDropdown()}
         </div>
-        <button class="btn-secondary btn-sm" onclick="openChangePasswordModal()">Change</button>
       </div>
-    </div>
-    <div class="card settings-card">
-      <div class="setting-row">
-        <div class="setting-text">
-          <span class="setting-title">Calendar \${infoTip("Choose how dates are shown across the panel. The choice is saved on the server, so it applies in every browser.", "below")}</span>
+    </section>
+    <section class="settings-section">
+      <h3 class="settings-section-title">Account</h3>
+      <div class="card settings-card">
+        <div class="setting-row">
+          <div class="setting-text">
+            <span class="setting-title">Change Password \${infoTip("Rotates your admin password. Sessions and subscription links keep working. You will be signed out and must sign in again with the new password.", "below")}</span>
+          </div>
+          <button class="btn-secondary btn-sm" onclick="openChangePasswordModal()">Change</button>
         </div>
-        \${renderCalendarDropdown()}
       </div>
-    </div>
+    </section>
   \`;
 }
 

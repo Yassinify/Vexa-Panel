@@ -45,7 +45,7 @@ function renderLogView() {
         const dayHtml = day === lastDay ? "" : \`<div class="log-day-label">\${escapeHtml(day)}</div>\`;
         lastDay = day;
         return \`\${dayHtml}
-        <div class="log-row" data-tone="\${kind.tone}">
+        <div class="log-row" data-tone="\${kind.tone}" data-log-key="\${escapeHtml(a.ts + "|" + a.message)}">
           <span class="log-icon">\${icon(kind.icon)}</span>
           <span class="activity-text"><span class="activity-title">\${escapeHtml(mapped.title)}</span>\${mapped.entity ? \`<span class="activity-entity">\${escapeHtml(mapped.entity)}</span>\` : ""}</span>
           \${activityTime(a.ts)}

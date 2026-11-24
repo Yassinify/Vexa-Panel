@@ -13,6 +13,7 @@ async function performDeleteUser(id) {
     const result = await apiFetch("/api/users/" + id, { method: "DELETE" });
     if (result.error) throw new Error(result.error);
     state.users = state.users.filter(u => u.id !== id);
+    markDataStale("users", "stats");
     closeModal();
     showToast("User deleted");
   } catch (e) {
@@ -32,6 +33,7 @@ async function toggleUserEnabled(id) {
     if (result.error) throw new Error(result.error);
     const idx = state.users.findIndex(u => u.id === id);
     if (idx !== -1) state.users[idx] = { ...state.users[idx], enabled: result.user.enabled, editedAt: result.user.editedAt };
+    markDataStale("users", "stats");
   }, () => {
     const updated = state.users.find(u => u.id === id);
     return updated ? renderUserRow(updated) : "";

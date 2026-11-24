@@ -81,6 +81,7 @@ async function saveNode() {
     } else {
       state.nodes.push(result.node);
     }
+    markDataStale("users", "stats");
     closeModal();
     showToast(isEdit ? "Node saved" : "Node added");
   } catch (e) {
@@ -103,6 +104,7 @@ async function performDeleteNode(id) {
     const result = await apiFetch("/api/nodes/" + id, { method: "DELETE" });
     if (result.error) throw new Error(result.error);
     state.nodes = state.nodes.filter(n => n.id !== id);
+    markDataStale("users", "stats");
     closeModal();
     showToast("Node deleted");
   } catch (e) {
@@ -122,6 +124,7 @@ async function toggleNodeEnabled(id) {
     if (result.error) throw new Error(result.error);
     const idx = state.nodes.findIndex(n => n.id === id);
     if (idx !== -1) state.nodes[idx] = result.node;
+    markDataStale("users", "stats");
   }, () => {
     const updated = state.nodes.find(n => n.id === id);
     return updated ? renderNodeRow(updated) : "";

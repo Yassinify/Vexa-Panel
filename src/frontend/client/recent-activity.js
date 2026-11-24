@@ -63,10 +63,11 @@ function renderRecentActivity() {
     ? items.map(a => {
         const mapped = mapActivity(a);
         const kind = logKind(a.message);
-        // Same row as the Logs page (renderLogView() in activity/activity-view.js).
+        // Same row as the Logs page (renderLogView() in activity/activity-view.js), including data-log-key, which
+        // patchDashboard() (app/root-render.js) compares to see whether the records changed.
         // The entity span is left out when the message has no entity.
         return \`
-        <div class="log-row" data-tone="\${kind.tone}">
+        <div class="log-row" data-tone="\${kind.tone}" data-log-key="\${escapeHtml(a.ts + "|" + a.message)}">
           <span class="log-icon">\${icon(kind.icon)}</span>
           <span class="activity-text"><span class="activity-title">\${escapeHtml(mapped.title)}</span>\${mapped.entity ? \`<span class="activity-entity">\${escapeHtml(mapped.entity)}</span>\` : ""}</span>
           \${activityTime(a.ts)}

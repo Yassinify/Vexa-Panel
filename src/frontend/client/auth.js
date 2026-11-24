@@ -148,6 +148,7 @@ async function doCreateAccount() {
 function logout() {
   state.token = null;
   localStorage.removeItem("vexa_token");
+  clearLoadedData();
   state.view = "login";
   history.pushState(null, "", "/login");
   render();
@@ -263,6 +264,8 @@ async function bootAuthenticated() {
   try {
     // The calendar is stored on the server; a failed settings load keeps the default (Gregorian).
     await Promise.all([loadSettings().catch(() => {}), loadViewData(state.view)]);
+    // The first view is loaded: load the other sections in the background, so opening them later finds their data in memory.
+    preloadData(state.view);
   } finally {
     state.loading = false;
     renderAfterLoad();

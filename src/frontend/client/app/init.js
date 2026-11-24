@@ -42,6 +42,22 @@ export const INIT_SCRIPT = `
     if (e.target.id === "md" && pressedOnOverlay && state.modal === "merge") closeModal();
   });
 
+  // When the tab becomes visible again, the open section is refreshed in the background if its data is older than
+  // the freshness window (DATA_FRESH_MS, shell.js). If the data changed, only the parts that differ are updated in
+  // place (refreshViewInPlace(), app/root-render.js). A section with no data, a load in progress and a failed refresh
+  // are left alone, as in navigate().
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || !state.token || state.loading) return;
+    const view = state.view;
+    if (viewDataState(view) !== "stale") return;
+    const before = viewDataSignature(view);
+    loadViewData(view)
+      .then(() => {
+        if (state.view === view && viewDataSignature(view) !== before) refreshViewInPlace(view);
+      })
+      .catch(() => {});
+  });
+
   if (state.token) {
     try {
       // The stored session is kept and the view comes from the URL path

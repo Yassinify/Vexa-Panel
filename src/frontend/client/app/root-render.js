@@ -153,4 +153,154 @@ function render() {
   window.scrollTo(0, 0);
   document.querySelector(".main")?.scrollTo(0, 0);
 }
+
+// Redraws like render() but keeps where the page is scrolled. Used by the background refreshes (navigate() in
+// shell.js, the tab-focus refresh in app/init.js), which redraw a section the admin is already reading, so the
+// page must not jump to the top. The page scroll and the .main scroll (the page does not scroll below 760px)
+// are saved before render() and put back after it; a page that became shorter is clamped by the browser.
+function renderKeepingPageScroll() {
+  const main = document.querySelector(".main");
+  const pageTop = window.scrollY;
+  const mainTop = main ? main.scrollTop : 0;
+  render();
+  window.scrollTo(0, pageTop);
+  const nextMain = document.querySelector(".main");
+  if (nextMain) nextMain.scrollTo(0, mainTop);
+}
+
+// ---------------------------------------------------------------------
+// IN-PLACE UPDATE (background refresh)
+// ---------------------------------------------------------------------
+// When a background refresh brings changed data into a section the admin is already looking at, only the parts
+// that differ are touched, so nothing else flickers, no hover, focus or open menu is lost and the page keeps its
+// scroll. Each patch function returns false when it cannot do its job (the section shows its empty state, or the
+// expected elements are missing); refreshViewInPlace() then draws the whole view with renderKeepingPageScroll().
+
+// Users and Nodes tables: updates the rows from list (already in display order) and renderRow. Rows are matched by
+// data-row-id: a row with the same markup keeps its element, a changed row is replaced, a new row is inserted at its
+// place and a row that is no longer in the list is removed. A row that waits for the server (rowsToggling in
+// helpers.js) or holds an open or closing row menu is left as it is for the next refresh, so its status dot animation
+// and its menu are not cut off. The markup a row was drawn with is kept in row._html, because the live row gains
+// classes and inline styles (an opened menu) that a fresh draw does not have. The date tooltip is hidden when any row
+// changes. Returns false when there is no table or the list is empty (the empty state is a different layout).
+function patchTableRows(list, renderRow) {
+  const tbody = document.querySelector("#view .data-table tbody");
+  if (!tbody || list.length === 0) return false;
+  const holder = document.createElement("tbody");
+  holder.innerHTML = list.map(renderRow).join("");
+  const existing = new Map();
+  Array.from(tbody.children).forEach(tr => existing.set(tr.dataset.rowId, tr));
+  let changed = false;
+  let prev = null;
+  Array.from(holder.children).forEach(fresh => {
+    const id = fresh.dataset.rowId;
+    const current = existing.get(id);
+    existing.delete(id);
+    const html = fresh.outerHTML;
+    const busy = Boolean(current) && (rowsToggling.has(id) || Boolean(current.querySelector(".row-menu-popup.open, .row-menu-popup.closing")));
+    const same = Boolean(current) && (current._html !== undefined ? current._html === html : current.outerHTML === html);
+    const keep = busy || same;
+    if (same) current._html = html;
+    if (!keep) { fresh._html = html; changed = true; }
+    const node = keep ? current : fresh;
+    const ref = prev ? prev.nextElementSibling : tbody.firstElementChild;
+    if (node !== ref) tbody.insertBefore(node, ref);
+    if (current && !keep) current.remove();
+    prev = node;
+  });
+  if (existing.size > 0) changed = true;
+  existing.forEach(tr => tr.remove());
+  if (changed) hideDateTip();
+  return true;
+}
+
+// Dashboard: writes the four stat numbers and the change lines into the existing cards, redraws only the growth
+// chart SVG when the growth series changed and swaps the Recent activity rows when their records changed. A count-up
+// still running is stopped first (the numbers are set to their final values at once) and the stats object is marked as
+// counted, so the next full render of the same data does not replay it. Returns false when the cards or the growth
+// card are not on the page.
+function patchDashboard() {
+  const view = document.getElementById("view");
+  const s = state.stats;
+  const cards = view ? Array.from(view.querySelectorAll(".stat-card")) : [];
+  if (!s || state.loading || cards.length !== 4 || !document.getElementById("growthCard")) return false;
+  const info = [
+    { num: s.totalUsers, prev: usersOneMonthAgo(state.userGrowth), delta: true },
+    { num: s.activeUsers },
+    { num: s.totalNodes, prev: s.previousTotalNodes, delta: true },
+    { num: s.activeNodes }
+  ];
+  statCountRun++;
+  cards.forEach((card, i) => {
+    const numEl = card.querySelector(".stat-card-num");
+    if (numEl) numEl.textContent = String(info[i].num);
+    const deltaEl = card.querySelector(".stat-card-delta");
+    if (info[i].delta && deltaEl) {
+      const delta = statDelta(info[i].num, info[i].prev);
+      deltaEl.className = "stat-card-delta " + delta.kind;
+      deltaEl.textContent = delta.text + " vs. last month";
+    }
+  });
+  view._countedStats = s;
+  // The chart is redrawn only when the growth series changed. A pending range swap draws the latest data itself
+  // (setGrowthRange() in user-growth.js), so nothing is done then and the next refresh checks again.
+  const growthCard = document.getElementById("growthCard");
+  const growthKey = JSON.stringify(state.userGrowth);
+  if (!growthExitPending && growthCard._growthKey !== growthKey) {
+    redrawGrowthSvg();
+    growthCard._growthKey = growthKey;
+  }
+  // The Recent activity rows are swapped only when the records changed (compared by data-log-key), so the relative
+  // times of unchanged rows are not rewritten.
+  const holder = document.createElement("div");
+  holder.innerHTML = renderRecentActivity();
+  const freshList = holder.querySelector(".activity-list");
+  const list = view.querySelector(".activity-list");
+  const keysOf = el => JSON.stringify(Array.from(el.querySelectorAll(".log-row")).map(row => row.dataset.logKey));
+  if (freshList && list && keysOf(list) !== keysOf(freshList)) {
+    hideDateTip();
+    list.innerHTML = freshList.innerHTML;
+  }
+  return true;
+}
+
+// Logs page: rows are matched by data-log-key (time and message of the record). When the rows and day labels are the
+// same nothing is touched. Otherwise a row that is already on the page keeps its element (and its relative time text),
+// new rows and the day labels come from a fresh draw, and rows that left the list (the log keeps 20) are dropped. So
+// an event that arrives shows up as one new row at the top. The date tooltip is hidden when the list changes.
+// Returns false when the page shows no rows (the empty text is a different layout).
+function patchLogList() {
+  const list = document.querySelector("#view .log-list");
+  if (!list || !list.querySelector(".log-row") || !state.activity.length) return false;
+  const holder = document.createElement("div");
+  holder.innerHTML = renderLogView();
+  const freshList = holder.querySelector(".log-list");
+  if (!freshList) return false;
+  const keyOf = el => el.classList.contains("log-row") ? el.dataset.logKey : "label:" + el.textContent;
+  if (JSON.stringify(Array.from(list.children).map(keyOf)) === JSON.stringify(Array.from(freshList.children).map(keyOf))) return true;
+  const existing = new Map();
+  list.querySelectorAll(".log-row").forEach(row => existing.set(row.dataset.logKey, row));
+  const nodes = Array.from(freshList.children).map(child => {
+    const key = child.classList.contains("log-row") ? child.dataset.logKey : null;
+    const old = key !== null ? existing.get(key) : null;
+    if (!old) return child;
+    // One element per record: a second record with the same key gets its fresh row.
+    existing.delete(key);
+    return old;
+  });
+  hideDateTip();
+  list.replaceChildren(...nodes);
+  return true;
+}
+
+// Entry point of the background refresh (navigate() in shell.js, the tab-focus refresh in app/init.js): patches the
+// section in place, or draws it whole while keeping the scroll when the patch cannot be done.
+function refreshViewInPlace(view) {
+  let patched = false;
+  if (view === "users") patched = patchTableRows(sortedUsers(), renderUserRow);
+  else if (view === "nodes") patched = patchTableRows(sortedNodes(), renderNodeRow);
+  else if (view === "dashboard") patched = patchDashboard();
+  else if (view === "log") patched = patchLogList();
+  if (!patched) renderKeepingPageScroll();
+}
 `;
