@@ -417,6 +417,9 @@ const MODALS_CSS = String.raw`
 .editor-tip.open { display: block; animation: account-menu-in .16s ease-out; }
 .editor-tip.closing { display: block; animation: account-menu-out .16s ease-in forwards; }
 .editor-tip.below { --account-menu-shift: -6px; }
+/* .paragraphs (set by showEditorTip() for a target with that class, the Account Recovery tip in Settings) keeps the line breaks
+   of the text, so a blank line splits the tip into two parts. */
+.editor-tip.paragraphs { white-space: pre-line; }
 .editor-tip::after {
   content: ""; position: absolute; bottom: -6px; left: var(--tip-arrow-x, 50%); margin-left: -5px;
   width: 10px; height: 10px; background: var(--color-surface);
@@ -426,10 +429,15 @@ const MODALS_CSS = String.raw`
 @media (prefers-reduced-motion: reduce) { .editor-tip.open, .editor-tip.closing { animation: none; } }
 /* Inside the editors the pseudo-element tips above are switched off: a hidden pseudo-element is still laid out and counted in
    the card's scrollable overflow, which added horizontal scrolling and extra height. content: none removes the box. Their
-   tooltip text (data-tip) is shown by #editorTip instead. The three-class selector beats the earlier rules. Other popups and
-   pages keep the pseudo-element tips. */
+   tooltip text (data-tip) is shown by #editorTip instead. The three-class selector beats the earlier rules. The Settings view
+   gets the same treatment: its info tips also use #editorTip, because a hidden pseudo-element tip next to a title reached past the
+   right edge on a narrow screen and added horizontal scrolling to the scrolling .main. The Backup and Restore popups
+   (.backup-modal) are scrolling cards too, so their info tips use #editorTip as well. Other popups and pages keep the
+   pseudo-element tips. */
 .editor-card .info-tip::before, .editor-card .info-tip::after,
-.editor-card .node-card[data-tip]::before, .editor-card .node-card[data-tip]::after { content: none; display: none; }
+.editor-card .node-card[data-tip]::before, .editor-card .node-card[data-tip]::after,
+.settings-section .info-tip::before, .settings-section .info-tip::after,
+.backup-modal .info-tip::before, .backup-modal .info-tip::after { content: none; display: none; }
 /* --- UUID section of the User editor --- */
 /* The Regenerate button is disabled in username mode: it looks inactive and ignores hover. */
 .field-head .btn-sm:disabled { opacity: .5; cursor: not-allowed; }

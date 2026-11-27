@@ -7,7 +7,7 @@ export const UPDATE_CHECK_SCRIPT = `
 // ---------------------------------------------------------------------
 // While someone is signed in, the browser compares the version of the running Worker (GET /api/version) with the
 // Version file on GitHub. When the file is higher, the version label shows an orange "Update" notice that links to
-// the Releases page. updateAvailable is the one state: versionLink() (client/shell.js) reads it when it draws the
+// the latest release page. updateAvailable is the one state: versionLink() (client/shell.js) reads it when it draws the
 // label, and setUpdateNotice() redraws the labels that are already on the page.
 const UPDATE_VERSION_URL = "${VERSION_FILE_URL}";
 const UPDATE_WORD = "Update";

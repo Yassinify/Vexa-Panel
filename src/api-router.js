@@ -17,6 +17,15 @@ import {
   deleteNode,
   getNodeUsers,
 } from "./nodes.js";
+import {
+  backupManifest,
+  backupExportPart,
+  restoreInspect,
+  restoreAnalyze,
+  restoreValidateName,
+  restoreApplyBatch,
+  restoreFinish,
+} from "./backup/handlers.js";
 
 export async function handleApi(pathname, method, request, env, authPayload) {
   // ensureD1Migrated() (src/d1.js) is self-contained per the corrected
@@ -68,6 +77,22 @@ export async function handleApi(pathname, method, request, env, authPayload) {
     if (method === "PUT") return updateNode(id, request, env);
     if (method === "DELETE") return deleteNode(id, env);
   }
+
+  // Backup and restore (src/backup/handlers.js). The handlers loop over the section registry, so a new
+  // backup section needs no route here.
+  if (pathname === "/api/backup/manifest" && method === "GET") return backupManifest(env);
+  if (pathname === "/api/backup/export" && method === "POST")
+    return backupExportPart(request, env);
+  if (pathname === "/api/restore/inspect" && method === "POST")
+    return restoreInspect(request);
+  if (pathname === "/api/restore/analyze" && method === "POST")
+    return restoreAnalyze(request, env);
+  if (pathname === "/api/restore/validate-name" && method === "POST")
+    return restoreValidateName(request, env);
+  if (pathname === "/api/restore/apply" && method === "POST")
+    return restoreApplyBatch(request, env);
+  if (pathname === "/api/restore/finish" && method === "POST")
+    return restoreFinish(request, env);
 
   return json({ error: "not_found" }, 404);
 }

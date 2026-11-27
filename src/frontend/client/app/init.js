@@ -12,7 +12,7 @@ export const INIT_SCRIPT = `
 
   // Escape closes an open modal, the More menu, the account menus, the
   // growth range dropdown and the Settings calendar and date format dropdowns. While a source editor box is open in
-  // the User editor, Escape cancels only that box and the popup stays open.
+  // the User editor, Escape cancels only that box and the popup stays open. The Backup and Restore popups ignore Escape.
   document.addEventListener("keydown", e => {
     if (e.key !== "Escape") return;
     closeMoreMenu();
@@ -21,6 +21,7 @@ export const INIT_SCRIPT = `
     closeCalendarMenu();
     closeDateFormatMenus();
     if (state.modal === "userEditor" && cancelOpenSourceEdit()) return;
+    if (state.modal === "backup" || state.modal === "restore") return;
     if (state.modal) closeModal();
   });
 
@@ -36,14 +37,18 @@ export const INIT_SCRIPT = `
     closeDateFormatMenus(formatDropdown ? formatDropdown.dataset.kind : undefined);
   });
 
-  // A click on the dark area around the Subscription popup closes it. The press must
-  // also start on the overlay, so dragging a text selection out of the card does not.
+  // A click on the dark area around the Subscription, Backup or Restore popup closes it. The press must
+  // also start on the overlay, so dragging a text selection out of the card does not. Restore closes this way only
+  // before a file is accepted and after the final report (restoreCanCloseByClick(), restore-flow.js).
   let pressedOnOverlay = false;
   document.addEventListener("mousedown", e => {
     pressedOnOverlay = e.target.id === "md";
   });
   document.addEventListener("click", e => {
-    if (e.target.id === "md" && pressedOnOverlay && state.modal === "merge") closeModal();
+    if (e.target.id !== "md" || !pressedOnOverlay) return;
+    if (state.modal === "merge") closeModal();
+    else if (state.modal === "backup") closeBackup();
+    else if (state.modal === "restore" && restoreCanCloseByClick()) closeRestore();
   });
 
   // When the tab becomes visible again, the open section is refreshed in the background if its data is older than

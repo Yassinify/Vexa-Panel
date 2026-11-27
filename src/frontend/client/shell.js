@@ -88,12 +88,12 @@ function themeToggleMarkup() {
 // shows a small popup with the GitHub mark and the project name (CSS only, see
 // .version-pop in styles/app-shell.js). Used in the sidebar and the compact topbar.
 // While updateAvailable is true (client/update-check.js) the label is the orange Update notice instead: it shows only
-// the word (one span per letter, so the typing can run) and links to the Releases page.
+// the word (one span per letter, so the typing can run) and links to the latest release page.
 function versionLink() {
   const pop = '<span class="version-pop" role="tooltip"><svg class="version-pop-logo" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">${GITHUB_MARK_PATH}</svg>${GITHUB_REPO_NAME}</span>';
   const handlers = 'onclick="dismissVersionPop(this)" onmouseleave="restoreVersionPop(this)" onblur="restoreVersionPop(this, true)"';
   if (updateAvailable) {
-    return '<a class="brand-version update-notice" href="${GITHUB_REPO_URL}/releases" target="_blank" rel="noopener noreferrer" ' + handlers + ' aria-label="Update available. Open the Vexa Panel releases on GitHub">' + updateWordMarkup() + pop + '</a>';
+    return '<a class="brand-version update-notice" href="${GITHUB_REPO_URL}/releases/latest" target="_blank" rel="noopener noreferrer" ' + handlers + ' aria-label="Update available. Open the Vexa Panel releases on GitHub">' + updateWordMarkup() + pop + '</a>';
   }
   return '<a class="brand-version" href="${GITHUB_REPO_URL}" target="_blank" rel="noopener noreferrer" ' + handlers + ' aria-label="Vexa Panel v${VEXA_VERSION} on GitHub">v${VEXA_VERSION}' + pop + '</a>';
 }
@@ -456,11 +456,14 @@ async function setDateFormat(kind, choice) {
 
 // Routed Settings view (/settings); reuses the content of the former
 // Settings modal. Two titled sections in this order: Date & Time (Calendar, Short Format and Long Format), then
-// Account (Change Password). The lead line is visible text; the row description is the text of an info icon.
+// Account, whose two subsections are rows: Account Recovery (the Backup and Restore buttons) and Change Password.
+// The two sections sit in .settings-grid (styles/settings.js), one column, stacked vertically.
+// The lead line is visible text; the row description is the text of an info icon.
 function renderSettingsView() {
   return \`
     <h2>Settings</h2>
     <p class="lead">Adjust how your panel behaves.</p>
+    <div class="settings-grid">
     <section class="settings-section">
       <h3 class="settings-section-title">Date &amp; Time</h3>
       <div class="card settings-card">
@@ -489,12 +492,22 @@ function renderSettingsView() {
       <div class="card settings-card">
         <div class="setting-row">
           <div class="setting-text">
+            <span class="setting-title">Account Recovery \${infoTip("Backup saves your users, nodes and settings to a file. Keep the file private, because it holds your subscription links and node sources.\\n\\nRestore adds the users and nodes from a backup file. Existing users and nodes are never changed or removed. The settings in the file replace your current settings.", "below paragraphs")}</span>
+          </div>
+          <div class="setting-actions">
+            <button class="btn-secondary btn-sm" onclick="openBackup()">\${icon("arrowDownOnSquare")}Backup</button>
+            <button class="btn-secondary btn-sm" onclick="openRestore()">\${icon("arrowUpOnSquare")}Restore</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-text">
             <span class="setting-title">Change Password \${infoTip("Rotates your admin password. Sessions and subscription links keep working. You will be signed out and must sign in again with the new password.", "below")}</span>
           </div>
           <button class="btn-secondary btn-sm" onclick="openChangePasswordModal()">Change</button>
         </div>
       </div>
     </section>
+    </div>
   \`;
 }
 

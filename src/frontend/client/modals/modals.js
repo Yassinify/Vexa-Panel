@@ -22,14 +22,17 @@ window.addEventListener("resize", autoGrowAll);
 // ---------------------------------------------------------------------
 // EDITOR TOOLTIP
 // ---------------------------------------------------------------------
-// The info tips and the Node picker card tips of the User and Node editors show through one shared element, #editorTip.
+// The info tips and the Node picker card tips of the User and Node editors, and the info tips of the Settings view and of the
+// Backup and Restore popups, show through one shared element, #editorTip.
 // It is created on first use and appended to <body>, outside the popup, and it is position: fixed, so it takes no room in
 // the scrolling editor card and the card cannot clip it. (A pseudo-element tip is laid out even while hidden, which
 // widened and lengthened the card's scroll area; styles/modals.js switches those off inside .editor-card.) The script
 // keeps the tip inside the screen sideways, opens it below the trigger (above when there is no room) and points its arrow
 // at the trigger. Events are delegated on document because render() replaces the popup markup. The wait before it opens
-// is the date tooltip's (DATE_TIP_DELAY_MS and DATE_TIP_DELAY_COMPACT_MS, users-view.js).
-const EDITOR_TIP_TARGETS = ".editor-card .info-tip[data-tip], .editor-card .node-card[data-tip]";
+// is the date tooltip's (DATE_TIP_DELAY_MS and DATE_TIP_DELAY_COMPACT_MS, users-view.js). In Settings the same cause showed as
+// horizontal scrolling on a narrow screen (the hidden tip reached past the right edge of the scrolling .main), so styles/modals.js
+// switches the pseudo-element tips off there too.
+const EDITOR_TIP_TARGETS = ".editor-card .info-tip[data-tip], .editor-card .node-card[data-tip], .settings-section .info-tip[data-tip], .backup-modal .info-tip[data-tip]";
 let editorTipTimer = null;
 
 function editorTipElement() {
@@ -64,6 +67,8 @@ function showEditorTip(target) {
   const viewWidth = document.documentElement.clientWidth;
   const viewHeight = document.documentElement.clientHeight;
   tip.textContent = target.getAttribute("data-tip");
+  // A target with .paragraphs (the Account Recovery tip) keeps the line breaks of its text, so a blank line splits the tip.
+  tip.classList.toggle("paragraphs", target.classList.contains("paragraphs"));
   tip.style.maxWidth = Math.min(260, viewWidth - 2 * margin) + "px";
   tip.classList.remove("closing");
   tip.classList.add("open");
@@ -403,6 +408,10 @@ function renderModal() {
       </div>
     \`;
   }
+
+  // The Backup and Restore popups draw themselves (client/backup/*.js) and keep their own flow state.
+  if (state.modal === "backup") return renderBackupModal();
+  if (state.modal === "restore") return renderRestoreModal();
 
   return "";
 }

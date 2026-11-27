@@ -22,6 +22,7 @@ import { INPUTS_CSS } from "./styles/inputs.js";
 import { REDUCED_MOTION_CSS } from "./styles/reduced-motion.js";
 import { SETTINGS_CSS } from "./styles/settings.js";
 import { THEME_TOGGLE_CSS } from "./styles/theme-toggle.js";
+import { BACKUP_CSS } from "./styles/backup.js";
 
 export const STYLES = `
 /* =====================================================================
@@ -67,6 +68,7 @@ ${TIMESTAMP_CSS}
 ${MODALS_CSS}
 ${FIELD_LABEL_CSS}
 ${SUBSCRIPTION_SUMMARY_CSS}
+${BACKUP_CSS}
 ${TOAST_CSS}
 ${ERROR_HELPER_TEXT_CSS}
 ${SETTINGS_CSS}

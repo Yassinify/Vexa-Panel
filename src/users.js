@@ -373,19 +373,19 @@ export async function deleteUser(id, env) {
 
 // Username mode id: spaces become underscores, and only English letters, digits,
 // dashes and underscores are allowed. Returns null when the name cannot be an id.
-function usernameToId(name) {
+export function usernameToId(name) {
   const id = String(name).trim().replace(/\s/g, "_");
   return /^[A-Za-z0-9_-]+$/.test(id) ? id : null;
 }
 
 // Custom subscription title: a trimmed string. Anything else, or a blank string, gives "", which
 // means the default title is used (see handlePublicUserSub() in public-sub.js).
-function cleanSubscriptionTitle(value) {
+export function cleanSubscriptionTitle(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
 // A random id has the canonical lowercase UUID shape, the one crypto.randomUUID() returns.
-function isUuid(value) {
+export function isUuid(value) {
   return (
     typeof value === "string" &&
     /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value)
