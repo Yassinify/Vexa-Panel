@@ -144,10 +144,9 @@ export const usersSection = {
   //              written twice, and the User is written on the retry once none of its Nodes has a conflict.
   //   nodeMap / userMap  every key decided so far and the id it became (null for skipped), to send back next time
   //   added      what this call wrote, for the stats (users, nodes, subSources, rawSources)
-  async applyBatch(env, payload, context = {}) {
+  async applyBatch(env, payload, { decisions = {}, nodeMap, userMap } = {}) {
     const items = itemsOf(payload);
     if (!items) return { ok: false, error: "invalid_section" };
-    const { decisions = {}, nodeMap, userMap } = context;
     const ctx = await createContext(env, { nodeMap, userMap });
     const nodesDict = nodesOf(payload);
     const cache = new Map();

@@ -227,8 +227,14 @@ function isConstraintError(err) {
   return /UNIQUE|constraint/i.test(String(err && err.message));
 }
 
+// Builds a result object: { status, ...fields }. fields is left untyped on purpose, so editors that type-check the
+// bundled JS (the Cloudflare editor) see one open result type instead of a union that status cannot narrow.
+function outcome(status, fields) {
+  return Object.assign({ status }, fields);
+}
+
 function conflictResult(kind, key, reason, name, extra = {}) {
-  return { status: "conflict", kind, key, reason, name, ...extra };
+  return outcome("conflict", { kind, key, reason, name, ...extra });
 }
 
 // The name an item gets from a "rename" decision: the typed one, or a suggestion when it was left empty.
@@ -253,11 +259,11 @@ function freshUserId(ctx) {
 //   conflict  the name is taken and there is no decision that fixes it
 export async function resolveNode(env, ctx, entity, decisions) {
   const key = entityKey("node", entity.id);
-  if (ctx.nodeMap.has(key)) return { status: "mapped", id: ctx.nodeMap.get(key) };
+  if (ctx.nodeMap.has(key)) return outcome("mapped", { id: ctx.nodeMap.get(key) });
   const decision = readDecision(decisions, key);
   if (decision && decision.action === "skip") {
     ctx.nodeMap.set(key, null);
-    return { status: "skipped" };
+    return outcome("skipped");
   }
   const renamed = Boolean(decision && decision.action === "rename");
   const name = renamed ? renamedTo(ctx, "node", entity, decision, true) : entity.name;
@@ -277,7 +283,7 @@ export async function resolveNode(env, ctx, entity, decisions) {
   ctx.nodeIds.add(id);
   ctx.nodeMap.set(key, id);
   ctx.added.nodes += 1;
-  return { status: "added", id, name, renamed: name !== entity.name };
+  return outcome("added", { id, name, renamed: name !== entity.name });
 }
 
 // Decides what happens to one User without writing anything, so the caller can leave the User's Nodes alone when
@@ -291,11 +297,11 @@ export async function resolveNode(env, ctx, entity, decisions) {
 //                    uuidRandom and uuidAlsoTaken let the browser word the question
 export function prepareUser(ctx, entity, decisions, role) {
   const key = entityKey("user", entity.id);
-  if (ctx.userMap.has(key)) return { status: "mapped", id: ctx.userMap.get(key) };
+  if (ctx.userMap.has(key)) return outcome("mapped", { id: ctx.userMap.get(key) });
   const decision = readDecision(decisions, key);
   if (decision && decision.action === "skip") {
     ctx.userMap.set(key, null);
-    return { status: "skipped" };
+    return outcome("skipped");
   }
   const uuidRandom = entity.uuidRandom;
   const renamed = Boolean(decision && decision.action === "rename");
@@ -307,7 +313,7 @@ export function prepareUser(ctx, entity, decisions, role) {
     if (role === "linked" && !renamed) {
       const existingId = ctx.userNames.get(name);
       ctx.userMap.set(key, existingId);
-      return { status: "linked_existing", id: existingId };
+      return outcome("linked_existing", { id: existingId });
     }
     return conflictResult("user", key, "name_taken", name, extra);
   }
@@ -329,7 +335,7 @@ export function prepareUser(ctx, entity, decisions, role) {
       return conflictResult("user", key, "uuid_taken", name, extra);
     }
   }
-  return { status: "create", id, name, renamed: name !== entity.name, uuidRegenerated };
+  return outcome("create", { id, name, renamed: name !== entity.name, uuidRegenerated });
 }
 
 // Writes a User that prepareUser() said can be created, with its Node links (nodeIds are ids that exist in this
@@ -356,13 +362,12 @@ export async function createUser(env, ctx, prepared, entity, nodeIds) {
     if (source.type === "subscription") ctx.added.subSources += 1;
     else ctx.added.rawSources += 1;
   }
-  return {
-    status: "added",
+  return outcome("added", {
     id: prepared.id,
     name: prepared.name,
     renamed: prepared.renamed,
     uuidRegenerated: prepared.uuidRegenerated,
-  };
+  });
 }
 
 // Adds links between Users and Nodes that were written (or found) in this restore. pairs is a list of
