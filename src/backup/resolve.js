@@ -54,7 +54,8 @@ function mapFrom(object) {
 
 // Builds the context. nodeMap and userMap are the maps the browser holds from earlier requests of the same
 // restore ({ "node:<id>": "<id it became>" | null }); leave them out for an analysis.
-export async function createContext(env, { nodeMap, userMap } = {}) {
+export async function createContext(env, maps) {
+  const { nodeMap, userMap } = maps || {};
   const [nodeRows, userRows] = await Promise.all([listNodeIdentities(env), listUserIdentities(env)]);
   const userNames = new Map();
   for (const row of userRows) {
